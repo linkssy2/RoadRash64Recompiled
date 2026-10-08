@@ -77,15 +77,17 @@ bool live_source(const Bank& b) {
 }
 bool enabled(unsigned char* m) {
     const auto rules = rr64::prediction::physics_rules();
+    const unsigned mode = word(m, globals::main_mode);
+    if (!is_live_race_mode(mode) && !is_race_results_mode(mode)) return false;
     // Offline actors can leave the camera's native streaming window on stock
     // and imported courses, including detached riders after a crash.
     // Physical support must use the same immutable cell source as online
     // racers rather than treating an unloaded graphics cell as empty terrain.
-    if (!rules.active)
-        return is_live_race_mode(word(m, globals::main_mode));
+    // Results still run native physics after highlights have moved streaming
+    // elsewhere, so retain physical floors and buildings for that scene too.
+    if (!rules.active) return true;
     return rules.active && rules.connected && rules.authoritative &&
-           (rr64::prediction::active() || rules.phase == rr64::netplay::Phase::Race) &&
-           is_live_race_mode(word(m, globals::main_mode));
+           (rr64::prediction::active() || rules.phase == rr64::netplay::Phase::Race);
 }
 bool valid(const Bank& b, unsigned char* m) {
     return m && (m == b.mapping || rr64::prediction::active()) &&

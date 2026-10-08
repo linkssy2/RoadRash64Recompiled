@@ -1,23 +1,222 @@
 {
   "method": "Built-in image generation for authored diffuse skin atlases; native UV reference only",
   "style": "Semi-realistic, hand-painted and pixelated, consistent with original late-1990s Road Rash 64 riders; restrained cloth, leather, skin and armor shading",
-  "geometry": "Original male donor 0 or female donor 10; unchanged geometry, UVs, poses and animation",
+  "geometry": "Original male/female donor models; no Turtle shell attachments",
   "atlas": "2:1 aspect; four equal 2:1 texture tiles in a 2x2 grid, no gutters or labels; near head/limbs, near torso, full lower-detail body, far body",
-  "native_sizes": [[64,32],[64,32],[64,32],[32,16]],
+  "native_sizes": [
+    [
+      64,
+      32
+    ],
+    [
+      64,
+      32
+    ],
+    [
+      64,
+      32
+    ],
+    [
+      32,
+      16
+    ]
+  ],
   "pack_format": "Native CI8 indices followed by 256 big-endian RGBA5551 palette words, authored pixels only; no native header or model shipped",
   "characters": [
-    {"id":"green-pants-rider","name":"Green Pants Rider","donor":0,"costume":"Classic RuneScape bald man, brown short-sleeve tunic, green trousers, brown boots; tan skin"},
-    {"id":"punisher","name":"Punisher","donor":0,"costume":"Short black hair, stern face, black tactical clothes, iconic white skull on chest, dark trousers and boots"},
-    {"id":"ghost-rider","name":"Ghost Rider","donor":0,"costume":"Bone skull face with amber/orange painted flame detail, black motorcycle leather jacket and trousers, gloves and boots"},
-    {"id":"cortana","name":"Cortana","donor":10,"costume":"Blue-violet holographic full bodysuit, subtle cyan circuit lines, recognizably feminine face, short dark blue hair; fully covered"},
-    {"id":"master-chief","name":"Master Chief","donor":0,"costume":"Olive green armored suit, gold helmet visor, dark under-suit and gloves; armor conveyed through paint on original rider geometry"},
-    {"id":"doom-guy","name":"Doom Guy","donor":0,"costume":"Classic 1993 Doom marine green armor and helmet, gray face visor, tan exposed arms and abdomen, brown trousers and boots"},
-    {"id":"link","name":"Link","donor":0,"costume":"Blond hair, green cap painted onto head, green tunic, light beige leggings, brown belt, boots and gloves"},
-    {"id":"marcus-fenix","name":"Marcus Fenix","donor":0,"costume":"Rugged face, black bandana, short beard, charcoal armor with subdued blue accents, bare forearms, dark trousers and boots"},
-    {"id":"dominic-santiago","name":"Dominic Santiago","donor":0,"costume":"Short dark hair and goatee, tan skin, charcoal armor with subdued blue accents, dark trousers and boots"},
-    {"id":"vin-diesel","name":"Vin Diesel","donor":0,"costume":"Bald head, tan skin, white tank top, dark jeans and dark boots"},
-    {"id":"riddick","name":"Riddick","donor":0,"costume":"Bald head, dark wraparound reflective goggles, tan skin, black sleeveless tank top, gray-brown cargo trousers and dark boots"}
+    {
+      "id": "green-pants-rider",
+      "name": "Green Pants Rider",
+      "donor": 0,
+      "costume": "Classic RuneScape bald man, brown short-sleeve tunic, green trousers, brown boots; tan skin"
+    },
+    {
+      "id": "punisher",
+      "name": "Punisher",
+      "donor": 0,
+      "costume": "Short black hair, stern face, black tactical clothes, iconic white skull on chest, dark trousers and boots"
+    },
+    {
+      "id": "ghost-rider",
+      "name": "Ghost Rider",
+      "donor": 0,
+      "costume": "Bone skull face with amber/orange painted flame detail, black motorcycle leather jacket and trousers, gloves and boots"
+    },
+    {
+      "id": "cortana",
+      "name": "Cortana",
+      "donor": 10,
+      "costume": "Blue-violet holographic full bodysuit, subtle cyan circuit lines, recognizably feminine face, short dark blue hair; fully covered"
+    },
+    {
+      "id": "master-chief",
+      "name": "Master Chief",
+      "donor": 0,
+      "costume": "Olive green armored suit, gold helmet visor, dark under-suit and gloves; armor conveyed through paint on original rider geometry"
+    },
+    {
+      "id": "doom-guy",
+      "name": "Doom Guy",
+      "donor": 0,
+      "costume": "Classic 1993 Doom marine green armor and helmet, gray face visor, tan exposed arms and abdomen, brown trousers and boots"
+    },
+    {
+      "id": "link",
+      "name": "Link",
+      "donor": 0,
+      "costume": "Blond hair, green cap painted onto head, green tunic, light beige leggings, brown belt, boots and gloves"
+    },
+    {
+      "id": "marcus-fenix",
+      "name": "Marcus Fenix",
+      "donor": 0,
+      "costume": "Rugged face, black bandana, short beard, charcoal armor with subdued blue accents, bare forearms, dark trousers and boots"
+    },
+    {
+      "id": "dominic-santiago",
+      "name": "Dominic Santiago",
+      "donor": 0,
+      "costume": "Short dark hair and goatee, tan skin, charcoal armor with subdued blue accents, dark trousers and boots"
+    },
+    {
+      "id": "vin-diesel",
+      "name": "Vin Diesel",
+      "donor": 0,
+      "costume": "Bald head, tan skin, white tank top, dark jeans and dark boots"
+    },
+    {
+      "id": "riddick",
+      "name": "Riddick",
+      "donor": 0,
+      "costume": "Bald head, dark wraparound reflective goggles, tan skin, black sleeveless tank top, gray-brown cargo trousers and dark boots"
+    },
+    {
+      "id": "gordon-freeman",
+      "name": "Gordon Freeman",
+      "donor": 0,
+      "atlas_head": false,
+      "head_back_first": true,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "leonardo",
+      "name": "Leonardo",
+      "donor": 0,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "raphael",
+      "name": "Raphael",
+      "donor": 0,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "donatello",
+      "name": "Donatello",
+      "donor": 0,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "michelangelo",
+      "name": "Michelangelo",
+      "donor": 0,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "shredder",
+      "name": "Shredder",
+      "donor": 0,
+      "atlas_head": true,
+      "head_back_first": true,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "terminator",
+      "name": "Terminator",
+      "donor": 0,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false,
+      "dual_head": true
+    },
+    {
+      "id": "judge-dredd",
+      "name": "Judge Dredd",
+      "donor": 0,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "alyx",
+      "name": "Alyx",
+      "donor": 10,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "locust-grub",
+      "name": "Locust Grub",
+      "donor": 0,
+      "atlas_head": true,
+      "head_back_first": true,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "lara-croft",
+      "name": "Lara Croft",
+      "donor": 10,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "bloodrayne",
+      "name": "Bloodrayne",
+      "donor": 10,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "duke-nukem",
+      "name": "Duke Nukem",
+      "donor": 0,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    },
+    {
+      "id": "serious-sam",
+      "name": "Serious Sam",
+      "donor": 0,
+      "atlas_head": false,
+      "head_back_first": false,
+      "torso_back_first": true,
+      "turtle_shell": false
+    }
   ],
   "private_reference_policy": "Extracted native texture and UV sheets stay in analysis; only newly painted artwork and code-owned metadata may enter the optional pack",
-  "visual_acceptance": "Pending native-model offline preview and fresh-ready user playtest"
+  "visual_acceptance": "Offline model review complete; Lara/Duke/Sam body corrections and shell removal await user runtime test."
 }

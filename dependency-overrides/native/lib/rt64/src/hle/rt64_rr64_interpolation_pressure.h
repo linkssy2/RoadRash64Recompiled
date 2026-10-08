@@ -5,6 +5,17 @@
 #include "rt64_rr64_frame_metadata.h"
 
 namespace RT64::RR64FramePacing {
+    constexpr bool renderRaceAtNativeLimit(bool canRetainNativeImage,
+        bool hasPresentationTarget, uint32_t targetRate)
+    {
+        // At the console-rate cap, delayed race work must not start extra
+        // matching work and prolong the slowdown. Keep the measured source
+        // rate: genuine 30 Hz content remains native here, not relabelled 60.
+        // Eligibility already excludes non-race, paused, debug and RT work.
+        return canRetainNativeImage && hasPresentationTarget &&
+            targetRate > 0 && targetRate <= ConsoleRefreshRate;
+    }
+
     struct QueuedAuthoredWorkload {
         uint64_t writer = 0;
         uint64_t presentId = 0;

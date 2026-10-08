@@ -71,7 +71,7 @@ bool load_archive(const recomp::mods::ModFileHandle &file, std::string_view id) 
         return false;
     try {
         std::vector<char> marker;
-        if (!read_bounded(file, "rr64-rider-skins.json", 8192, marker)) {
+        if (!read_bounded(file, "rr64-rider-skins.json", 32768, marker)) {
             fail("Rider descriptor is missing, oversized or unreadable.");
             return false;
         }
@@ -120,10 +120,24 @@ bool load_archive(const recomp::mods::ModFileHandle &file, std::string_view id) 
                                           {}};
             for (const auto &[key, unused] : entry.items()) {
                 (void)unused;
-                if (key != "id" && key != "name" && key != "donor" && key != "textures") {
+                if (key != "id" && key != "name" && key != "donor" && key != "textures" && key != "turtle_shell" && key != "dual_head") {
                     fail("Character catalog entry contains unsupported metadata.");
                     return false;
                 }
+            }
+            if (entry.contains("turtle_shell")) {
+                if (!entry["turtle_shell"].is_boolean() || donor != 0) {
+                    fail("Shell attachment requires a male donor and a boolean flag.");
+                    return false;
+                }
+                asset.turtle_shell = entry["turtle_shell"].get<bool>();
+            }
+            if (entry.contains("dual_head")) {
+                if (!entry["dual_head"].is_boolean() || donor != 0) {
+                    fail("Asymmetric head requires a male donor and a boolean flag.");
+                    return false;
+                }
+                asset.dual_head = entry["dual_head"].get<bool>();
             }
             if (asset.id.empty() || asset.id.size() > 32 ||
                 asset.id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") !=

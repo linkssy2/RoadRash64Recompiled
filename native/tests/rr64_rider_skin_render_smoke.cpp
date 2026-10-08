@@ -121,12 +121,14 @@ extern "C" void rr64_highlights_weapon_draw(unsigned char *m,
         "native highlight continuation cursor");
 }
 int main(int argc, char **argv) {
-  std::array<rider_skins::Appearance, 3> skins;
+  std::array<rider_skins::Appearance, 5> skins;
   for (unsigned i = 0; i < skins.size(); ++i) {
     auto &a = skins[i];
-    a.id = i == 2 ? "other" : i ? "female" : "male";
-    a.name = i == 2 ? "Other" : i ? "Female" : "Male";
+    a.id = i == 4 ? "asymmetric" : i == 3 ? "shell" : i == 2 ? "other" : i ? "female" : "male";
+    a.name = i == 4 ? "Asymmetric" : i == 3 ? "Shell" : i == 2 ? "Other" : i ? "Female" : "Male";
     a.donor = i == 1 ? 10 : 0;
+    a.turtle_shell = i == 3;
+    a.dual_head = i == 4;
     for (unsigned j = 0; j < 4; ++j) {
       auto &t = a.textures[j];
       t.width = j == 3 ? 32 : 64;
@@ -387,6 +389,58 @@ int main(int argc, char **argv) {
             "far texels retain exact 32x16 layout with clamped filter padding");
   }
   check(allocations == 3, "far staging needs no additional render allocation");
+  selected = 4;
+  configure(m, 30);
+  for (unsigned i = 0; i < source.size(); ++i)
+    command(m, dl + i * 8, source[i]);
+  engine::write_u16(m, node + 0x4a, 2);
+  put(m, node + 0x7c, 0x80500000);
+  put(m, node + 0x80, 0x80501000);
+  const auto shell = list(m, rr64_rider_skin_actor_list(m, node, dl, 0));
+  check(shell.size() == source.size() + 7 && shell[11].first == 0x01009012,
+        "shell adds nine vertices and eight triangles after native torso");
+  check(shell[11].second >= 0x81000000 && allocations == 4,
+        "shell uses one immutable extended vertex allocation");
+  check(std::int16_t(word(m, shell[11].second) >> 16) == -43 &&
+            (word(m, shell[11].second + 4) >> 16) == 8,
+        "shell coordinates are written in extended memory, not silently rejected by 8 MiB helpers");
+  const auto again = list(m, rr64_rider_skin_actor_list(m, node, dl, 0));
+  check(again == shell && allocations == 4, "shell vertices reuse storage without pose mutation");
+  selected = 5;
+  configure(m, 32);
+  constexpr unsigned vertices = 0x80600100;
+  const std::array<MaterialCommand, 7> head_source{{
+      {0xda380002, 0x06000000}, {0xfd500000, 0x07000000},
+      {0xfd100000, 0x07000800}, {0x0100600c, 0x05000100},
+      {0x06000204, 0x0006080a}, {0xda380002, 0x06000040}, {0xdf000000, 0}}};
+  for (unsigned i = 0; i < 6; ++i) {
+    const int y = -20 + (i % 3 == 0 ? 0 : i < 3 ? 7 : -7);
+    put(m, vertices + i * 16, (unsigned(i % 3 == 0 ? 33 : 25) << 16) | std::uint16_t(y));
+    put(m, vertices + i * 16 + 4, 27u << 16);
+    put(m, vertices + i * 16 + 8, (unsigned(i % 3 == 0 ? 26 : 38) * 64 << 16) | (27 * 64));
+    put(m, vertices + i * 16 + 12, 0x7f0000ff);
+  }
+  for (unsigned i = 0; i < head_source.size(); ++i)
+    command(m, dl + i * 8, head_source[i]);
+  check(rr64_rider_skin_actor_list(m, node, dl, 0) == dl,
+        "asymmetric face refuses an unresolved native segment");
+  const auto face = list(m, rr64_rider_skin_actor_list(m, node, dl, 0, 0x80600000));
+  std::array<unsigned, 2> halves{};
+  unsigned faces = 0;
+  for (const auto &c : face)
+    if (c.first == 0x01003006) {
+      check(faces < halves.size(), "exactly two remapped face triangles");
+      halves[faces++] = word(m, c.second + 8) >> 16;
+      check(word(m, c.second) == ((33u << 16) | std::uint16_t(-20)), "translated head position unchanged");
+      check((word(m, c.second + 8) & 0xffff) == 27 * 64,
+            "live face retains vertical UVs even outside reference XYZ bounds");
+    }
+  check(faces == 2 && halves[0] - halves[1] == 19 * 64,
+        "opposite cheeks sample distinct half-head strips including center vertices");
+  check(std::count(face.begin(), face.end(), head_source[3]) == 2 && allocations == 4,
+        "original vertex batch restored before next bone without extra allocations");
+  check((word(m, vertices + 8) >> 16) == 26 * 64,
+        "shared native head UVs remain unchanged");
   selected = 1;
   for (unsigned i = 0; i < source.size(); ++i)
     command(m, dl + i * 8, source[i]);

@@ -41,3 +41,29 @@ The test launcher now explicitly selects Vulkan on startup. No new launch occurr
 ## Remaining test
 
 Run a five-minute race at the usual resolution/draw distance, with fixed refresh, VRR off, and 60 FPS/VSync on. Select Vulkan to exercise the backend fixes. Include dense geometry, pause/resume, and a finish if practical. Start only after **ready**. Repeated crash exercises are unnecessary. Evaluate perceived pacing and diagnostic policy/pressure activity. Windows D3D retains its existing display pacing; manual sub-refresh D3D caps and long geometry preparation remain further concerns.
+
+
+## 2026-10-07 — Followup11 prepared; second-race terrain pacing
+
+Followup10 launch02 ended normally (exit 0) after 281.023 seconds. Owner reports
+smooth first ejection; second race slowed at high terrain distance, then stayed
+smooth for the same scenery after lowering and restoring distance. Pause already
+restored steady cadence before the first slider change, so a slider reset is not
+established. Slow preparation precedes buffer growth; matching adds about 10ms
+per matched workload during the slowdown. The exact initial stall is unresolved.
+
+Followup11 skips optional matching for eligible retained race frames at a <=60 FPS
+cap. Measured source cadence stays intact; genuine 30Hz content remains native at
+that cap. Higher caps and unsupported retention paths keep existing behavior.
+The 512-slot preparation recorder now reuses drained slots instead of exhausting
+its lifetime capacity during the second race. Audio/physics/collision unchanged.
+
+Windows and Linux builds plus 9 targets / 13 invocations each pass, including the
+expected negative. Independent policy and recorder reviews found no blockers.
+Private test: analysis/terrain-followup11-20261007/RoadRash64-1.4.4-Followup11-Win64.
+Evidence: analysis/terrain-followup11-20261007/verification.json.
+Prepared launch-01 has no authorization. Game closed; fresh ready required.
+Live improvement, residual Dumoto cutoffs, and results-collision acceptance remain
+unverified. Private folder contains owner ROM/imports; do not redistribute.
+No publication authorized.
+

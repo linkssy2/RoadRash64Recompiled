@@ -192,7 +192,7 @@
       },
       {
         "path": "src/hle/rt64_rr64_frame_pacing.h",
-        "sha256": "0361b16b8b25b2a237b7113455db4458fcd966d236cbbbe0e51ea8cc94ec1a55"
+        "sha256": "03cca4b8a82fe6fddd44d9a4a1602a4668d83e4e754d479f621bb529d636cc8c"
       },
       {
         "path": "src/hle/rt64_rr64_geometry_match.h",
@@ -200,11 +200,11 @@
       },
       {
         "path": "src/hle/rt64_rr64_interpolation_pressure.h",
-        "sha256": "96528a989396d4fcd3d330c44ea2077b036565473b2d1c1af1fd869b262a82eb"
+        "sha256": "aa4b822e54b16a41dd981677263786de77ca2f1f4a9f6a6fa39b09cf390b717f"
       },
       {
         "path": "src/hle/rt64_rr64_matching_evidence.h",
-        "sha256": "59744b7d609fd7eab8cb04ae760734270be29716abc9bc27550ba43cc63ba272"
+        "sha256": "2487c247cd731442ec0b5728ecbdb3b24d29756cc6dd68abf36295a0bc1f9dc0"
       },
       {
         "path": "src/hle/rt64_rr64_matching_preflight.h",
@@ -216,7 +216,7 @@
       },
       {
         "path": "src/hle/rt64_rr64_pipeline_diagnostics.h",
-        "sha256": "e0ac9ae8f063240de83d3a306399d4adefdb927846a94eae2d74e35095857af7"
+        "sha256": "aeb2438a7b514f664ca6d5d7d1b4ebd94efecb59268f7be177710738b8d832ef"
       },
       {
         "path": "src/hle/rt64_rr64_present_config.h",
@@ -224,7 +224,7 @@
       },
       {
         "path": "src/hle/rt64_rr64_static_world_motion.h",
-        "sha256": "07c8b960d345d246d43b017238825f4125e795fef88c9df0129445136820a5d0"
+        "sha256": "a6b9adfeb619708875351aafe927d86191bb9f8ae103f008935d42a95c7fe6ba"
       },
       {
         "path": "src/hle/rt64_rr64_translation_rejection.h",
@@ -233,6 +233,10 @@
       {
         "path": "src/render/rt64_rr64_frame_overwrite.h",
         "sha256": "dff303cbea767593553f43b11f6b0cc3b0eb8bdedc088ad06de7c89f43a4c670"
+      },
+      {
+        "path": "src/render/rt64_buffer_capacity.h",
+        "sha256": "54a7b0736586055d8982e9a887d30c49d25f0ee770739a0f84e1b4d56de2a1ff"
       }
     ]
   },

@@ -209,7 +209,9 @@ static void extended(Fixture &f,std::vector<DisplayList>& commands) {
     cursor++;require(cursor->w0==0xDF000000u,"interpreter increment must reach untouched next command");
 }
 int main(int argc,char **argv) {
+#ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
+#endif
     GBI_EXTENDED::initialize();Fixture a,b;unsigned scenarios=0,handlers=0;
     for(unsigned cull=0;cull<4;cull++)for(unsigned tiles=0;tiles<3;tiles++)for(unsigned scissor=0;scissor<4;scissor++)
     for(unsigned camera=0;camera<4;camera++)for(unsigned slots:{32u,128u})for(bool depth:{false,true}){

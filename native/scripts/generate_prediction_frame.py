@@ -83,12 +83,14 @@ for text in [*(functions[n] for n in sorted(seen)),prefix,order]:
     # The original private sound path still uses its isolated mixer services.
     text=re.sub(r'if \(rr64_rival_engine_(?:gain|allocate)\(rdram, ctx\)\) return;',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)
-    text=re.sub(r'\brr64_rival_engine_(?:frame|gate|threshold|pitch|transition|no_steal|allocated|child_adopt)\(rdram, ctx\);',
+    text=re.sub(r'\brr64_rival_engine_(?:frame|gate|threshold|pitch|transition|no_steal|allocated|child_adopt|heap|audio_init)\(rdram, ctx\);',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)
     text=re.sub(r'\brr64_rival_engine_(?:mode|recovery)\(rdram, ctx, \(unsigned\)ctx->r(?:4|17)\);',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)
-    text=re.sub(r'\brr64_rival_engine_child\(rdram, ctx, [01]\);|\brr64_rival_engine_audio_reset\(\);',
+    text=re.sub(r'\brr64_rival_engine_(?:child|allocation_range)\(rdram, ctx, [01]\);|\brr64_rival_engine_audio_reset\(\);',
                 '(void)0; // Live rival engine hook omitted from private replay.',text)
+    text=re.sub(r'ctx->r([237]) = rr64_rival_engine_effect_limit\(\(unsigned\)ctx->r\1\);',
+                '(void)0; // Live sound-pool partition omitted from private replay.',text)
     if 'rr64_rival_engine_' in text:
         raise RuntimeError('New rival engine hook requires explicit private replay handling')
     # Inventory, projectiles, cues and display are live-only. Physics effects

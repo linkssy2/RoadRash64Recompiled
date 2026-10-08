@@ -1,6 +1,7 @@
 #pragma once
 #include <chrono>
 #include <algorithm>
+#ifdef _WIN32
 namespace plume { std::unique_ptr<RenderInterface> CreateD3D12Interface(); }
 // No ROM, window, swap chain or game runtime. Exercise actual allocation,
 // full-frame GPU copies and readback against the cache's reuse policy.
@@ -52,7 +53,7 @@ static int gpuBenchmark(){
             cmd->end();worker.execute();worker.wait();
             if(writer==1)std::fprintf(stderr,"GPU fixture: waited\n");
             auto* bytes=static_cast<unsigned char*>(readback->map());require(bytes!=nullptr,"readback map");
-            for(uint64_t pixel:{0ull,uint64_t(width)*height/2,uint64_t(width)*height-1}){
+            for(uint64_t pixel:{uint64_t(0),uint64_t(width)*height/2,uint64_t(width)*height-1}){
                 require(bytes[pixel*4]==writer%251 && bytes[pixel*4+1]==0 && bytes[pixel*4+2]==0 && bytes[pixel*4+3]==255,"GPU copy contains current writer, not stale pixels");
             }
             readback->unmap();value->images.emplace_back(std::move(saved));require(cache.publishAfterGpuWait(std::move(value)),"GPU-finished batch publish");
@@ -66,3 +67,9 @@ static int gpuBenchmark(){
     std::printf("D3D12 1920x1080 median-of-rounds: allocate=%.3fus reuse=%.3fus saving=%.3fus. 960 current-writer readbacks passed. Not game FPS.\n",baseline[1],recycled[1],baseline[1]-recycled[1]);
     return 0;
 }
+#else
+static int gpuBenchmark(){
+    std::fprintf(stderr,"The optional GPU benchmark requires Windows/D3D12; CPU ownership checks work on either platform.\n");
+    return 77;
+}
+#endif

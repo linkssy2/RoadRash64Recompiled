@@ -90,11 +90,15 @@ constexpr unsigned terrain_id_base = 0x52510000u;
 constexpr unsigned matching_group_flags = 0x02011555u;
 static_assert(cells_count * 56u + 88u <= command_bytes);
 static_assert(cells_count * 64u <= frame_bytes - command_bytes);
+struct StockCall {
+    unsigned command = 0, target = 0, replacement = 0;
+};
 struct Frame {
     unsigned char *host = nullptr;
     unsigned base = 0, assets = 0, commands = 0, matrices = 0;
     std::array<unsigned, 4> last_epoch{};
     std::array<bool, 4> issued{};
+    std::array<std::vector<StockCall>, 4> pending;
 };
 struct Cache {
     unsigned char *mapping = nullptr;
@@ -111,6 +115,11 @@ struct Cache {
     bool attempted = false, ready = false, drawing = false;
     unsigned grid = 0;
     std::array<bool, cells_count> stock{};
+    std::array<unsigned, cells_count> cell_ordinals{};
+    std::array<bool, cells_count> static_materials{};
+    std::array<StockCall, cells_count> stock_calls{};
+    bool replace_stock = false;
+    unsigned stock_epoch = 0, stock_view = 0, stock_graphics_slot = 0;
     TerrainStatistics stats{};
     std::mutex mutex;
 };
@@ -171,6 +180,19 @@ void command(unsigned char *m, unsigned &p, unsigned a, unsigned b) {
     word(m, p + 4, b);
     p += 8;
 }
+void cell_commands(unsigned char *m, unsigned &dl, unsigned matrix, unsigned assets,
+                   unsigned camera, const TerrainCellAsset &cell, float x, float y) {
+    const auto root = terrain_matrix(cell, x, y);
+    for (unsigned i = 0; i < 16; ++i)
+        word(m, matrix + i * 4u, std::bit_cast<unsigned>(root[i]));
+    command(m, dl, 0x6400000cu, terrain_id_base + camera * 0x2000u + cell.cell_index);
+    command(m, dl, matching_group_flags, 0u);
+    command(m, dl, 0x64000030u, 2u); // Float LOAD+PUSH, exactly as in the distant pass.
+    command(m, dl, 0u, matrix);
+    command(m, dl, 0xde000000u, assets + cell.display_list_offset);
+    command(m, dl, 0xd8380002u, 0x40u);
+    command(m, dl, 0x6400000du, 1u);
+}
 void release(Cache &c) {
     for (auto &f : c.frames)
         if (f.host)
@@ -203,13 +225,27 @@ bool initialize(Cache &c, unsigned char *m) {
         std::fprintf(stderr, "[RR64-WORLD] terrain cache refused: %s\n", error.c_str());
         return false;
     }
-    for (const auto &cell : c.assets.cells) {
+    c.cell_ordinals.fill(~0u);
+    for (unsigned ordinal = 0; ordinal < c.assets.cells.size(); ++ordinal) {
+        const auto &cell = c.assets.cells[ordinal];
         if (cell.root_quaternion != std::array<float, 4>{0, 0, 0, 1} ||
-            cell.cell_index >= cells_count) {
+            cell.cell_index >= cells_count || c.cell_ordinals[cell.cell_index] != ~0u) {
             std::fprintf(stderr, "[RR64-WORLD] terrain root certificate refused\n");
             return false;
         }
+        c.cell_ordinals[cell.cell_index] = ordinal;
     }
+    c.static_materials.fill(true);
+    // Stock animated materials keep their original producer until their live
+    // texture phase has a certificate. The distant cache currently binds frame 0.
+    // ponytail: one startup scan per animated binding; index ranges if it becomes costly.
+    for (const auto &r : c.assets.relocations)
+        if (r.texture_index < c.assets.textures.size() &&
+            c.assets.textures[r.texture_index].frame_count > 1u)
+            for (const auto &cell : c.assets.cells)
+                if (r.word_offset >= cell.display_list_offset &&
+                    r.word_offset < cell.display_list_offset + cell.display_list_size)
+                    c.static_materials[cell.cell_index] = false;
     CourseRegions::Mask occupied{};
     c.bounds.clear();
     c.bounds.reserve(c.assets.cells.size());
@@ -222,6 +258,8 @@ bool initialize(Cache &c, unsigned char *m) {
     // Per-original-graphics-buffer copies keep animated bindings and matrices
     // immutable while RT64 consumes the other buffer. Never allocate per race.
     for (auto &frame : c.frames) {
+        for (auto &pending : frame.pending)
+            pending.reserve(c.assets.cells.size());
         frame.host = static_cast<unsigned char *>(recomp::alloc(m, bytes + 4u * frame_bytes));
         if (!frame.host) {
             release(c);
@@ -305,6 +343,8 @@ void terrain_reset_session() noexcept {
     c.windowHistory = {};
     c.windowHistory = {};
     c.stock.fill(false);
+    c.stock_calls = {};
+    c.replace_stock = false;
     c.attempted = false;
     c.ready = false;
     c.drawing = false;
@@ -349,7 +389,10 @@ extern "C" void rr64_world_terrain_begin(unsigned char *m) {
     c.allowed.fill(true);
     c.window.fill(true);
     c.stock.fill(false);
+    c.stock_calls = {};
+    c.replace_stock = false;
     c.stats.stock_cells = 0;
+    c.stats.replaced_stock_cells = 0;
     c.stats.course_excluded_cells = 0;
     c.stats.stock_course_excluded = 0;
     if (!rr64_world_distance_enabled() ||
@@ -359,6 +402,10 @@ extern "C" void rr64_world_terrain_begin(unsigned char *m) {
         !rr64::engine::valid_guest_range(c.grid, 4900u * 16u))
         return;
     c.drawing = rr64::world::initialize(c, m);
+    c.replace_stock = c.drawing &&
+        rr64::engine::read_u32(m, 0x800a1830u, c.stock_epoch) &&
+        rr64::engine::read_u32(m, rr64::engine::globals::active_viewport, c.stock_view) &&
+        rr64::engine::read_u32(m, 0x8009cba4u, c.stock_graphics_slot);
     unsigned mode = 0, pending = 0;
     float x = 0, y = 0;
     using namespace rr64::engine;
@@ -482,15 +529,52 @@ extern "C" unsigned rr64_world_terrain_stock_state(unsigned char *m, unsigned re
     return 0u; // Change only the branch input, never the live cell's state.
 }
 extern "C" void rr64_world_terrain_observe(unsigned char *m, unsigned record) {
+    using namespace rr64::engine;
     auto &c = rr64::world::cache();
     std::lock_guard lock(c.mutex);
-    if (!c.drawing || c.mapping != m || record < c.grid || (record - c.grid) % 16u)
+    if (!c.drawing || c.mapping != m)
         return;
+    if (record < c.grid || (record - c.grid) % 16u) {
+        c.replace_stock = false;
+        return;
+    }
     const auto index = (record - c.grid) / 16u;
     if (index < c.stock.size() && !c.stock[index]) {
         c.stock[index] = true;
         ++c.stats.stock_cells;
     }
+    if (!c.replace_stock)
+        return;
+    unsigned pointer = 0, base = 0, count = 0, opcode = 0, target = 0, root = 0;
+    if (index >= c.stock.size() || c.cell_ordinals[index] == ~0u || !c.static_materials[index] ||
+        c.stock_graphics_slot > 1u || c.stock_view >= 4u ||
+        !read_u32(m, 0x800ac650u, pointer) ||
+        !read_u32(m, 0x800ac658u + c.stock_graphics_slot * 4u, base) ||
+        !read_u32(m, 0x800bc9a0u, count) || (count != 0x4650u && count != 0x36b0u) ||
+        !valid_guest_range(base, 0x140u + count * 8u) || pointer < base + 0x148u ||
+        pointer > base + 0x140u + count * 8u || (pointer & 7u) ||
+        !read_u32(m, pointer - 8u, opcode) || opcode != 0xde000000u ||
+        !read_u32(m, pointer - 4u, target) || !valid_guest_range(target, 8u) ||
+        !read_u32(m, record, root) || !valid_guest_range(root, 0x58u)) {
+        c.replace_stock = false;
+        return;
+    }
+    const auto &cell = c.assets.cells[c.cell_ordinals[index]];
+    for (unsigned i = 0; i < 6; ++i) {
+        float value = 0;
+        const float expected = i < 2u ? cell.authored_origin[i] : cell.root_quaternion[i - 2u];
+        if (!read_float(m, root + 0x1cu + i * 4u, value) || value != expected) {
+            c.replace_stock = false;
+            return;
+        }
+    }
+    auto &call = c.stock_calls[index];
+    // Repeated observation of one call is harmless. Two draws of the same cell
+    // cannot safely share one authored identity, so retain the entire stock pass.
+    if (call.command && (call.command != pointer - 8u || call.target != target))
+        c.replace_stock = false;
+    else
+        call = {pointer - 8u, target, 0u};
 }
 extern "C" void rr64_world_terrain_draw(unsigned char *m) {
     using namespace rr64::world;
@@ -514,6 +598,8 @@ extern "C" void rr64_world_terrain_draw(unsigned char *m) {
         ++c.stats.refusals;
         return;
     }
+    auto &pending = f.pending[camera_index];
+    pending.clear();
     auto *evidence = capture_view(c, m, camera_index, epoch, x, y);
     if (evidence) {
         evidence->view = view;
@@ -523,6 +609,24 @@ extern "C" void rr64_world_terrain_draw(unsigned char *m) {
     const WorldFrustum frustum(view, projection);
     const unsigned commands = f.commands + camera_index * frame_bytes;
     const unsigned matrices = f.matrices + camera_index * frame_bytes;
+    // Prepare every stock replacement before changing a single original call.
+    // Mixed stock/compiled materials could inherit stale texture/tile state.
+    bool replace_stock = c.replace_stock && c.stock_epoch == epoch &&
+        c.stock_view == camera_index && c.stock_graphics_slot == graphics_slot &&
+        std::uint64_t(c.assets.cells.size()) * 56u +
+            std::uint64_t(c.stats.stock_cells) * 96u + 88u <= command_bytes;
+    unsigned base = 0;
+    rr64::engine::read_u32(m, 0x800ac658u + graphics_slot * 4u, base);
+    for (unsigned i = 0; replace_stock && i < c.stock.size(); ++i) {
+        if (!c.stock[i])
+            continue;
+        const auto &call = c.stock_calls[i];
+        unsigned opcode = 0, target = 0;
+        replace_stock = c.cell_ordinals[i] != ~0u && call.command >= base + 0x140u &&
+            call.command < pointer - 8u &&
+            rr64::engine::read_u32(m, call.command, opcode) && opcode == 0xde000000u &&
+            rr64::engine::read_u32(m, call.command + 4u, target) && target == call.target;
+    }
     unsigned dl = commands;
     command(m, dl, 0x64000019u, 0);
     command(m, dl, 0x6400001bu, 0);
@@ -536,22 +640,10 @@ extern "C" void rr64_world_terrain_draw(unsigned char *m) {
         if (!frustum.intersectsTerrain(c.bounds[cellOrdinal], cell.authored_origin[0] - x,
                                        cell.authored_origin[1] - y))
             continue;
-        const auto matrix = terrain_matrix(cell, x, y);
         if (evidence)
             evidence->extended_last[cell.cell_index / 64] |= 1ull << (cell.cell_index % 64);
         const unsigned address = matrices + n * 64u;
-        for (unsigned i = 0; i < 16; ++i)
-            word(m, address + i * 4u, std::bit_cast<unsigned>(matrix[i]));
-        // Stable across graphics slots, culling and stock/cache handoffs.
-        // IDs derive from the authored cell, never its visible-list position.
-        command(m, dl, 0x6400000cu, terrain_id_base + camera_index * 0x2000u + cell.cell_index);
-        command(m, dl, matching_group_flags, 0u);
-        // LOAD+PUSH in F3DEX2 encoding (push bit is inverted by the decoder).
-        command(m, dl, 0x64000030u, 2u);
-        command(m, dl, 0u, address);
-        command(m, dl, 0xde000000u, f.assets + cell.display_list_offset);
-        command(m, dl, 0xd8380002u, 0x40u);
-        command(m, dl, 0x6400000du, 1u);
+        cell_commands(m, dl, address, f.assets, camera_index, cell, x, y);
         ++n;
         triangles += cell.triangles;
     }
@@ -563,25 +655,112 @@ extern "C" void rr64_world_terrain_draw(unsigned char *m) {
     command(m, dl, 0xe0525464u, 0x20000000u);
     command(m, dl, 0xfa000000u, 0);
     command(m, dl, 0xdf000000u, 0);
+    unsigned replaced = 0;
+    if (replace_stock) {
+        for (const auto &cell : c.assets.cells) {
+            if (!c.stock[cell.cell_index])
+                continue;
+            auto &call = c.stock_calls[cell.cell_index];
+            call.replacement = dl;
+            command(m, dl, 0xe0525464u, 0x10000064u);
+            command(m, dl, 0x6400002cu, 1u);
+            for (unsigned op : {0x19u, 0x1bu, 0x29u})
+                command(m, dl, 0x64000000u | op, 0u);
+            cell_commands(m, dl, matrices + (n + replaced) * 64u, f.assets,
+                          camera_index, cell, x, y);
+            command(m, dl, 0xe7000000u, 0u);
+            for (unsigned op : {0x2au, 0x1cu, 0x1au})
+                command(m, dl, 0x64000000u | op, 0u);
+            command(m, dl, 0x6400002cu, 0u);
+            command(m, dl, 0xe0525464u, 0x20000000u);
+            command(m, dl, 0xdf000000u, 0u);
+            pending.push_back(call);
+            ++replaced;
+        }
+    }
     if (evidence) {
         evidence->extended = n;
         evidence->triangles = triangles;
     }
-    if (!n) {
+    if (!n && !replaced) {
         c.stats.visible_cells = 0;
         c.stats.drawn_triangles = 0;
         return;
     }
     // Replace the just-written FA reset with a three-command bridge. Exactly
     // 16 bytes are added, inside the certified current original Gfx allocation.
-    unsigned bridge = pointer - 8u;
-    command(m, bridge, 0xe0525464u, 0x10000064u);
-    command(m, bridge, 0x6400002cu, 1u);
-    command(m, bridge, 0xde000000u, commands);
+    unsigned bridge = pointer;
+    if (n) {
+        bridge -= 8u;
+        command(m, bridge, 0xe0525464u, 0x10000064u);
+        command(m, bridge, 0x6400002cu, 1u);
+        command(m, bridge, 0xde000000u, commands);
+    }
+    // Stock calls remain untouched until the completed frame proves enough
+    // unused guest storage for their extended-address trampolines.
     word(m, 0x800ac650u, bridge);
     f.issued[camera_index] = true;
     f.last_epoch[camera_index] = epoch;
     c.stats.visible_cells = n;
     c.stats.drawn_triangles = triangles;
     ++c.stats.frames;
+}
+extern "C" void rr64_world_terrain_finalize(unsigned char *m, unsigned submitted_words) {
+    using namespace rr64::world;
+    using namespace rr64::engine;
+    auto &c = cache();
+    std::lock_guard lock(c.mutex);
+    unsigned gfx = 0, epoch = 0, base = 0, active_base = 0, count = 0, cursor = 0;
+    if (c.mapping != m || !c.ready || !read_u32(m, 0x8009cba4u, gfx) || gfx > 1u)
+        return;
+    auto &f = c.frames[gfx];
+    const auto discard = [&] { for (auto &pending : f.pending) pending.clear(); };
+    unsigned sync = 0, sync_value = 0, end = 0, end_value = 0;
+    if (!read_u32(m, 0x800a1830u, epoch) ||
+        !read_u32(m, 0x800ac658u + gfx * 4u, base) ||
+        !read_u32(m, 0x8009cb90u, active_base) || active_base != base ||
+        !read_u32(m, 0x800bc9a0u, count) || (count != 0x4650u && count != 0x36b0u) ||
+        !valid_guest_range(base, 0x140u + count * 8u) ||
+        submitted_words < 4u || submitted_words > count || (submitted_words & 1u) ||
+        !read_u32(m, 0x800ac650u, cursor) ||
+        cursor < base + 0x140u + submitted_words * 4u ||
+        cursor > base + 0x140u + count * 8u || (cursor & 7u)) {
+        discard();
+        return;
+    }
+    const unsigned submitted_end = base + 0x140u + submitted_words * 4u;
+    if (!read_u32(m, submitted_end - 16u, sync) || sync != 0xe9000000u ||
+        !read_u32(m, submitted_end - 12u, sync_value) || sync_value ||
+        !read_u32(m, submitted_end - 8u, end) || end != 0xdf000000u ||
+        !read_u32(m, submitted_end - 4u, end_value) || end_value) {
+        discard();
+        return;
+    }
+    for (unsigned view = 0; view < f.pending.size(); ++view) {
+        auto &pending = f.pending[view];
+        bool valid = f.issued[view] && f.last_epoch[view] == epoch &&
+            pending.size() * 24u <= base + 0x140u + count * 8u - cursor;
+        for (const auto &call : pending) {
+            unsigned opcode = 0, target = 0;
+            valid = valid && call.command >= base + 0x140u &&
+                call.command + 8u <= submitted_end - 16u &&
+                read_u32(m, call.command, opcode) && opcode == 0xde000000u &&
+                read_u32(m, call.command + 4u, target) && target == call.target;
+        }
+        if (valid) {
+            for (const auto &call : pending) {
+                // The original main-list DF stays in place. Only stock calls
+                // enter this tail; no later actor/scenery commands can collide.
+                word(m, call.command + 4u, cursor);
+                command(m, cursor, 0xe0525464u, 0x10000064u);
+                command(m, cursor, 0x6400002cu, 1u);
+                command(m, cursor, 0xde010000u, call.replacement);
+            }
+            c.stats.replaced_stock_cells += unsigned(pending.size());
+        }
+        pending.clear();
+    }
+    // Share the remaining tail with other finalizers. The original submission
+    // length was already computed by 8000B00C and remains unchanged.
+    word(m, 0x800ac650u, cursor);
 }

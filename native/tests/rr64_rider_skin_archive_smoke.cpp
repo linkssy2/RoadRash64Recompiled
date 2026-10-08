@@ -56,6 +56,11 @@ int main(int argc,char** argv){
     auto invalid=marker;invalid["characters"][0]["donor"]=45;check(!load(invalid.dump(),files),"invalid donor rejected");
     invalid=marker;invalid["characters"][0]["textures"][0]="../escape.ci8";check(!load(invalid.dump(),files),"path traversal rejected");
     invalid=marker;invalid["characters"][0]["model"]="old.mesh";check(!load(invalid.dump(),files),"mesh metadata cannot reactivate retired renderer");
+    invalid=marker;invalid["characters"][0]["turtle_shell"]="yes";check(!load(invalid.dump(),files),"shell flag must be boolean");
+    invalid=marker;invalid["characters"][0]["dual_head"]="yes";check(!load(invalid.dump(),files),"separate cheeks flag must be boolean");
+    invalid=marker;invalid["characters"][0]["donor"]=10;invalid["characters"][0]["dual_head"]=true;check(!load(invalid.dump(),files),"separate cheeks reject incompatible donor");
+    invalid=marker;invalid["characters"][0]["dual_head"]=true;invalid["characters"][0]["turtle_shell"]=true;check(!load(invalid.dump(),files),"unsupported combined cosmetic geometry rejected");
+    invalid=marker;invalid["characters"][0]["donor"]=10;invalid["characters"][0]["turtle_shell"]=true;check(!load(invalid.dump(),files),"shell rejects incompatible native donor");
     const auto duplicate=std::string("{\"format\":\"wrong\",")+marker.dump().substr(1);check(!load(duplicate,files),"duplicate JSON key rejected");
     auto missing=files;missing.pop_back();check(!load(marker.dump(),missing)&&!skin::enabled(),"missing last texture never partially publishes roster");
     missing=files;missing.push_back(files.front());check(!load(marker.dump(),missing),"duplicate ZIP texture identity rejected");

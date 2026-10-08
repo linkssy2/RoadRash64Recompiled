@@ -46,11 +46,11 @@ int main(){
     const auto directory=std::filesystem::temp_directory_path()/("rr64-skin-menu-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     prefs::initialize(directory);
     std::vector<skin::Appearance> catalog;
-    for(unsigned i=0;i<11;++i)catalog.push_back(skin_fixture("rider-"+std::to_string(i),"Rider "+std::to_string(i),i==3?10:0));
+    for(unsigned i=0;i<skin::maximum_characters;++i)catalog.push_back(skin_fixture("rider-"+std::to_string(i),"Rider "+std::to_string(i),i==3?10:0));
     auto bad=catalog;bad[3].donor=45;check(!skin::install_catalog(bad)&&!skin::enabled(),"invalid native donor rejected atomically");
     bad=catalog;bad[3].textures[0].bytes.back()=0;check(!skin::install_catalog(bad),"transparent palette rejected");
     bad=catalog;bad[4].id=bad[3].id;check(!skin::install_catalog(bad),"duplicate stable identity rejected");
-    check(skin::install_catalog(catalog)&&skin::count()==11,"eleven native skins install");
+    check(skin::install_catalog(catalog)&&skin::count()==skin::maximum_characters,"full bounded catalog installs");
     put(0x800d6a58,17);
     for(unsigned unlocked=0;unlocked<2;++unlocked){
         half(0x800a77d8,unlocked);const int maximum=unlocked?44:39,ring=maximum+1+skin::count();

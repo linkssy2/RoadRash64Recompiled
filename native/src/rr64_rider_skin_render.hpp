@@ -18,7 +18,11 @@ void reset_render_session() noexcept;
 extern "C" {
 #endif
 unsigned rr64_rider_skin_actor_list(unsigned char *, unsigned node, unsigned original,
-                                    unsigned lod);
+                                    unsigned lod, unsigned vertex_base
+#ifdef __cplusplus
+                                    = 0
+#endif
+                                    );
 unsigned rr64_rider_skin_actor_call(unsigned char *, unsigned node, unsigned original,
                                     unsigned call, unsigned lod);
 void rr64_rider_skin_preview_begin(unsigned char *, unsigned root);

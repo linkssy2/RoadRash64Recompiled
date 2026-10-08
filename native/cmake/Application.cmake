@@ -12,6 +12,7 @@ add_executable(RoadRash64Recompiled
     src/rr64_actor_render_snapshot.cpp
     src/rr64_actor_render_runtime.cpp
     src/rr64_actor_held_pose.cpp
+    src/rr64_shadow_tags.cpp
     src/rr64_world_render.cpp
     src/rr64_world_camera.cpp
     src/rr64_video_mode.cpp

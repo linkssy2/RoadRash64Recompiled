@@ -1,12 +1,16 @@
 # Optional native rider skins
 
 `More Characters` supplies diffuse textures for native donor riders 0 (male)
-and 10 (female). It never supplies replacement meshes. Native selection IDs,
+and 10 (female). It never supplies replacement rider meshes. Native selection IDs,
 physics, animation, and Controller Pak records retain their original format.
 Custom appearance IDs live in the host catalog and a separate local preference
 file. Selection is supported offline and in local multiplayer, not online.
 
 The implementation is split by responsibility:
+
+The catalog has a fixed capacity of 32; More Characters 2.1.0 supplies 25 skins.
+The released Turtle skins use painted shells on the native body. No shell
+attachment is enabled in the pack.
 
 - `rr64_rider_skins`: immutable catalog and bounded per-player selections.
 - `rr64_rider_skin_mod_ui`: archive validation and normal Mods integration.
@@ -27,10 +31,11 @@ model headers and geometry are read from the user's ROM, never from the mod.
 `scripts/build_more_character_skins.py` converts the authored atlases in
 `mods/more-characters-skins/art/` into this format. Texture packing accommodates
 the original UV islands, including their differing vertical orientations;
-runtime UVs and geometry remain unchanged. The offline authoring step requires
+native geometry stays unchanged. Dedicated head textures split the native
+horizontal UV span by face side while preserving its vertical mapping. The offline authoring step requires
 Pillow. The game does not require Python or Pillow to load the mod.
 
-The nine non-helmeted appearances use dedicated opaque head strips from
+Appearances with dedicated faces use dedicated opaque head strips from
 `art/heads/<id>.png`. `head-layout.json` must declare every such strip; a missing
 entry or file stops packaging. Ghost Rider and Master Chief retain
 their original authored atlas heads. The manifest's optional `source_x` and
@@ -63,7 +68,7 @@ and specific misplaced materials. Original pose and silhouette differences remai
 Offline previews of the finished pack should decode its CI8 payloads; calling
 `native_tiles` alone shows the pre-calibration artwork.
 
-Doom Guy's replacement bare face is packed after the calibrated body. The packer
+Doom Guy and Marcus Fenix replacement faces are packed after the calibrated body. The packer
 merges duplicate RGBA5551 palette aliases outside the head without changing their
 decoded colors, then assigns the new face only to unused palette entries. This
 keeps every body color exact even though face and limbs share a texture. The same
@@ -85,21 +90,12 @@ active rider pool, local slot, donor and graph; bikes and weapons keep their
 own textures. The native-call preview regression covers this wiring separately
 from the lower-level texture substitution tests.
 
-Native Skins 04 failed the user's selector check despite the added rider hook.
-The regression now also executes native material resolution, caching, CI8 image
-and palette commands, and visible matrix traversal. It still supplies synthetic
-ownership records and resources; those checks cannot prove the live selector's
-ownership/header data or GPU presentation.
-
-The Native Skins 05 trace identified a separate ownership failure: the outer
-mode record points to the shared menu update callback (`80072704`), not one
-of the four character-selection leaf routines. Native `8002F14C` dispatches
-those leaves for modes 33, 35, 45 and 46. Preview authentication uses those
-exact modes and verifies their shared update/draw callbacks; mode 35 also
-validates the local player count. Other menus using the same callbacks remain
-excluded. The regression fixtures now reproduce that real dispatcher layout
-instead of placing leaf addresses into the outer callback table. The owner confirmed the corrected selector working in Native Skins 06.
-The accepted 2.0.5 archive is carried unchanged into 1.4.3.
+Preview ownership follows native modes 33, 35, 45 and 46 and validates their
+shared callbacks; mode 35 also checks local player count. The renderer classifies
+head material and native UV ranges rather than fixed pose-space bounds. This
+keeps translated/high-detail showroom heads mapped correctly. Asymmetric faces
+choose the texture half from the loaded batch's lateral center; native vertical
+UVs are preserved. Private vertex copies are restored after each draw.
 
 For a focused selector investigation, set both `RR64_DIAGNOSTICS=1` and
 `RR64_RIDER_SKIN_PREVIEW_TRACE=1` before launch. Up to 128 fixed records capture
@@ -108,7 +104,7 @@ addresses. Each graph/selection is sampled at most three times, spaced by native
 frames. Rendering never performs log formatting or file I/O: the event thread
 drains copied samples using a non-blocking lock. Records are diagnostic context,
 not rendering authority; texture pixels are not recorded. `reason=0` means the
-replacement list was emitted, not that it was visually correct. Reasons 1–8
+replacement list was emitted, not that it was visually correct. Reasons 1â€“8
 identify ownership/graphics, command-buffer bounds, changed context, invalid
 range, oversized list, texture staging, unmatched/unsupported commands, and
 frame-copy failure respectively. Queue omissions are counted. Both switches

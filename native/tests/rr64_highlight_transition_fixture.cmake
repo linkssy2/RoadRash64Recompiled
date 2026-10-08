@@ -20,10 +20,12 @@ add_executable(RR64HighlightTransitionSmoke EXCLUDE_FROM_ALL
     "${_rr64_highlight_transition_dispatch}" "${_rr64_highlight_transition_runtime}"
     src/rr64_highlight_recording.cpp src/rr64_highlight_pose.cpp
     src/rr64_actor_pose.cpp src/rr64_highlight_camera.cpp src/rr64_highlight_render_boundary.cpp
+    src/rr64_shadow_tags.cpp
     tests/rr64_highlight_camera_terrain_unavailable.cpp
     src/rr64_highlight_network.cpp src/rr64_highlight_audio.cpp)
 target_include_directories(RR64HighlightTransitionSmoke PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+    "${RT64_ROOT}/src"
     $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES>)
 target_compile_features(RR64HighlightTransitionSmoke PRIVATE cxx_std_20)
 target_link_libraries(RR64HighlightTransitionSmoke PRIVATE libzstd_static)

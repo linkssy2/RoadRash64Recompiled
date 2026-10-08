@@ -139,7 +139,7 @@
 #include "rr64_experimental_course.hpp"
 #endif
 
-constexpr const char* kVersion = "1.4.4";
+constexpr const char* kVersion = "1.4.5";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -427,6 +427,36 @@ void rr64_log(const char* format, ...) {
     } else {
         write_runtime_log(buffer);
     }
+}
+
+void report_preparation_trace() {
+    if (!RT64::RR64PreparationTrace::enabled()) { return; }
+    // The UI/shutdown consumer formats records; rendering only publishes fixed
+    // timing data. Nested stage durations overlap and must not be added together.
+    RT64::RR64PreparationTrace::buffer.drain([](const auto& record) {
+        std::string stages;
+        for (std::size_t i = 0; i < record.stageNs.size(); ++i) {
+            if (!record.stageNs[i]) { continue; }
+            char text[128];
+            std::snprintf(text, sizeof(text), " %s=%.3fms",
+                RT64::RR64PipelineDiagnostics::Names[i], double(record.stageNs[i]) / 1.0e6);
+            stages += text;
+        }
+        rr64_log("[RR64-PREPARATION] ordinal=%" PRIu64 " first-writer=%" PRIu64
+            " last-writer=%" PRIu64 " start-ns=%" PRIu64 " end-ns=%" PRIu64
+            " total-ns=%" PRIu64 " display-list-address=%08X"
+            " buffer-pair-growths=%" PRIu64 " buffer-pair-old-bytes=%" PRIu64
+            " buffer-pair-new-bytes=%" PRIu64 " output-buffer-growths=%" PRIu64
+            " output-buffer-old-bytes=%" PRIu64 " output-buffer-new-bytes=%" PRIu64 "%s\n",
+            record.ordinal, record.firstWriter, record.lastWriter, record.startNs,
+            record.endNs, record.totalNs, record.displayListAddress,
+            record.bufferPairGrowthCount, record.bufferPairOldCapacityBytes, record.bufferPairNewCapacityBytes,
+            record.outputBufferGrowthCount, record.outputBufferOldCapacityBytes, record.outputBufferNewCapacityBytes,
+            stages.c_str());
+    });
+    rr64_log("[RR64-PREPARATION] attempts=%" PRIu64 " dropped=%" PRIu64 " counters=cumulative\n",
+        RT64::RR64PreparationTrace::buffer.attempts.load(std::memory_order_relaxed),
+        RT64::RR64PreparationTrace::buffer.dropped.load(std::memory_order_relaxed));
 }
 #ifdef _WIN32
 std::filesystem::path executable_directory() {
@@ -828,6 +858,7 @@ void update_gfx(void*) {
         }
         rr64_log("[RR64-SCHEDULER] queue-overflow-samples=%" PRIu64 "\n",
             g_guest_queue_overflow_samples.exchange(0));
+        report_preparation_trace();
         for (std::size_t i = 0; i < g_pipeline_stages.size(); ++i) {
             auto& stage = g_pipeline_stages[i];
             const auto stage_samples = stage.samples.exchange(0);
@@ -917,12 +948,25 @@ void update_gfx(void*) {
                 geometry_reasons[2], geometry_reasons[3], geometry_reasons[4], geometry_reasons[5]);
         }
         RT64::RR64MatchingEvidence::buffer.drain([](const RT64::RR64MatchingEvidence::Record &r) {
+            if(r.category==3) {
+                rr64_log("[RR64-MATCH-CAMERA] marker=%08X round=%u layout=%u views=%u replay-key=%u valid-mask=%u modes=%u,%u,%u,%u owners=%u,%u,%u,%u flags=%u,%u,%u,%u generations=%u,%u,%u,%u bikes=%08X,%08X,%08X,%08X riders=%08X,%08X,%08X,%08X\n",
+                    r.cameraMarker,r.cameraRound,r.cameraLayout,r.cameraViews,r.cameraReplayKey,r.cameraValidMask,
+                    r.cameraModes[0],r.cameraModes[1],r.cameraModes[2],r.cameraModes[3],
+                    r.cameraOwners[0],r.cameraOwners[1],r.cameraOwners[2],r.cameraOwners[3],
+                    r.cameraFlags[0],r.cameraFlags[1],r.cameraFlags[2],r.cameraFlags[3],
+                    r.cameraGenerations[0],r.cameraGenerations[1],r.cameraGenerations[2],r.cameraGenerations[3],
+                    r.cameraBikes[0],r.cameraBikes[1],r.cameraBikes[2],r.cameraBikes[3],
+                    r.cameraRiders[0],r.cameraRiders[1],r.cameraRiders[2],r.cameraRiders[3]);
+                return;
+            }
             rr64_log("[RR64-MATCH-EVIDENCE] category=%u submission=%llu workload=%llu fb=%u proj=%u view=%u world=%u previous=%u id=%08X previous-id=%08X occurrences=%u/%u mapped=%u policy=%u order=%u lerp=%u/%u vertices=%u indices=%u topology=%llu\n",
                 r.category,(unsigned long long)r.submission,(unsigned long long)r.workload,r.framebuffer,r.projection,r.view,r.world,r.previousWorld,
                 r.id,r.previousId,r.idOccurrences,r.previousIdOccurrences,unsigned(r.mapped),r.positionPolicy,r.ordering,unsigned(r.worldLerp),unsigned(r.viewLerp),r.vertices,r.indices,(unsigned long long)r.topologyHash);
             rr64_log("[RR64-MATCH-EVIDENCE-POS] category=%u submission=%llu world=%u world-before=%.9g,%.9g,%.9g world-after=%.9g,%.9g,%.9g view-before=%.9g,%.9g,%.9g view-after=%.9g,%.9g,%.9g\n",
                 r.category,(unsigned long long)r.submission,r.world,r.worldBefore[0],r.worldBefore[1],r.worldBefore[2],r.worldAfter[0],r.worldAfter[1],r.worldAfter[2],
                 r.viewBefore[0],r.viewBefore[1],r.viewBefore[2],r.viewAfter[0],r.viewAfter[1],r.viewAfter[2]);
+            rr64_log("[RR64-MATCH-EVIDENCE-SOURCE] category=%u submission=%llu world=%u mask=%u physical=%08X segmented=%08X previous-physical=%08X previous-segmented=%08X view-id=%08X previous-view-id=%08X\n",
+                r.category,(unsigned long long)r.submission,r.world,r.sourceMask,r.physicalAddress,r.segmentedAddress,r.previousPhysicalAddress,r.previousSegmentedAddress,r.viewId,r.previousViewId);
         });
         if (RT64::RR64CommandProfile::enabled()) {
             for (unsigned opcode=0;opcode<RT64::RR64CommandProfile::buckets.size();opcode++) {
@@ -1008,9 +1052,9 @@ void update_gfx(void*) {
         }
         if (rr64_world_distance_enabled()) {
             const auto world = rr64::world::terrain_statistics();
-            rr64_log("[RR64-WORLD] terrain cached=%u cached-triangles=%u bytes=%u visible=%u stock=%u drawn-triangles=%u frames=%llu refused=%llu far-target=%.0f\n",
+            rr64_log("[RR64-WORLD] terrain cached=%u cached-triangles=%u bytes=%u visible=%u stock=%u stock-replaced=%u drawn-triangles=%u frames=%llu refused=%llu far-target=%.0f shadow-tags=%llu\n",
                 world.cached_cells, world.cached_triangles, world.cached_bytes, world.visible_cells,
-                world.stock_cells, world.drawn_triangles, world.frames, world.refusals, rr64::world::far_distance);
+                world.stock_cells, world.replaced_stock_cells, world.drawn_triangles, world.frames, world.refusals, rr64::world::far_distance, rr64_shadow_tags_count());
             rr64_log("[RR64-WORLD] course-excluded-terrain-cells=%u\n",world.course_excluded_cells);
             rr64_log("[RR64-WORLD] stock-course-excluded=%u\n",world.stock_course_excluded);
             if(world.evidence.enabled) {
@@ -3035,6 +3079,7 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif
+    { DiagnosticReport report; report_preparation_trace(); }
     rr64_log("[RR64] Native probe exiting normally.\n");
     rr64_prediction_flush_cases();
     if (g_runtime_log != nullptr) {

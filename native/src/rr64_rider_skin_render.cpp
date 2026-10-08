@@ -103,6 +103,7 @@ struct Preview {
 struct State {
     unsigned char *memory{};
     unsigned textures{};
+    unsigned shell{};
     std::array<bool, maximum_characters> copied{};
     std::array<Frame, 2> frames{};
     std::array<Preview, 8> previews{};
@@ -289,6 +290,185 @@ unsigned frame_copy(unsigned char *m, unsigned gfx, unsigned epoch,
     f.used += bytes;
     return result;
 }
+unsigned add_shell(unsigned char *m, std::span<MaterialCommand> commands,
+                   unsigned count, unsigned torso) {
+    // Insert only after a complete near-LOD torso batch. Its bone matrix and
+    // texture remain active here, so the shell follows every native pose.
+    unsigned last_triangle = 0;
+    bool active = false;
+    for (unsigned i = 0; i < count; ++i) {
+        const auto [op, address] = commands[i];
+        if (op == 0xfd500000) {
+            if (active && address != torso) break;
+            active = address == torso;
+        }
+        if (active && (op >> 24 == 5 || op >> 24 == 6)) last_triangle = i;
+        if (last_triangle && (op >> 24 == 0xda || op >> 24 == 0xdf)) break;
+    }
+    constexpr unsigned added = 5, vertex_bytes = 9 * 16;
+    if (!last_triangle || count + added + 2 > commands.size()) return count;
+    // The attachment overwrites the RSP vertex cache. A following native batch
+    // must reload vertices before drawing; otherwise keep the original list.
+    for (unsigned i = last_triangle + 1; i < count; ++i) {
+        const unsigned op = commands[i].first >> 24;
+        if (op == 1 || op == 0xdf) break;
+        if (op == 5 || op == 6) return count;
+    }
+    if (!state.shell) {
+        state.shell = allocate(m, vertex_bytes);
+        if (!state.shell) return count;
+        // Authored eight-sided dome, not geometry extracted from another game.
+        constexpr std::array<std::array<int, 3>, 9> positions{{
+            {-43,0,8}, {-24,0,35}, {-24,18,27}, {-24,25,8},
+            {-24,18,-11}, {-24,0,-19}, {-24,-18,-11},
+            {-24,-25,8}, {-24,-18,27}}};
+        for (unsigned i = 0; i < positions.size(); ++i) {
+            const auto &p = positions[i];
+            const unsigned v = state.shell + i * 16;
+            // This allocation is outside the original 8 MiB guest range.
+            put(m, v, (unsigned(std::uint16_t(p[0])) << 16) | std::uint16_t(p[1]));
+            put(m, v + 4, unsigned(std::uint16_t(p[2])) << 16);
+            put(m, v + 8, (unsigned((48 + p[1] * 15 / 25) * 64) << 16) |
+                          unsigned((p[2] + 19) * 31 * 64 / 54));
+            put(m, v + 12, 0x810000ff); // Back-facing normal, opaque.
+        }
+    }
+    if (!intact(m, state.shell, vertex_bytes)) return count;
+    const unsigned at = last_triangle + 1;
+    std::move_backward(commands.begin() + at, commands.begin() + count,
+                       commands.begin() + count + added);
+    commands[at] = {0x01009012, state.shell};
+    for (unsigned pair = 0; pair < 4; ++pair) {
+        const unsigned first = pair * 2 + 1, second = first + 1;
+        const unsigned next = second == 8 ? 1 : second + 1;
+        commands[at + 1 + pair] = {0x06000000 | (first * 2 << 8) | second * 2,
+                                   (second * 2 << 8) | next * 2};
+    }
+    return count + added;
+}
+unsigned separate_head(unsigned char *m, unsigned gfx, unsigned epoch, unsigned id,
+                       unsigned vertex_base, std::span<MaterialCommand> commands,
+                       unsigned count) {
+    using Vertex = std::array<unsigned, 4>;
+    std::array<Vertex, 32> cache{};
+    std::array<bool, 32> valid{};
+    std::array<MaterialCommand, 6144> result{};
+    unsigned used = 0, changed = 0;
+    unsigned loaded = 0;
+    MaterialCommand reload{};
+    int slot = -1;
+    bool overwritten = false;
+    const std::array<unsigned, 3> images{binding(id, 0, 0).replacement_image,
+        binding(id, 2, 0).replacement_image, binding(id, 2, 0, true).replacement_image};
+    constexpr std::array<int, 3> left{26 * 64, 36 * 64, 18 * 64};
+    constexpr std::array<int, 3> width{38 * 64, 27 * 64, 9 * 64};
+    auto emit = [&](MaterialCommand c) {
+        if (used >= result.size()) return false;
+        result[used++] = c;
+        return true;
+    };
+    auto stage = [&](std::span<const Vertex> vertices) {
+        std::array<MaterialCommand, 64> words{};
+        for (unsigned i = 0; i < vertices.size(); ++i) {
+            words[i * 2] = {vertices[i][0], vertices[i][1]};
+            words[i * 2 + 1] = {vertices[i][2], vertices[i][3]};
+        }
+        return frame_copy(m, gfx, epoch, std::span(words).first(vertices.size() * 2));
+    };
+    auto restore = [&] {
+        if (!overwritten) return true;
+        overwritten = false;
+        return emit(reload);
+    };
+    auto indices = [](unsigned word) {
+        return std::array<unsigned, 3>{(word >> 17) & 127, (word >> 9) & 127,
+                                      (word >> 1) & 127};
+    };
+    auto head = [&](const std::array<unsigned, 3> &triangle) {
+        if (slot < 0 || loaded < 3) return false;
+        for (unsigned index : triangle) {
+            if (index >= loaded || !valid[index]) return false;
+            const auto &v = cache[index];
+            const int s = std::int16_t(v[2] >> 16);
+            // Detailed showroom and animated meshes do not share the reference
+            // model's XYZ bounds. The head's material/UV island is stable.
+            if (s < left[slot] - 32 || s > left[slot] + width[slot]) return false;
+        }
+        return true;
+    };
+    auto triangle = [&](unsigned packed, bool is_head) {
+        if (!is_head) return restore() && emit({0x05000000 | (packed & 0xffffff), 0});
+        const auto ids = indices(packed);
+        int low = 32767, high = -32768, side = 0;
+        for (unsigned i = 0; i < loaded; ++i) {
+            const int y = std::int16_t(cache[i][0]);
+            low = std::min(low, y);
+            high = std::max(high, y);
+        }
+        for (unsigned index : ids) side += 2 * std::int16_t(cache[index][0]) - low - high;
+        std::array<Vertex, 3> vertices{cache[ids[0]], cache[ids[1]], cache[ids[2]]};
+        for (auto &v : vertices) {
+            const int s = std::int16_t(v[2] >> 16);
+            const unsigned remapped = left[slot] +
+                std::clamp(s - left[slot], 0, width[slot] - 1) / 2 +
+                (side > 0 ? width[slot] / 2 : 0);
+            // Preserve authored T: the live high-detail head already spans
+            // this strip, unlike the low-detail reference used by offline previews.
+            v[2] = (remapped << 16) | (v[2] & 0xffff);
+        }
+        const unsigned address = stage(vertices);
+        if (!address || !emit({0x01003006, address}) || !emit({0x05000204, 0})) return false;
+        overwritten = true;
+        ++changed;
+        return true;
+    };
+    for (unsigned i = 0; i < count; ++i) {
+        const auto c = commands[i];
+        const unsigned op = c.first >> 24;
+        if (c.first == 0xfd500000) {
+            slot = -1;
+            for (unsigned s = 0; s < images.size(); ++s)
+                if (c.second == images[s]) slot = int(s);
+        }
+        if (op == 1) {
+            if (!restore()) return 0;
+            const unsigned n = (c.first >> 12) & 255, end = (c.first >> 1) & 127;
+            if (!n || n > 32 || end > 32 || end < n) return 0;
+            // Native head batches load from cache index zero. Keep partial or
+            // unfamiliar batches untouched; only overwrite slots we can restore
+            // with the exact original load under the same bone matrix.
+            loaded = end == n ? n : 0;
+            reload = c;
+            unsigned address = c.second;
+            if ((address >> 24) == 5) {
+                if (!vertex_base) return 0;
+                address = vertex_base + (address & 0xffffff);
+            } else if (!(address & 0x80000000)) {
+                if (address >= 0x800000) return 0;
+                address |= 0x80000000;
+            }
+            if (!valid_guest_range(address, n * 16)) return 0;
+            for (unsigned v = 0; v < n; ++v) {
+                for (unsigned w = 0; w < 4; ++w)
+                    cache[end - n + v][w] = native_word(m, address + v * 16 + w * 4);
+                valid[end - n + v] = true;
+            }
+        }
+        if (op == 5 || op == 6) {
+            const bool first = head(indices(c.first)), second = op == 6 && head(indices(c.second));
+            if (first || second) {
+                if (!triangle(c.first, first) || (op == 6 && !triangle(c.second, second))) return 0;
+                continue;
+            }
+            if (!restore()) return 0;
+        }
+        if ((op == 0xda || op == 0xdb || op == 0xdf) && !restore()) return 0;
+        if (!emit(c)) return 0;
+    }
+    if (!changed || used + 2 > commands.size()) return 0;
+    std::copy_n(result.begin(), used, commands.begin());
+    return used;
+}
 unsigned finish_list(unsigned char *m, unsigned gfx, unsigned epoch,
                      std::span<MaterialCommand> commands, unsigned count, unsigned node) {
 #ifdef RR64_EXPERIMENTAL_COURSE
@@ -297,7 +477,7 @@ unsigned finish_list(unsigned char *m, unsigned gfx, unsigned epoch,
     if (node && mk64_items::render_effect(m, node, effect, clock)) {
         const auto lightning = mk64_items::lightning_visual(effect, clock);
         if (effect.star_until > clock || effect.boo_until > clock || lightning.active) {
-            std::array<MaterialCommand, 1040> transformed{};
+            std::array<MaterialCommand, 1536> transformed{};
             constexpr std::array<unsigned, 6> colors{0xff5050, 0xffdf50, 0x70ff70,
                                                      0x50dfff, 0x8080ff, 0xff70df};
             const bool ghost = effect.boo_until > clock;
@@ -342,7 +522,7 @@ void reset_render_session() noexcept {
 }
 
 extern "C" unsigned rr64_rider_skin_actor_list(unsigned char *m, unsigned node, unsigned original,
-                                               unsigned lod) {
+                                               unsigned lod, unsigned vertex_base) {
     using namespace rr64::rider_skins;
     using namespace rr64::engine;
     const unsigned id = rr64_rider_skin_actor_selection(m, node);
@@ -368,7 +548,7 @@ extern "C" unsigned rr64_rider_skin_actor_list(unsigned char *m, unsigned node, 
     if (!size)
         return original;
     std::array<MaterialCommand, 1024> source{};
-    std::array<MaterialCommand, 1040> changed{};
+    std::array<MaterialCommand, 1536> changed{};
     unsigned count = 0;
     for (; count < source.size(); ++count) {
         const unsigned p = original + count * 8;
@@ -382,6 +562,12 @@ extern "C" unsigned rr64_rider_skin_actor_list(unsigned char *m, unsigned node, 
     }
     if (!replace_images(std::span(source).first(count), changed, std::span(bindings).first(size)))
         return original;
+    if (a->turtle_shell && lod == 0)
+        count = add_shell(m, changed, count, binding(id, 1, 0).replacement_image);
+    if (a->dual_head) {
+        count = separate_head(m, gfx, epoch, id, vertex_base, changed, count);
+        if (!count) return original;
+    }
     const auto list = finish_list(m, gfx, epoch, changed, count, node);
     return list ? list : original;
 }
@@ -392,7 +578,23 @@ extern "C" unsigned rr64_rider_skin_actor_call(unsigned char *m, unsigned node, 
     if (!call_range(m, call) || (cursor != call && cursor != call + 8) ||
         native_word(m, call) != 0xde000000)
         return original;
-    const unsigned list = rr64_rider_skin_actor_list(m, node, original, lod);
+    unsigned vertex_base = 0;
+    const auto *skin = appearance(rr64_rider_skin_actor_selection(m, node));
+    if (skin && skin->dual_head) {
+        // Native 11F8C establishes segment 5 before the actor call. Search only
+        // this validated command buffer, never guessed global segment state.
+        unsigned gfx = 0, epoch = 0;
+        graphics(m, gfx, epoch);
+        const unsigned start = native_word(m, 0x800ac658 + gfx * 4) + 0x140;
+        for (unsigned p = call, n = 0; p >= start + 8 && n < 128; ++n) {
+            p -= 8;
+            if (native_word(m, p) == 0xdb060014) {
+                vertex_base = native_word(m, p + 4);
+                break;
+            }
+        }
+    }
+    const unsigned list = rr64_rider_skin_actor_list(m, node, original, lod, vertex_base);
     if (list == original) {
 #ifdef RR64_EXPERIMENTAL_COURSE
         return rr64_mk64_items_actor_call(m, node, original, call);
@@ -484,7 +686,7 @@ extern "C" void rr64_rider_skin_preview_end(unsigned char *m) {
             bindings[size++] = physical;
         }
     std::array<MaterialCommand, 4096> source{};
-    std::array<MaterialCommand, 4100> changed{};
+    std::array<MaterialCommand, 4112> changed{};
     for (unsigned i = 0; i < count; ++i) {
         source[i] = {native_word(m, p.start + i * 8), native_word(m, p.start + i * 8 + 4)};
         if (p.sampled) {
@@ -504,7 +706,13 @@ extern "C" void rr64_rider_skin_preview_end(unsigned char *m) {
         p.trace.reason = 7; // Unmatched images or unsupported commands.
         return;
     }
-    const unsigned list = finish_list(m, gfx, epoch, changed, count + 1, 0);
+    unsigned final_count = a->turtle_shell
+        ? add_shell(m, changed, count + 1, binding(p.appearance, 1, 0).replacement_image)
+        : count + 1;
+    if (a->dual_head)
+        final_count = separate_head(m, gfx, epoch, p.appearance, 0, changed, final_count);
+    if (!final_count) { p.trace.reason = 8; return; }
+    const unsigned list = finish_list(m, gfx, epoch, changed, final_count, 0);
     p.trace.list = list;
     if (!list) {
         p.trace.reason = 8;

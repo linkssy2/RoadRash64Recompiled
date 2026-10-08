@@ -19,8 +19,20 @@ names=['func_800571DC','func_80059648','func_800597A0','func_80058600',
        'func_8001A250','func_8001295C','func_80080450','func_800826E8',
        'func_80082798','func_800823AC','func_800806B4','func_80080768',
        'func_800807C0','func_80080820','func_80080890','func_8005980C',
-       'func_80083408','func_80083210','func_800817C0','n_alEnvmixerPull',
-       'func_800129F8','func_8001291C','func_8004F348']
+       'func_80083408','func_80083210','func_800817C0','func_80081914',
+       'func_80081FEC','func_80082180','func_800826B0','n_alEnvmixerPull',
+       'func_800129F8','func_8001291C','func_8004F348','func_800824E8']
+# Execute the real initializer too: a larger logical row count alone does not
+# prove that its heap, physical voices, DMA cache and command storage fit.
+names += ['func_8007FE9C','MusSetMasterVolume','__MusIntMemMalloc',
+          'func_80080D90','func_80084290','func_80086C70','__OsSchedInstall',
+          'alCopy','alHeapDBAlloc','alHeapInit','alLink','alN_PVoiceNew','alUnlink',
+          'func_800835F0','func_80083658','func_800838C8','func_80083918',
+          'func_80083A60','func_80083D40','func_80083D58','func_80083D9C',
+          'func_80083E40','func_80084084','func_80084440','func_80084700',
+          'func_80084830','func_800848AC','func_800848C4','func_800848D0',
+          'func_80086CC0','func_80086DD8','func_80087608','init_lpfilter',
+          'n_alEnvmixerParam','n_alLoadParam']
 functions={}
 all_functions={}
 for path in a.generated.glob('funcs_*.c'):
@@ -83,12 +95,14 @@ for name in ('func_800571DC','func_80080450','func_80082798','func_800806B4',
     functions[name]=functions[name].replace('{',
         '{\n    rr64_rival_engine_fixture_call(0x'+name[-8:]+'u);',1)
 calls=set(re.findall(r'^\s+(\w+)\(rdram, ctx\);',''.join(functions.values())+''.join(stock),re.M))
-decls='void rr64_rival_engine_fixture_call(unsigned);\n'+'\n'.join('void '+n+'(unsigned char*,recomp_context*);' for n in sorted(calls|set(names)|{'stock_'+n for n in ('func_800571DC','func_80059648','func_8005980C')} ) if not n.startswith('rr64_'))
+decls=('void rr64_rival_engine_fixture_call(unsigned);\n'
+       'void (*rr64_rival_engine_fixture_lookup(unsigned))(unsigned char*,recomp_context*);\n'
+       +'\n'.join('void '+n+'(unsigned char*,recomp_context*);' for n in sorted(calls|set(names)|{'stock_'+n for n in ('func_800571DC','func_80059648','func_8005980C')} ) if not n.startswith('rr64_')))
 a.output.parent.mkdir(parents=True,exist_ok=True)
 main=(a.config.parent.parent/'native/src/main.cpp').read_text()
 queue=main.split('void queue_samples(int16_t* audio_data, size_t sample_count)',1)[1]
 stereo=queue.split('    size_t i = 0;',1)[1].split('    rr64::achievement_audio::',1)[0]
 stereo='void rival_host_stereo(int16_t* audio_data,size_t sample_count,int16_t* swapped) {\n    size_t i = 0;'+stereo+'}\n'
-a.output.write_text('#include <cstddef>\n#include "recomp.h"\n#include "rr64_native.hpp"\n#include "rr64_rival_engine.hpp"\n#undef RECOMP_FUNC\n#define RECOMP_FUNC\nextern "C" {\n'+decls+'\n'+''.join(functions[n] for n in names)+''.join(stock)+stereo+'}\n',encoding='utf-8')
+a.output.write_text('#include <cstddef>\n#include "recomp.h"\n#include "rr64_native.hpp"\n#include "rr64_rival_engine.hpp"\n#undef RECOMP_FUNC\n#define RECOMP_FUNC\n#undef LOOKUP_FUNC\n#define LOOKUP_FUNC(address) rr64_rival_engine_fixture_lookup(unsigned(address))\nextern "C" {\n'+decls+'\n'+''.join(functions[n] for n in names)+''.join(stock)+stereo+'}\n',encoding='utf-8')
 print('Extracted',len(names),'native functions/sequences;',len(hooks),'rival hooks; candidate injection=',a.candidate_config)
 print('External calls:',sorted(calls-set(names)-{'stock_func_800571DC','stock_func_80059648','stock_func_8005980C'}))

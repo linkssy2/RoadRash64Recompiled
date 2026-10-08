@@ -20,7 +20,11 @@ namespace {
 using namespace rr64;
 using Vec = std::array<float, 3>;
 constexpr unsigned actors = 0x800d8570, actor_stride = 0x118;
-constexpr unsigned maximum_engines = 3, reserved_effect_voices = 4, voice_stride = 0x13c;
+// Fourteen racers including the listener, plus one row for an RPM-loop handoff.
+// These rows are appended to the original sound pool; ordinary effects/music
+// retain their original capacity and cannot evict a passing bike's engine.
+constexpr unsigned maximum_engines = 13, extra_voices = maximum_engines + 1;
+constexpr unsigned voice_stride = 0x13c, extra_heap = 0x14000;
 // The ROM table contains all 32 bike models, including late choppers, the
 // two Insanity bikes and cop variants. Reserved entries still need validation.
 constexpr unsigned engine_profile_count = 32;
@@ -39,7 +43,7 @@ std::array<std::atomic<std::uint64_t>, 64> owned_rows{};
 std::atomic<unsigned char *> owned_memory{nullptr};
 std::atomic<std::uint64_t> admitted{0}, denied{0};
 struct VoicePool {
-    unsigned base = 0, count = 0, free = 0, owned = 0;
+    unsigned base = 0, count = 0, first = 0, free = 0, owned = 0;
     bool valid = false;
 };
 struct Bike {
@@ -129,9 +133,10 @@ VoicePool pool(unsigned char *m) {
         word(m, 0x800df6f0) != p.base + 4 * voice_stride)
         return p;
     p.valid = true;
+    p.first = rr64_rival_engine_effect_limit(p.count);
     for (unsigned i = 4; i < p.count; ++i) {
         const auto row = p.base + i * voice_stride;
-        if (!word(m, row + 4))
+        if (!word(m, row + 4) && i >= p.first)
             ++p.free;
         else if (owned(m, row, word(m, row + 0x44), p))
             ++p.owned;
@@ -421,7 +426,7 @@ extern "C" void rr64_rival_engine_transition(unsigned char *m, void *raw) {
     // Native 574C0 stops the old RPM loop before starting its replacement.
     // Keep it playing if no transition row is available: otherwise a full pack
     // can stop every engine, then deny every restart until the worker releases.
-    if (voices.free > reserved_effect_voices && voices.owned < maximum_engines + 1)
+    if (voices.free && voices.owned < extra_voices)
         producer.replacing = handle;
     else
         ctx.r16 = effect;
@@ -471,7 +476,7 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
         if (diagnostics())
             std::fprintf(
                 stderr,
-                "[RR64-RIVAL-ENGINE] armed volume=%.1f max_voices=3 reserve=4 range=320 profiles=32\n",
+                "[RR64-RIVAL-ENGINE] armed volume=%.1f max_engines=13 dedicated_rows=14 range=320 profiles=32\n",
                 rr64::rival_engine::get_volume_percent());
     }
     const float dt = runtime.observed ? std::clamp(clock - runtime.clock, 0.f, .1f) : 1.f / 60.f;
@@ -533,16 +538,8 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
         }
         if (c.gain <= .001f)
             continue;
-        // Rank by proximity rather than the nearly flat close-range gain.
-        // A passing bike can then replace a farther voice, even at full volume.
-        for (const auto &e : runtime.engines)
-            if (e.source.slot == slot && e.source.bike == b.bike)
-                c.rank *= 1.15f;
         candidates[count++] = c;
     }
-    std::sort(candidates.begin(), candidates.begin() + count, [](const auto &a, const auto &b) {
-        return a.rank == b.rank ? a.source.slot < b.source.slot : a.rank > b.rank;
-    });
     runtime.eligible_peak = std::max(runtime.eligible_peak, count);
     const unsigned selected = std::min(count, maximum_engines);
     for (auto &e : runtime.engines)
@@ -684,6 +681,51 @@ extern "C" void rr64_rival_engine_audio_reset() {
     for (auto &row : owned_rows)
         row.store(0, std::memory_order_release);
 }
+extern "C" unsigned rr64_rival_engine_effect_limit(unsigned count) {
+    // Both original quality presets are recognized; unknown layouts stay native.
+    return count == 8 + 4 + extra_voices || count == 16 + 4 + extra_voices
+               ? count - extra_voices : count;
+}
+extern "C" void rr64_rival_engine_heap(unsigned char *, void *raw) {
+    if (!raw || prediction::active())
+        return;
+    auto &ctx = *static_cast<recomp_context *>(raw);
+    if ((ctx.r5 == 0x17c00 || ctx.r5 == 0x1e828) && ctx.r3 == ctx.r5)
+        ctx.r3 = ctx.r5 += extra_heap;
+}
+extern "C" void rr64_rival_engine_audio_init(unsigned char *m, void *raw) {
+    if (!m || !raw || prediction::active())
+        return;
+    rr64_rival_engine_audio_reset();
+    const auto config = static_cast<unsigned>(static_cast<recomp_context *>(raw)->r4);
+    if ((config & 3) || !engine::valid_guest_range(config, 0x44))
+        return;
+    const auto effects = word(m, config + 4);
+    const auto heap = word(m, config + 0x14);
+    if (!((effects == 8 && heap == 0x17c00 + extra_heap) ||
+          (effects == 16 && heap == 0x1e828 + extra_heap)))
+        return;
+    engine::write_u32(m, config + 4, effects + extra_voices);
+    // Two cached sample blocks per added voice, plus room in both command lists.
+    engine::write_u32(m, config + 0x38, word(m, config + 0x38) + 2 * extra_voices);
+    engine::write_u32(m, config + 0x30, word(m, config + 0x30) * 2);
+}
+extern "C" void rr64_rival_engine_allocation_range(unsigned char *m, void *raw, unsigned begin) {
+    if (!m || !raw || prediction::active())
+        return;
+    auto &ctx = *static_cast<recomp_context *>(raw);
+    const auto count = static_cast<unsigned>(ctx.r2);
+    const auto first = rr64_rival_engine_effect_limit(count);
+    if (first == count)
+        return;
+    if (scoped(allocation, m, raw, ctx.r29)) {
+        if (begin) {
+            ctx.r5 = first;
+            ctx.r4 = engine::guest_address(word(m, 0x800df6ec) + first * voice_stride);
+        }
+    } else
+        ctx.r2 = first;
+}
 extern "C" int rr64_rival_engine_allocate(unsigned char *m, void *raw) {
     allocation = {};
     if (!m || !raw || prediction::active())
@@ -701,11 +743,11 @@ extern "C" int rr64_rival_engine_allocate(unsigned char *m, void *raw) {
         return 1;
     }
     const auto p = pool(m);
-    // One temporary row bridges an owned loop's pending stop. It cannot add a
-    // fourth source or script child, and still leaves four genuinely free rows.
+    // One temporary row bridges an owned loop's pending stop. Queued releases
+    // still occupy rows; neither a new source nor a script child may use it.
     const bool replacement = producer.memory == m && producer.context == raw &&
                              owned_handle(m, producer.replacing, p, true);
-    if (!p.valid || p.free <= reserved_effect_voices ||
+    if (!p.valid || !p.free ||
         p.owned >= maximum_engines + unsigned(replacement)) {
         ++denied;
         ctx.r2 = 0;

@@ -2,10 +2,12 @@
   "game_id": "rr64",
   "id": "rr64_more_characters",
   "display_name": "More Characters",
-  "description": "Eleven optional character skins painted for the original male and female rider models. Native geometry, physics and animations are retained. Enable before starting the game, then cycle past the original riders in character selection. Supports offline Big Game, Thrash and local multiplayer. Requires your own Road Rash 64 ROM. Online skin synchronization is not supported.",
+  "description": "Optional pixelated character skins on the original male and female rider models, with cosmetic turtle shells. Enable before starting, then cycle past the original riders. Supports offline Big Game, Thrash and local multiplayer. Requires your own Road Rash 64 ROM.",
   "short_description": "Pixelated character skins on the game's original rider models.",
-  "version": "2.0.5",
-  "authors": ["RoadRash64Recompiled"],
+  "version": "2.1.0",
+  "authors": [
+    "RoadRash64Recompiled"
+  ],
   "minimum_recomp_version": "0.0.0",
   "enabled_by_default": false
 }

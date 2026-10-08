@@ -19,8 +19,9 @@ SLOTS = (('head', 64, 32), ('torso', 64, 32), ('body', 64, 32), ('far', 32, 16))
 # These two helmets retain their existing atlas artwork. The other riders
 # require dedicated mirrored-half-head artwork declared by head-layout.json.
 ATLAS_HEADS = frozenset(('ghost-rider', 'master-chief'))
-# Doom's newer bare face is packed last to preserve the calibrated body palette.
-PACKED_HEADS = frozenset(('doom-guy',))
+# Revised faces are packed last to preserve calibrated body colors. Marcus's
+# original head remains an offline palette reference, never a separate runtime asset.
+PACKED_HEADS = frozenset(('doom-guy', 'marcus-fenix'))
 HEAD_SIZE = (38, 32)
 BODY_RIDERS = frozenset(('doom-guy', 'vin-diesel', 'link', 'marcus-fenix',
                          'riddick', 'dominic-santiago', 'green-pants-rider'))
@@ -191,7 +192,9 @@ def load_head_assets(roster):
             type(document['version']) is not int or document['version'] != 1 or
             not isinstance(document['heads'], dict)):
         raise ValueError('head-layout.json must contain version 1 and a heads object')
-    expected = {c['id'] for c in roster} - ATLAS_HEADS
+    # New skins can author the mirrored head directly in their atlas. Existing
+    # calibrated head strips stay mandatory unless explicitly declared here.
+    expected = {c['id'] for c in roster if not c.get('atlas_head', False)} - ATLAS_HEADS
     if set(document['heads']) != expected:
         raise ValueError('head-layout.json must declare every non-helmet rider exactly once')
     heads, layouts, hashes = {}, {}, {}
@@ -219,7 +222,8 @@ def copy_region(source, box, destination, target):
     destination.paste(source.crop(box).resize((width, height), Image.Resampling.BOX), target[:2])
 
 
-def native_tiles(atlas, identity='', *, head_strip=None, head_layout=None):
+def native_tiles(atlas, identity='', *, head_strip=None, head_layout=None,
+                 head_back_first=False, torso_back_first=False):
     tiles = []
     for slot, (_, width, height) in enumerate(SLOTS):
         x, y = slot % 2, slot // 2
@@ -233,17 +237,55 @@ def native_tiles(atlas, identity='', *, head_strip=None, head_layout=None):
         if head_layout:
             raise ValueError('Head landmarks require a dedicated head image')
         head = tiles[0].crop((26, 0, 64, 32))
+        if head_back_first:
+            head = head.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
     else:
+        if head_back_first:
+            head_strip = head_strip.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
         head = fit_head_strip(head_strip, head_layout)
     head = head.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
     tiles[0].paste(head, (26, 0))
     tiles[1] = tiles[1].transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    if torso_back_first:
+        # Native torso U=0..31 is the front. Reorder authored islands, rather
+        # than changing shared mesh UVs or placing faces on the back of heads.
+        torso = tiles[1].copy()
+        tiles[1].paste(torso.crop((32, 0, 64, 32)), (0, 0))
+        tiles[1].paste(torso.crop((0, 0, 32, 32)), (32, 0))
+
+    if identity in ('lara-croft', 'duke-nukem', 'serious-sam'):
+        # These atlases painted limbs shoulder-to-hand / hip-to-boot, whereas
+        # native limb T runs from the extremity upward. Keep head UVs separate.
+        arms = tiles[0].crop((0, 0, 13, 32)).transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        leg_box = (14, 0, 19, 32) if identity == 'lara-croft' else (14, 0, 25, 32)
+        legs = tiles[0].crop(leg_box).resize((13, 32), Image.Resampling.BOX).transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        if identity == 'serious-sam':
+            # His sneakers occupy the native foot band, rather than boot-height calves.
+            original = legs.copy()
+            copy_region(original, (0, 2, 13, 6), legs, (0, 0, 13, 2))
+            copy_region(original, (0, 8, 13, 32), legs, (0, 2, 13, 32))
+        tiles[0].paste(arms, (0, 0))
+        tiles[0].paste(legs, (13, 0))
+        # Native chest UVs stretch the top edge into the neck. Fit the garment
+        # below the authored collar rather than stretching a large skin patch.
+        top = 28 if identity == 'serious-sam' else 24
+        copy_region(tiles[1], (0, 0, 32, top), tiles[1], (0, 0, 32, 32))
 
     # Share the same face and chest at every distance. Keep each lower tile's
     # authored limb regions; their native layouts differ from the near model.
     copy_region(tiles[1], (0, 0, 32, 32), tiles[2], (0, 0, 13, 32))
     copy_region(tiles[1], (32, 0, 64, 32), tiles[2], (13, 0, 26, 32))
     copy_region(tiles[0], (26, 0, 64, 32), tiles[2], (36, 11, 63, 30))
+
+    if identity in ('lara-croft', 'duke-nukem', 'serious-sam'):
+        copy_region(tiles[0], (0, 0, 13, 32), tiles[2], (26, 0, 36, 32))
+        # The lower model puts shins and thighs below its face, not in the
+        # near-model leg column. Keep these disjoint from its head rectangle.
+        # At lower detail limb length runs along U (near detail uses T).
+        shin = tiles[0].crop((13, 0, 26, 11)).transpose(Image.Transpose.TRANSPOSE)
+        thigh = tiles[0].crop((13, 13, 26, 32)).transpose(Image.Transpose.TRANSPOSE)
+        tiles[2].paste(shin.resize((16, 11), Image.Resampling.BOX), (36, 0))
+        tiles[2].paste(thigh.resize((12, 11), Image.Resampling.BOX), (52, 0))
 
     # Native limb end caps use the otherwise spare texels beside the head.
     # Give those caps the authored trouser color, rather than face/neck pixels.
@@ -301,8 +343,11 @@ def main():
         art_hashes[identity] = hashlib.sha256(art.read_bytes()).hexdigest()
         files = []
         late_head = identity in PACKED_HEADS
-        prepared = native_tiles(atlas, identity, head_strip=None if late_head else heads.get(identity),
-                                head_layout=None if late_head else head_layouts.get(identity))
+        prepared = native_tiles(atlas, identity, head_strip=(Image.open(SOURCE / 'art/heads/marcus-fenix-body-palette.png')
+                                              if identity == 'marcus-fenix' else None if late_head else heads.get(identity)),
+                                head_layout=None if late_head and identity != 'marcus-fenix' else head_layouts.get(identity),
+                                head_back_first=character.get('head_back_first', False),
+                                torso_back_first=character.get('torso_back_first', False))
         packed_head = (fit_head_strip(heads[identity], head_layouts.get(identity))
                        .transpose(Image.Transpose.FLIP_TOP_BOTTOM)) if late_head else None
         for slot in range(4):
@@ -313,7 +358,12 @@ def main():
             contents[filename] = payload
             files.append(filename)
             preview.save(args.out / (identity + '-' + name + '.png'))
-        records.append(dict(id=identity, name=character['name'], donor=character['donor'], textures=files))
+        record = dict(id=identity, name=character['name'], donor=character['donor'], textures=files)
+        if character.get('turtle_shell', False):
+            record['turtle_shell'] = True
+        if character.get('dual_head', False):
+            record['dual_head'] = True
+        records.append(record)
     descriptor = dict(format='rr64-rider-skins', version=1, characters=records)
     contents['rr64-rider-skins.json'] = (json.dumps(descriptor, indent=2) + '\n').encode()
     for name in ('mod.json', 'README.txt'):
@@ -335,7 +385,9 @@ def main():
     report = dict(characters=len(records), authoredAtlases=art_hashes,
                   files={n: hashlib.sha256(v).hexdigest() for n, v in contents.items()},
                   texturePayloadBytes=sum(len(v) for n, v in contents.items() if n.endswith('.ci8')),
-                  nativeUVsUnchanged=True, authoredToNativeVOrigin=True,
+                  sourceNativeUVsUnchanged=True,
+                  separateCheekUVs=[c['id'] for c in selected if c.get('dual_head')],
+                  authoredToNativeVOrigin=True,
                   atlasPackingVersion=5, sourceArtUnchanged=True,
                   bodyLayoutSHA256=body_layout_hash,
                   bodyCorrections=[c['id'] for c in selected if c['id'] in bodies],

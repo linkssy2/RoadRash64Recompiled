@@ -9,7 +9,7 @@
 
 namespace rr64::rider_skins {
 inline constexpr const char *mod_id = "rr64_more_characters";
-inline constexpr unsigned maximum_characters = 16;
+inline constexpr unsigned maximum_characters = 32;
 // Native CI8 indices followed by 256 big-endian RGBA5551 palette entries.
 // Headers, geometry, posture and animations continue to come from the ROM.
 struct Texture {
@@ -20,6 +20,8 @@ struct Appearance {
     std::string id, name;
     unsigned donor{};
     std::array<Texture, 4> textures; // head, torso, body, distant body
+    bool turtle_shell{}; // Small cosmetic attachment; native physics stay unchanged.
+    bool dual_head{}; // Two authored half-head strips for asymmetric face detail.
 };
 bool install_catalog(std::span<const Appearance> appearances);
 void unavailable(std::string reason);

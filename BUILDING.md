@@ -147,7 +147,7 @@ Some other developer tests require locally generated fixtures or the local ROM a
 
 ## Versioning and existing mods
 
-The application version is **1.4.4**. The mod loader retains an explicit compatibility floor of 1.0.6 from earlier internal development builds; this allows existing working mods to remain installed without pretending the application version is 1.0.6. Mods requesting newer unsupported interfaces still fail their version check.
+The application version is **1.4.5**. The mod loader retains an explicit compatibility floor of 1.0.6 from earlier internal development builds; this allows existing working mods to remain installed without pretending the application version is 1.0.6. Mods requesting newer unsupported interfaces still fail their version check.
 
 
 ## Package the optional MK64 importer

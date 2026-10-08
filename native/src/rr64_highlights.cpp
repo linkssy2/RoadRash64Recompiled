@@ -812,7 +812,14 @@ extern "C" void rr64_highlights_draw_begin(unsigned char *m) {
     s.draw = false;
     s.traffic_drawn = false;
     if (!s.holding || !s.playing || m != s.memory || !s.cursor.valid) {
-        rr64_highlight_render_begin(m, 0);
+        // Existing native recovery/ownership generations are copied while the
+        // recorder is locked. This marks known camera cuts; it does not grant
+        // permission to bypass AUTO motion rejection for an unchanged phase.
+        if (s.racing && !s.ended && s.recorder && m == s.memory &&
+            !prediction::active() && !netplay::get_status().active)
+            highlight_render::begin_normal(m, s.round, s.recording_generation);
+        else
+            rr64_highlight_render_begin(m, 0);
         return;
     }
     // The native update and graphics worker share guest memory. Keep the

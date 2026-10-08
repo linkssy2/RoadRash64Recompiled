@@ -20,7 +20,8 @@ bool valid_text(const std::string &text, const char *allowed) {
            text.find_first_not_of(allowed) == std::string::npos;
 }
 bool same(const Appearance &a, const Appearance &b) {
-    if (a.id != b.id || a.name != b.name || a.donor != b.donor)
+    if (a.id != b.id || a.name != b.name || a.donor != b.donor ||
+        a.turtle_shell != b.turtle_shell || a.dual_head != b.dual_head)
         return false;
     for (unsigned i = 0; i < 4; ++i)
         if (a.textures[i].width != b.textures[i].width ||
@@ -55,7 +56,8 @@ bool install_catalog(std::span<const Appearance> catalog) {
         if (!valid_text(a.id, "abcdefghijklmnopqrstuvwxyz0123456789-") ||
             !valid_text(a.name,
                         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -_") ||
-            (a.donor != 0 && a.donor != 10))
+            (a.donor != 0 && a.donor != 10) || ((a.turtle_shell || a.dual_head) && a.donor != 0) ||
+            (a.turtle_shell && a.dual_head))
             return fail("Invalid rider skin identity or native donor.");
         for (unsigned p = 0; p < n; ++p)
             if (catalog[p].id == a.id || catalog[p].name == a.name)

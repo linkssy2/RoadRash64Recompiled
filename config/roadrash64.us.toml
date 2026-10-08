@@ -279,7 +279,7 @@ hook = [
     { func = "func_8000A3F4", before_vram = 0x8000A4B0, text = "rr64_trace_guest_stage(\"render-worker-after-finalize\");" },
     { func = "func_8000B00C", text = "rr64_trace_guest_stage(\"gfx-finalize-entry\");" },
     { func = "func_8000B00C", before_vram = 0x8000B0D4, text = "rr64_trace_guest_value(\"gfx-submit-suppress\", ctx->r3);" },
-    { func = "func_8000B00C", before_vram = 0x8000B0DC, text = "rr64_trace_guest_stage(\"gfx-submit-accepted\");" },
+    { func = "func_8000B00C", before_vram = 0x8000B0DC, text = "rr64_world_terrain_finalize(rdram, (unsigned)ctx->r9); rr64_shadow_tags_finalize(rdram, (unsigned)ctx->r9); rr64_trace_guest_stage(\"gfx-submit-accepted\");" },
     { func = "func_8000B00C", before_vram = 0x8000B144, text = "rr64_trace_guest_value(\"gfx-submit-message\", ctx->r5); rr64_trace_guest_value(\"gfx-submit-task\", MEM_W(0xC, ctx->r5));" },
     { func = "func_8000B00C", before_vram = 0x8000B158, text = "rr64_trace_guest_value(\"gfx-submit-queue\", ctx->r2);" },
     { func = "func_8000B00C", before_vram = 0x8000B178, text = "rr64_trace_guest_stage(\"gfx-submit-sent\");" },
@@ -347,14 +347,27 @@ hook = [
     { func = "func_800571DC", before_vram = 0x800574B4, text = "rr64_rival_engine_transition(rdram, ctx);" },
     { func = "func_800571DC", before_vram = 0x8005753C, text = "rr64_rival_engine_pitch(rdram, ctx);" },
     # Every rival row, including native script children, needs free capacity.
-    # Its allocator may never steal an existing voice; four effect rows remain.
+    # Its allocator cannot steal voices or consume the original SFX/music rows.
     { func = "func_80082798", text = "if (rr64_rival_engine_allocate(rdram, ctx)) return;" },
+    { func = "func_80082798", before_vram = 0x800827FC, text = "rr64_rival_engine_allocation_range(rdram, ctx, 1);" },
+    { func = "func_80082798", before_vram = 0x800828A0, text = "rr64_rival_engine_allocation_range(rdram, ctx, 0);" },
     { func = "func_80082798", before_vram = 0x800828B0, text = "rr64_rival_engine_no_steal(rdram, ctx);" },
     { func = "func_80082798", before_vram = 0x8008286C, text = "rr64_rival_engine_allocated(rdram, ctx);" },
     { func = "func_80083408", before_vram = 0x8008345C, text = "rr64_rival_engine_child(rdram, ctx, 1);" },
     { func = "func_80083408", before_vram = 0x800834A8, text = "rr64_rival_engine_child_adopt(rdram, ctx);" },
     { func = "func_80083408", before_vram = 0x800834C0, text = "rr64_rival_engine_child(rdram, ctx, 0);" },
-    { func = "func_8007FE9C", text = "rr64_rival_engine_audio_reset();" },
+    # Preserve music/SFX allocation and unique-effect reuse within their original rows.
+    { func = "func_800824E8", before_vram = 0x8008251C, text = "ctx->r7 = rr64_rival_engine_effect_limit((unsigned)ctx->r7);" },
+    { func = "func_800824E8", before_vram = 0x80082568, text = "ctx->r7 = rr64_rival_engine_effect_limit((unsigned)ctx->r7);" },
+    { func = "func_800824E8", before_vram = 0x800825D0, text = "ctx->r7 = rr64_rival_engine_effect_limit((unsigned)ctx->r7);" },
+    { func = "func_800824E8", before_vram = 0x80082614, text = "ctx->r7 = rr64_rival_engine_effect_limit((unsigned)ctx->r7);" },
+    { func = "func_800824E8", before_vram = 0x80082674, text = "ctx->r3 = rr64_rival_engine_effect_limit((unsigned)ctx->r3);" },
+    { func = "func_80080450", before_vram = 0x800804C8, text = "ctx->r2 = rr64_rival_engine_effect_limit((unsigned)ctx->r2);" },
+    { func = "func_80080450", before_vram = 0x8008052C, text = "ctx->r2 = rr64_rival_engine_effect_limit((unsigned)ctx->r2);" },
+    # Grow the actual heap before native allocation, then initialize matching voices/DMA/commands.
+    { func = "func_80020FE0", before_vram = 0x80021140, text = "rr64_rival_engine_heap(rdram, ctx);" },
+    { func = "func_80020FE0", before_vram = 0x800211C8, text = "rr64_rival_engine_heap(rdram, ctx);" },
+    { func = "func_8007FE9C", text = "rr64_rival_engine_audio_init(rdram, ctx);" },
     # Keep online routing first; the freeze query rejects every online/replay
     # session and only substitutes the sound-only callback for offline AI.
     { func = "func_8006AFFC", before_vram = 0x8006B1C8, text = "rr64_authority_actor_route(ctx,0); if (rr64_offline_modifiers_freeze_actor(rdram, ctx->r16)) ctx->r3 = (int32_t)0x8005264C;" },
@@ -382,6 +395,17 @@ hook = [
     { func = "func_8006A638", text = "rr64_online_render_begin(rdram); rr64_highlights_draw_begin(rdram); rr64_lod_begin_draw(rdram); rr64_world_begin_draw(rdram);" },
     # Tag replay camera cuts before projection capture; restore before the HUD.
     { func = "func_80016A18", text = "rr64_highlight_render_projection(rdram);" },
+    # Only authenticated bike/rider ground-shadow quads. Record first; patch
+    # their vertex loads into the accepted frame's own unused allocation tail.
+    { func = "func_8000A550", text = "rr64_shadow_tags_reset();" },
+    { func = "func_80010420", before_vram = 0x800104E4, text = "rr64_shadow_tags_before(rdram, (unsigned)ctx->r17, (unsigned)ctx->r4, 0);" },
+    { func = "func_80010420", before_vram = 0x800104EC, text = "rr64_shadow_tags_after(rdram);" },
+    { func = "func_80010420", before_vram = 0x80010540, text = "rr64_shadow_tags_before(rdram, (unsigned)ctx->r17, (unsigned)ctx->r4, 1);" },
+    { func = "func_80010420", before_vram = 0x80010548, text = "rr64_shadow_tags_after(rdram);" },
+    { func = "func_80010420", before_vram = 0x800105A4, text = "rr64_shadow_tags_before(rdram, (unsigned)ctx->r17, (unsigned)ctx->r4, 0);" },
+    { func = "func_80010420", before_vram = 0x800105AC, text = "rr64_shadow_tags_after(rdram);" },
+    { func = "func_80010420", before_vram = 0x800105EC, text = "rr64_shadow_tags_before(rdram, (unsigned)ctx->r17, (unsigned)ctx->r4, 1);" },
+    { func = "func_80010420", before_vram = 0x800105F4, text = "rr64_shadow_tags_after(rdram);" },
     { func = "func_8006A638", before_vram = 0x8006A714, text = "rr64_lod_prepare_shadow(rdram, ctx, 1);" },
     { func = "func_8006A638", before_vram = 0x8006AB14, text = "rr64_lod_prepare_shadow(rdram, ctx, 0);" },
     { func = "func_8006A638", before_vram = 0x8006AFBC, text = "rr64_lod_end_draw(rdram); rr64_world_end_draw(rdram); rr64_highlights_draw_end(rdram, ctx); rr64_online_render_end(rdram); rr64_online_disconnect_draw(rdram, ctx);" },

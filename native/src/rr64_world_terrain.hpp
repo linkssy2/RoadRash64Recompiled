@@ -29,6 +29,7 @@ bool terrain_in_frustum(const TerrainCellAsset &cell, const Matrix &model, const
 struct TerrainStatistics {
     unsigned cached_cells = 0, cached_triangles = 0, cached_bytes = 0;
     unsigned visible_cells = 0, stock_cells = 0, drawn_triangles = 0;
+    unsigned replaced_stock_cells = 0;
     unsigned course_excluded_cells = 0;
     unsigned stock_course_excluded = 0;
     unsigned long long frames = 0, refusals = 0;
@@ -47,4 +48,5 @@ void rr64_world_terrain_begin(unsigned char *rdram);
 unsigned rr64_world_terrain_stock_state(unsigned char *rdram, unsigned record, unsigned state);
 void rr64_world_terrain_observe(unsigned char *rdram, unsigned record);
 void rr64_world_terrain_draw(unsigned char *rdram);
+void rr64_world_terrain_finalize(unsigned char *rdram, unsigned submitted_words);
 }

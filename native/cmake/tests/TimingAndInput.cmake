@@ -72,6 +72,9 @@ add_executable(RR64PipelineDiagnosticsSmoke EXCLUDE_FROM_ALL
     tests/rr64_pipeline_diagnostics_smoke.cpp)
 target_compile_features(RR64PipelineDiagnosticsSmoke PRIVATE cxx_std_17)
 target_include_directories(RR64PipelineDiagnosticsSmoke PRIVATE "${RT64_ROOT}/src")
+add_executable(RR64BufferCapacitySmoke EXCLUDE_FROM_ALL tests/rr64_buffer_capacity_smoke.cpp)
+target_compile_features(RR64BufferCapacitySmoke PRIVATE cxx_std_17)
+target_include_directories(RR64BufferCapacitySmoke PRIVATE "${RT64_ROOT}/src")
 add_executable(RR64LocalPlayersSmoke EXCLUDE_FROM_ALL tests/rr64_local_players_smoke.cpp)
 add_executable(RR64ControllerSmoke EXCLUDE_FROM_ALL tests/rr64_controller_smoke.cpp
     lib/RecompFrontend/recompinput/src/input_binding.cpp)

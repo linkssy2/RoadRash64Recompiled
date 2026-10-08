@@ -3,8 +3,20 @@
   "heads": {
     "doom-guy": {
       "file": "art/heads/doom-guy.png",
-      "source_x": [0, 2, 6.5, 19, 38],
-      "target_x": [0, 2, 9, 24, 38]
+      "source_x": [
+        0,
+        2,
+        6.5,
+        19,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        9,
+        24,
+        38
+      ]
     },
     "punisher": {
       "file": "art/heads/punisher.png",
@@ -110,11 +122,133 @@
     },
     "link": {
       "file": "art/heads/link.png",
-      "source_x": [0, 2, 4.5, 22, 38],
-      "target_x": [0, 2, 8, 24, 38]
+      "source_x": [
+        0,
+        2,
+        4.5,
+        22,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        8,
+        24,
+        38
+      ]
     },
     "riddick": {
       "file": "art/heads/riddick.png"
+    },
+    "gordon-freeman": {
+      "file": "art/heads/gordon-freeman.png",
+      "source_x": [
+        0,
+        2,
+        7,
+        23,
+        38
+      ],
+      "target_x": [
+        0,
+        3,
+        10,
+        23,
+        38
+      ]
+    },
+    "alyx": {
+      "file": "art/heads/alyx.png"
+    },
+    "bloodrayne": {
+      "file": "art/heads/bloodrayne.png",
+      "source_x": [
+        0,
+        2,
+        8,
+        23,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        10,
+        23,
+        38
+      ]
+    },
+    "duke-nukem": {
+      "file": "art/heads/duke-nukem.png",
+      "source_x": [
+        0,
+        2,
+        8,
+        23,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        10,
+        23,
+        38
+      ]
+    },
+    "serious-sam": {
+      "file": "art/heads/serious-sam.png",
+      "source_x": [
+        0,
+        2,
+        8,
+        23,
+        38
+      ],
+      "target_x": [
+        0,
+        2,
+        10,
+        23,
+        38
+      ]
+    },
+    "leonardo": {
+      "file": "art/heads/leonardo.png"
+    },
+    "raphael": {
+      "file": "art/heads/raphael.png"
+    },
+    "donatello": {
+      "file": "art/heads/donatello.png"
+    },
+    "judge-dredd": {
+      "file": "art/heads/judge-dredd.png"
+    },
+    "terminator": {
+      "file": "art/heads/terminator.png",
+      "source_x": [
+        0,
+        3,
+        11.5,
+        19,
+        22,
+        30.5,
+        38
+      ],
+      "target_x": [
+        0,
+        4.5,
+        11.5,
+        19,
+        23.5,
+        30.5,
+        38
+      ]
+    },
+    "michelangelo": {
+      "file": "art/heads/michelangelo.png"
+    },
+    "lara-croft": {
+      "file": "art/heads/lara-croft.png"
     }
   }
 }

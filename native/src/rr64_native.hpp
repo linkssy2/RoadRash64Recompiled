@@ -15,6 +15,7 @@
 #include "rr64_rival_engine.hpp"
 #include "rr64_highlight_camera.hpp"
 #include "rr64_highlight_render_boundary.hpp"
+#include "rr64_shadow_tags.hpp"
 #include "rr64_offline_modifiers.hpp"
 #include "rr64_offline_modifiers_bikes.hpp"
 #ifdef RR64_EXPERIMENTAL_COURSE
@@ -142,6 +143,7 @@ void rr64_world_terrain_begin(unsigned char *rdram);
 unsigned rr64_world_terrain_stock_state(unsigned char *rdram, unsigned record, unsigned state);
 void rr64_world_terrain_observe(unsigned char *rdram, unsigned record);
 void rr64_world_terrain_draw(unsigned char *rdram);
+void rr64_world_terrain_finalize(unsigned char *rdram, unsigned submitted_words);
 void rr64_world_objects_begin(unsigned char *rdram);
 void rr64_world_objects_observe(unsigned char *rdram, unsigned placement);
 void rr64_world_objects_sample(unsigned char *rdram, unsigned placement, unsigned graph);

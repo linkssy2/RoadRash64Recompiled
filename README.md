@@ -1,4 +1,4 @@
-# Road Rash 64 Recompiled — 1.4.4
+# Road Rash 64 Recompiled — 1.4.5
 
 An unofficial PC recompilation. **Bring your own Road Rash 64 USA v1.0 ROM.**
 Windows and experimental native Linux builds.

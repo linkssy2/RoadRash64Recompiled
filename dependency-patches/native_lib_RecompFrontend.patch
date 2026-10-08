@@ -2082,7 +2082,7 @@ index 294c371..c767867 100644
  
  } // namespace recompui
 diff --git a/recompui/src/composites/ui_player_card.cpp b/recompui/src/composites/ui_player_card.cpp
-index 7a75884..34b0e5e 100644
+index 7a75884..425b412 100644
 --- a/recompui/src/composites/ui_player_card.cpp
 +++ b/recompui/src/composites/ui_player_card.cpp
 @@ -2,9 +2,17 @@
@@ -2103,20 +2103,22 @@ index 7a75884..34b0e5e 100644
  
  PlayerCard::PlayerCard(
      ResourceId rid,
-@@ -30,8 +38,10 @@ PlayerCard::PlayerCard(
+@@ -30,8 +38,12 @@ PlayerCard::PlayerCard(
      
      if (!is_assignment_card) {
          set_as_navigation_container(NavigationType::GridCol);
 -        set_padding_top(64.0f);
 -        set_padding_bottom(64.0f);
-+        // Compact overview cards fit four players without changing the assignment dialog.
++        // Share the available row equally; assignment-dialog cards keep their fixed size.
++        set_flex_basis(0.0f);
++        set_flex_grow(1.0f);
 +        set_min_width(200.0f);
 +        set_padding_top(16.0f);
 +        set_padding_bottom(16.0f);
          auto player_label = context.create_element<Label>(this, "Player " + std::to_string(player_index + 1), LabelStyle::Small);
      }
  
-@@ -41,8 +51,12 @@ PlayerCard::PlayerCard(
+@@ -41,8 +53,12 @@ PlayerCard::PlayerCard(
      card->set_flex_direction(FlexDirection::Column);
      card->set_align_items(AlignItems::Center);
      card->set_justify_content(JustifyContent::Center);
@@ -2131,7 +2133,7 @@ index 7a75884..34b0e5e 100644
      card->set_border_color(theme::color::BorderSoft);
      card->set_border_width(theme::border::width, Unit::Dp);
      card->set_border_radius(theme::border::radius_sm, Unit::Dp);
-@@ -65,62 +79,45 @@ PlayerCard::PlayerCard(
+@@ -65,62 +81,45 @@ PlayerCard::PlayerCard(
      if (!is_assignment_card) {
          auto player = recompinput::players::get_player(player_index, is_assignment_card);
          update_player_card_icon();
@@ -2229,7 +2231,7 @@ index 7a75884..34b0e5e 100644
              this->on_edit_profile();
          });
 diff --git a/recompui/src/composites/ui_player_card.h b/recompui/src/composites/ui_player_card.h
-index 8d92aa5..6c7bf86 100644
+index 8d92aa5..9b2802b 100644
 --- a/recompui/src/composites/ui_player_card.h
 +++ b/recompui/src/composites/ui_player_card.h
 @@ -8,6 +8,8 @@
@@ -2241,16 +2243,14 @@ index 8d92aa5..6c7bf86 100644
  
  // player index, profile index
  using on_select_player_profile_callback = std::function<void(int, int)>;
-@@ -70,7 +72,8 @@ public:
+@@ -70,6 +72,7 @@ public:
      static constexpr float assign_player_card_icon_size = 64.0f;
  
      static constexpr float static_player_card_size = 256.0f;
--    static constexpr float static_player_card_icon_size = 128.0f;
-+    static constexpr float static_player_card_height = 160.0f;
-+    static constexpr float static_player_card_icon_size = 96.0f;
++    static constexpr float static_player_card_height = 240.0f;
+     static constexpr float static_player_card_icon_size = 128.0f;
  };
  
- } // namespace recompui
 diff --git a/recompui/src/config/ui_config.cpp b/recompui/src/config/ui_config.cpp
 index 6c84c05..507e2b3 100644
 --- a/recompui/src/config/ui_config.cpp
@@ -3064,7 +3064,7 @@ index 52282a7..b1c7b2c 100644
          void add_text_changed_callback(std::function<void(const std::string &)> callback);
          void set_focus_callback(std::function<void(bool)> callback);
 diff --git a/recompui/src/renderer/rt64_render_context.cpp b/recompui/src/renderer/rt64_render_context.cpp
-index a7954c7..ce5ed8a 100644
+index a7954c7..4f4cb40 100644
 --- a/recompui/src/renderer/rt64_render_context.cpp
 +++ b/recompui/src/renderer/rt64_render_context.cpp
 @@ -1,7 +1,10 @@
@@ -3095,7 +3095,7 @@ index a7954c7..ce5ed8a 100644
          case ultramodern::renderer::AspectRatio::OptionCount:
              return RT64::UserConfiguration::AspectRatio::OptionCount;
      }
-@@ -172,6 +180,15 @@ void set_application_user_config(RT64::Application* application, const ultramode
+@@ -172,9 +180,19 @@ void set_application_user_config(RT64::Application* application, const ultramode
      }
  
      application->userConfig.aspectRatio = to_rt64(config.ar_option);
@@ -3111,7 +3111,11 @@ index a7954c7..ce5ed8a 100644
      application->userConfig.antialiasing = to_rt64(config.msaa_option);
      application->userConfig.refreshRate = to_rt64(config.rr_option);
      application->userConfig.refreshRateTarget = config.rr_manual_value;
-@@ -219,7 +236,12 @@ ultramodern::renderer::GraphicsApi map_graphics_api(RT64::UserConfiguration::Gra
++    application->userConfig.rr64VsyncEnabled = config.vsync_enabled;
+     application->userConfig.internalColorFormat = to_rt64(config.hpfb_option);
+     application->userConfig.displayBuffering = RT64::UserConfiguration::DisplayBuffering::Triple;
+ }
+@@ -219,7 +237,12 @@ ultramodern::renderer::GraphicsApi map_graphics_api(RT64::UserConfiguration::Gra
  
  renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::WindowHandle window_handle, ultramodern::renderer::PresentationMode presentation_mode, bool debug) {
      static unsigned char dummy_rom_header[0x40];
@@ -3125,7 +3129,7 @@ index a7954c7..ce5ed8a 100644
  
      // Set up the RT64 application core fields.
      RT64::Application::Core appCore{};
-@@ -267,8 +289,11 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+@@ -267,8 +290,11 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
      appCore.VI_Y_SCALE_REG = &vi_regs->VI_Y_SCALE_REG;
  
      // Set up the RT64 application configuration fields.
@@ -3138,7 +3142,7 @@ index a7954c7..ce5ed8a 100644
  
      // Create the RT64 application.
      app = std::make_unique<RT64::Application>(appCore, appConfig);
-@@ -277,7 +302,6 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+@@ -277,7 +303,6 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
      auto& cur_config = ultramodern::renderer::get_graphics_config();
      set_application_user_config(app.get(), cur_config);
      app->userConfig.developerMode = debug;
@@ -3146,7 +3150,7 @@ index a7954c7..ce5ed8a 100644
      app->enhancementConfig.f3dex.forceBranch = true;
      // Scale LODs based on the output resolution.
      app->enhancementConfig.textureLOD.scale = true;
-@@ -305,7 +329,9 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+@@ -305,7 +330,9 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
  #ifdef _WIN32
      thread_id = window_handle.thread_id;
  #endif
@@ -3156,7 +3160,7 @@ index a7954c7..ce5ed8a 100644
      // Get the API that RT64 chose.
      chosen_api = map_graphics_api(app->chosenGraphicsAPI);
      if (setup_result != ultramodern::renderer::SetupResult::Success) {
-@@ -313,8 +339,13 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
+@@ -313,8 +340,13 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
          return;
      }
  
@@ -3172,7 +3176,7 @@ index a7954c7..ce5ed8a 100644
  
      // Check if the selected device actually supports MSAA sample positions and MSAA for for the formats that will be used
      // and downgrade the configuration accordingly.
-@@ -371,9 +402,17 @@ bool renderer::RT64Context::update_config(const ultramodern::renderer::GraphicsC
+@@ -371,9 +403,17 @@ bool renderer::RT64Context::update_config(const ultramodern::renderer::GraphicsC
          return false;
      }
  
@@ -3191,7 +3195,7 @@ index a7954c7..ce5ed8a 100644
  
      set_application_user_config(app.get(), new_config);
  
-@@ -471,10 +510,17 @@ void renderer::RT64Context::check_texture_pack_actions() {
+@@ -471,10 +511,17 @@ void renderer::RT64Context::check_texture_pack_actions() {
          }
  
          if (!replacement_directories.empty()) {

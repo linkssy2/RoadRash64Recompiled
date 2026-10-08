@@ -1,16 +1,47 @@
 # Positional rival engines
 
+## October 7: public 1.4.4 dropout report
+
+The supplied pack-riding video was confirmed as public 1.4.4, before the private
+thirteen-source reservation and separate effects pool described below. Those
+existing private fixes remain the candidate for source competition/dropouts.
+No additional production audio change was justified by this review.
+
+The fixture now executes original note tuning, exponential pitch conversion
+and final worker gain, rather than relying only on live handles. All 31 valid
+model entries pass idle/acceleration/coast and approaching/receding cases;
+thirteen mixed-family engines retain nonzero worker gain beside a fallen rider.
+The device sample mixer, actual output and peak event/command occupancy still
+require runtime verification.
+
+A proposed pitch clamp was rejected: the native worker can silence an
+over-range note without retiring its handle, but the ROM's actual engine note
+tuning keeps the tested RPM/Doppler combinations below that limit. A deliberate
+over-range control verifies the test detects that silence. Do not infer audible
+output merely from a valid handle, or infer a pitch defect using neutral note
+tuning instead of the authored sample metadata. Evidence is in project-root
+`analysis/audio-replay-followup10-20261007/`.
+
 This feature covers AI opponents in solo and local multiplayer, and
 nonlocal human and AI bikes online. It builds on the original ROM-loaded bike
 sounds. No new sound assets or SDL_mixer dependency are distributed.
 
 ## Listening behavior
 
-October 4 distance-fade follow-up: a quiet rival previously lost its entire
+October 5 follow-up: every nearby riding rival can now have an engine voice
+(up to thirteen other racers). Fourteen dedicated rows include one temporary
+RPM-loop replacement; the original music/effects pool remains separate.
+This removes the three-bike cap and prevents ordinary effects or music from
+taking a rival's channel. Native initialization grows the heap by 80 KiB and
+sizes physical voices, DMA caches and command storage together. The fixed
+storage is reserved at startup; turning Rival Engines off still skips their
+sound production and updates.
+
+The October 4 distance-fade fix is retained: a quiet rival previously lost its entire
 gain in one update when another bike took its slot. Gain changes now use a
 60 ms time constant (about 180 ms to complete 95% of a change), including
 newly selected bikes, instead of subtracting a fixed full-volume step. The
-same three-source budget and four reserved effect rows remain in place.
+volume curve applies independently to every nearby rival.
 Native RPM changes also retain their existing loop if the replacement's gain
 would be rejected by the native quiet-sound gate. The retained loop still
 receives normal volume and pitch updates. Final integer gain can reach zero
@@ -39,15 +70,12 @@ voice creation and updates; it does not unload samples needed by the player's
 engine. There is no separate rival asset package to load or unload, and these
 offline checks do not establish a measurable FPS or device-performance gain.
 
-The manager selects up to three nearby riding bikes. Sound stays on each bike;
+The manager includes every nearby riding rival. Sound stays on each bike;
 the listener follows the local rider's body when detached. The view direction
 determines stereo left/right. Volume reaches the slider's full level within
 12 world units, then fades smoothly to zero at 320 units. Changes in selection,
-volume and pan are smoothed. Proximity sets selection priority independently of
-the flat close-range volume curve, so a passing bike can replace a farther one.
-Selection favors an
-already playing bike slightly to avoid rapid switches between similarly distant
-rivals. Original bike profiles and engine state determine sample and RPM pitch.
+volume and pan are smoothed. A passing bike joins the mix without replacing
+another audible rival. Original bike profiles and engine state determine sample and RPM pitch.
 The native traffic Doppler calculation adds a bounded, smoothed passing pitch
 offset to the continuous engine loop; short race-start cues keep their authored
 pitch.
@@ -82,10 +110,9 @@ The saved slider value and its 35% default remain unchanged. At maximum, a
 nearby rival of the same model and throttle state receives the same input gain
 as a local player's engine; actual perceived balance still needs listening.
 
-The three-engine cap, four reserved effects rows, no-steal rule and bounded
-per-frame scan remain in force. Larger audible range does not allocate a voice
-for every distant racer. No performance claim for Steam Deck follows from the
-offline producer benchmark.
+The per-frame scan remains bounded by fourteen racers. Sources beyond the
+audible range fade out and release their voices. No performance claim for Steam
+Deck follows from the offline producer benchmark.
 
 Remote pitch uses the guest's native engine simulation after authority restores
 the bike's movement. The native update still computes wheel/gear speed and the
@@ -111,16 +138,18 @@ effects. The stock `58600` gain threshold of 18 rejects quiet engine starts;
 managed rivals permit gains above 1 so fade-in and a low volume setting work.
 
 Admission examines the live native effects rows, not merely the racer cache.
-It permits three sustained engine rows and leaves four effects rows free when
-admitting a voice. One additional row is allowed only while replacing an owned
+It permits thirteen sustained engine rows, appended after the original eight
+or sixteen effects rows. One additional row is allowed only while replacing an owned
 RPM loop whose old row is awaiting release. Other loop transitions keep playing
 their current sound until there is room. This prevents a full pack from stopping
 all its loops and then denying every replacement. The temporary allowance cannot
-start a fourth bike or script child. Added voices use priority zero and cannot
+start another bike or script child. Added voices use priority zero and cannot
 steal another row.
 Deferred releases remain occupied until the native audio worker frees them.
-Original race effects may steal these low-priority engines when necessary.
-Music's reserved rows are excluded from this budget.
+Native SFX allocation, unique-effect reuse and music-track allocation all stay
+inside the original pool. Handle updates/stops and audio-worker processing still
+cover the complete pool. This keeps the additional engines isolated without
+reducing original crash, weapon, local-engine or music capacity.
 
 Ownership uses both row address and native handle. A reused row cannot be stopped
 as if it were an old rival sound. Script-child allocations share the same budget
@@ -141,6 +170,8 @@ its existing lifecycle; this feature does not replay recorded engine audio.
   hook sites; `generate_prediction_frame.py` excludes live audio hooks.
 - `native/tests/rr64_rival_engine_smoke.cpp`: production manager plus extracted
   original producer, dispatcher, allocator, volume, pitch and pan operations.
+- `native/tests/rr64_rival_engine_init_cases.hpp`: real native heap, physical
+  voice, filter, command-buffer and DMA initialization for both quality presets.
 - `native/tests/rr64_rival_doppler_cases.hpp`: native traffic arithmetic oracle,
   approaching/receding motion, smoothing, fallen listeners, teleports and local
   and online listener mappings.

@@ -126,8 +126,11 @@ a.output.parent.mkdir(parents=True, exist_ok=True)
 rival_header = a.config.parent.parent / 'native/src/rr64_rival_engine.hpp'
 rival_stubs = ''
 if rival_header.exists():
-    for result, name, arguments in re.findall(r'^(void|int) (rr64_rival_engine_\w+)\(([^;]*)\);', rival_header.read_text(), re.M):
-        rival_stubs += result + ' ' + name + '(' + arguments + ') {' + ('return 0;' if result == 'int' else '') + '}\n'
+    for result, name, arguments in re.findall(r'^(void|int|unsigned) (rr64_rival_engine_\w+)\(([^;]*)\);', rival_header.read_text(), re.M):
+        if name == 'rr64_rival_engine_effect_limit':
+            rival_stubs += 'unsigned rr64_rival_engine_effect_limit(unsigned count) { return count; }\n'
+        else:
+            rival_stubs += result + ' ' + name + '(' + arguments + ') {' + ('return 0;' if result == 'int' else '') + '}\n'
 # HUD focus is independently tested with the complete native cycle and sprite
 # consumer. Here it has no sound service and must not change source ownership.
 if hud_notifications:

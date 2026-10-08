@@ -19,6 +19,9 @@ extern "C" {
 DECL(800571DC) DECL(800597A0) DECL(8005980C) DECL(80080450) DECL(80082798)
 DECL(800806B4) DECL(80080768) DECL(800807C0) DECL(80080820) DECL(80080890)
 DECL(80083210) DECL(80083408) DECL(800817C0)
+DECL(80081914)
+DECL(80082180)
+DECL(800824E8)
 #undef DECL
 void stock_func_800571DC(unsigned char*,recomp_context*);
 void stock_func_8005980C(unsigned char*,recomp_context*);
@@ -33,13 +36,13 @@ void do_break(std::uint32_t vram) {
 }
 namespace {
 std::atomic<unsigned long long> allocations{0};
-unsigned checks=0, native_pan=0;int highlights=0;
+unsigned checks=0, native_pan=0, native_volume=0;float native_ratio=0;int highlights=0;
 std::array<unsigned,3> scans{};
 std::array<unsigned,7> native_calls{};
 unsigned rules_queries=0;
 rr64::netplay::PhysicsRules rules{};
 constexpr unsigned actors=0x800D8570,stack=0x807FF000,pool_base=0x80600000;
-constexpr unsigned bank=0x800C1510,voice_stride=0x13C;
+constexpr unsigned bank=0x800C1510,voice_stride=0x13C,sample_bank=0x80700000;
 std::vector<unsigned char> initial,memory;
 unsigned char *m=nullptr;
 void check(bool v,const char*name){++checks;if(!v){std::fprintf(stderr,"FAIL %s\n",name);std::exit(1);}}
@@ -73,8 +76,13 @@ void settle_releases(){
     for(unsigned i=4;i<word(0x800DF6E4);++i)
         if(word(row(i)+4)&&word(row(i)+0x10)!=~0u){put(row(i)+4,0);put(row(i)+0x44,0);}
 }
-void frame(float seconds=1.f/60.f,bool releases=true){
+void frame(float seconds=1.f/60.f,bool releases=true,bool dispatch=false){
     scalar(0x800A1820,value(0x800A1820)+seconds);put(0x800A1830,word(0x800A1830)+1);
+    // Production runs each rider's native audio/stale-cache sweep before the
+    // manager. Opt in so isolated disabled-path checks and timing stay scoped.
+    if(dispatch)for(unsigned s=0;s<14;++s)
+        if(half(actor(s)+0x24)&&static_cast<int>(word(actor(s)+8))<0)
+            call(func_8005980C,bike(s));
     auto c=context();auto before=c;rr64_rival_engine_frame(m,&c);
     check(std::memcmp(&c,&before,sizeof(c))==0,"manager preserves caller registers");
     if(releases)settle_releases();
@@ -84,7 +92,7 @@ void reset(unsigned effect_count=16,unsigned humans=1){
     if(m){auto c=context();rr64_rival_engine_mode(m,&c,0);}
     rr64_rival_engine_audio_reset();rules={};highlights=0;
     memory=initial;m=memory.data();
-    put(0x800DF6E4,effect_count+4);put(0x800DF6EC,pool_base);put(0x800DF6F0,pool_base+4*voice_stride);
+    put(0x800DF6E4,effect_count+4+14);put(0x800DF6EC,pool_base);put(0x800DF6F0,pool_base+4*voice_stride);
     put(0x800DF6F4,60);put(0x800DF700,1);put(0x800DF718,bank);put(0x800DF71C,0);
     put(rr64::engine::globals::main_mode,9);put(rr64::engine::globals::pending_mode,9);
     put(rr64::engine::local_race::humans,humans);scalar(0x800A1820,10);scalar(0x800A1818,100);put(0x800A1830,100);
@@ -101,7 +109,7 @@ void reset(unsigned effect_count=16,unsigned humans=1){
     rr64::rival_engine::set_volume_percent(35);
     rr64::rival_engine::set_enabled(true);
 }
-unsigned start_native(unsigned effect=0xEF,unsigned priority=100){auto c=context(effect);c.r5=100;c.r6=128;c.r7=0;put(stack+16,priority);func_80080450(m,&c);return unsigned(c.r2);}
+unsigned start_native(unsigned effect=0xEF,unsigned priority=100,bool unique=false){auto c=context(effect);c.r5=100;c.r6=128;c.r7=unique;put(stack+16,priority);func_80080450(m,&c);return unsigned(c.r2);}
 void child_voice(unsigned parent){auto c=context(parent);c.r5=rr64::engine::guest_address(0x807E0300);m[0x7E0300^3]=0x80;m[0x7E0301^3]=0xEF;func_80083408(m,&c);check(c.r29==rr64::engine::guest_address(stack),"native child allocator restores stack");}
 std::array<unsigned,2> coefficients(unsigned effective_pan){
     constexpr unsigned env=0x807E0000;auto c=context();c.r16=rr64::engine::guest_address(env);c.r21=rr64::engine::guest_address(0x800A8360);c.r8=127;
@@ -112,6 +120,33 @@ unsigned effective_pan(unsigned voice){
     // Actual authored engine pan command, then actual mixer update logic.
     auto c=context(voice);c.r5=rr64::engine::guest_address(0x807E0100);m[0x7E0100^3]=127;func_80083210(m,&c);
     c=context(voice);c.r5=4;func_800817C0(m,&c);return native_pan;
+}
+void worker_pitch_and_gain(unsigned voice) {
+    // 80F0C passes this producer pitch into the real worker pitch conversion,
+    // then updates the physical gain. A live handle alone cannot prove sound.
+    auto c=context(voice);c.r5=(voice-pool_base)/voice_stride;c.r6=word(voice+0x30);
+    func_80081914(m,&c);
+    c=context(voice);c.r5=(voice-pool_base)/voice_stride;
+    func_800817C0(m,&c);
+}
+void initialize_engine_note(unsigned voice) {
+    const unsigned program=word(voice+4);
+    auto byte=[](unsigned a){return unsigned(m[(a&0x7fffff)^3]);};
+    // Validate the ROM's common engine program before using its authored
+    // note, instrument and full envelope. No sound samples or device run.
+    check(byte(program)==0x81&&byte(program+1)==0x80&&byte(program+3)==0x84&&
+              byte(program+4)==1&&byte(program+5)==127&&byte(program+6)==1&&
+              byte(program+7)==127&&byte(program+8)==1&&byte(program+9)==127&&
+              byte(program+10)==16&&byte(program+11)==0x9c&&byte(program+12)==127&&
+              byte(program+13)==0xa6&&byte(program+14)==127&&byte(program+15)==48,
+          "worker fixture validates the original engine note program");
+    const unsigned instrument=byte(program+2);
+    const unsigned sample=half(word(bank+0x14)+instrument*2);
+    check(sample<word(sample_bank+0x20),"engine note uses a valid ROM sample");
+    scalar(voice+0x2c,float(byte(program+15))+value(word(sample_bank+0x28)+sample*4));
+    m[((voice+0xbb)&0x7fffff)^3]=127;
+    m[((voice+0xc4)&0x7fffff)^3]=127;
+    shortword(0x800df6fc,32767);
 }
 }
 void* operator new(std::size_t n){allocations.fetch_add(1,std::memory_order_relaxed);if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}
@@ -128,8 +163,10 @@ extern "C" void rr64_rival_engine_fixture_call(unsigned address){
 }
 extern "C" int rr64_highlights_presenting(){return highlights;}
 extern "C" void _nsqrtf(unsigned char*,recomp_context*c){c->f0.fl=std::sqrt(c->f12.fl);}
-extern "C" void func_80087070(unsigned char*,recomp_context*){}
+extern "C" void func_80087070(unsigned char*,recomp_context*c){native_volume=unsigned(c->r5);}
 extern "C" void func_80086F50(unsigned char*,recomp_context*c){native_pan=unsigned(c->r5);}
+extern "C" void func_80086FE0(unsigned char*,recomp_context*c){native_ratio=std::bit_cast<float>(unsigned(c->r5));}
+extern "C" void osWritebackDCacheAll_recomp(unsigned char*,recomp_context*){}
 // Other sustained racers' producers are outside this fixture's engine scope.
 extern "C" void func_80056F48(unsigned char*,recomp_context*){}
 extern "C" void func_80057578(unsigned char*,recomp_context*){}
@@ -137,6 +174,7 @@ extern "C" void func_800576D4(unsigned char*,recomp_context*){}
 extern "C" void func_80057860(unsigned char*,recomp_context*){}
 
 #include "rr64_rival_doppler_cases.hpp"
+#include "rr64_rival_engine_init_cases.hpp"
 
 int main(int argc,char**argv){
     check(argc==2,"private ROM argument");std::ifstream input(argv[1],std::ios::binary);
@@ -146,8 +184,15 @@ int main(int argc,char**argv){
     for(unsigned i=0x400;i<0xD0000;++i)m[i^3]=rom[i+0xC00];
     for(unsigned i=0;i<0x12220;++i)m[((bank&0x7FFFFF)+i)^3]=rom[0x1E06160+i];
     for(unsigned effect=0;effect<word(bank);++effect)put(bank+0x18+effect*8,bank+word(bank+0x18+effect*8));
+    put(bank+0x14,bank+word(bank+0x14));
+    // Relocate the real ROM tuning metadata with the original initializer.
+    // The scratch address keeps it separate from actors and the fixture heap.
+    for(unsigned i=0;i<0xd7f0;++i)m[((sample_bank&0x7fffff)+i)^3]=rom[0x1305500+i];
+    auto sample_init=context(sample_bank);sample_init.r5=0xB1312CF0u;
+    func_80082180(m,&sample_init);
     // Keep the bank initialized without opening its sample bank or a device.
-    put(bank+0x10,0);m=nullptr;reset();
+    put(bank+0x10,0);m=nullptr;
+    test_rival_engine_init_cases();reset();
     check(rr64::rival_engine::get_volume_percent()==35,"default rival volume");
     check(rr64::rival_engine::get_enabled(),"rival engines default enabled");
     rr64::rival_engine::set_enabled(false);position(1,8,0);
@@ -205,26 +250,35 @@ int main(int argc,char**argv){
     check(row_for(word(cache(1)))!=0,"native start cue can begin quietly");
     frames(4);auto cue=word(cache(1));auto cue_gain=half(row_for(cue)+0x9E);rr64::rival_engine::set_volume_percent(5);frame(.01f);
     check(word(cache(1))==cue&&half(row_for(cue)+0x9E)<cue_gain,"native start cue follows fade while retaining handle");
-    // Every opponent participates in selection, while active engine rows stay bounded.
-    for(unsigned effects:{8u,16u}){reset(effects);for(unsigned s=1;s<14;++s)position(s,float(s),10);frames();check(managed()==3&&active()==3,"crowded race bounded at three engines");
+    // Every nearby opponent receives a dedicated row in both quality presets.
+    for(unsigned effects:{8u,16u}){reset(effects);for(unsigned s=1;s<14;++s)position(s,float(s),10);frames();check(managed()==13&&active()==13,"all thirteen nearby rivals have engines");
         for(unsigned s=1;s<14;++s)position(s,1000+float(s),0);position(13,0,5);frames(30);check(row_for(word(cache(13)))&&active()==1,"later AI can become audible after selection changes");}
-    // Actual native allocator: reserve free rows, never steal a higher-priority effect.
-    reset(8);std::array<unsigned,4> protected_handles{};for(auto &h:protected_handles)h=start_native();
-    position(1,0,5);frames();check(active()==4&&word(cache(1))==0,"four free voices reserved");
-    for(auto h:protected_handles)check(row_for(h)!=0,"native impact handles survive admission denial");
-    auto release=context(protected_handles[0]);release.r5=0;func_800806B4(m,&release);
-    settle_releases();frames();
-    check(active()==4&&row_for(word(cache(1))),"rival retries admission after an effect releases");
-    for(unsigned i=1;i<protected_handles.size();++i)check(row_for(protected_handles[i])!=0,"retry preserves remaining original effects");
-    reset(8);for(unsigned i=0;i<3;++i)start_native();for(unsigned s=1;s<5;++s)position(s,0,float(s));frames();check(active()==4&&managed()==1,"last admissible engine leaves four free effect voices");
+    // Ordinary SFX and music can exhaust/steal their original pool without
+    // touching an engine. Test the separate unique-effect reuse path as well.
+    for(unsigned effects:{8u,16u})for(unsigned riders:{1u,2u,3u,13u}){
+        reset(effects);for(unsigned s=1;s<=riders;++s)position(s,float(s),10);frames();
+        std::array<unsigned,13> handles{};for(unsigned s=1;s<=riders;++s)handles[s-1]=word(cache(s));
+        for(unsigned i=0;i<effects;++i)check(start_native()!=0,"original SFX capacity retained beside rivals");
+        for(unsigned i=0;i<effects*4;++i){
+            start_native(0xEF,101+i);
+            start_native(half(row_for(handles[0])+0xA6),200,true);
+            auto music=context(0x807E0800);music.r5=i;func_800824E8(m,&music);
+            check(unsigned(music.r2)<effects+4,"music allocator cannot borrow dedicated engines");
+            frame(1.f/60.f,true,true);
+            for(unsigned s=1;s<=riders;++s)
+                check(word(cache(s))==handles[s-1]&&row_for(handles[s-1]),"SFX pressure cannot evict or restart nearby engines");
+        }
+        check(active()==effects+riders,"native effects and every nearby engine coexist");
+    }
+    reset();position(1,5,0);frames();
     // Stop is a request, not a free row: a queued release must count against admission.
     auto pending=word(cache(1));auto c=context(pending);c.r5=0;func_800806B4(m,&c);
-    check(row_for(pending)&&active()==4,"actual native stop retains voice until audio worker");frame(1.f/60.f,false);check(active()==4,"queued releases are not treated as free");
+    check(row_for(pending)&&active()==1,"actual native stop retains voice until audio worker");frame(1.f/60.f,false);check(active()==1,"queued releases are not treated as free");
     // Native script fanout shares a handle; budget counts rows, not handles.
     reset();position(1,8,0);frames();auto parent=row_for(word(cache(1)));auto parent_handle=word(cache(1));
-    child_voice(parent);child_voice(parent);check(active()==3,"owned child voices consume row budget");
-    for(unsigned i=4;i<7;++i)check(word(row(i)+0x44)==parent_handle&&word(row(i)+0x48)==0,"child adopts owned parent handle at low priority");
-    child_voice(parent);check(active()==3,"owned native child allocation cannot exceed three rows");
+    for(unsigned i=0;i<12;++i)child_voice(parent);check(active()==13,"owned child voices consume row budget");
+    for(unsigned i=20;i<33;++i)check(word(row(i)+0x44)==parent_handle&&word(row(i)+0x48)==0,"child adopts owned parent handle at low priority");
+    child_voice(parent);check(active()==13,"script children cannot occupy the RPM handoff row");
     put(cache(1),~0u);auto orphan_context=context();rr64_rival_engine_mode(m,&orphan_context,0);settle_releases();check(active()==0,"cleanup releases owned orphan and all child rows");
     // Existing local split-screen player engines stay native and AI is shared.
     reset(16,4);for(unsigned s=0;s<4;++s){position(s,float(s)*100,0);call(func_8005980C,bike(s));}
@@ -324,6 +378,38 @@ int main(int argc,char**argv){
             check(loop&&original&&half(loop+0xA6)==word(profile+idle_offset)&&half(original+0xA6)==half(loop+0xA6),"every completed start cue transitions to the correct model loop");
         }
     }
+    // Exercise the actual dispatcher/manager ordering, including the native
+    // one-frame cache grace period, with small packs and every steady RPM phase.
+    for(unsigned count=1;count<=3;++count)for(unsigned type:{0u,12u,25u,26u}){
+        reset();
+        for(unsigned s=1;s<=count;++s){position(s,float(s),5);put(bike(s),type);scalar(bike(s)+0xC,6000);}
+        for(unsigned phase:{0u,1u,2u,0u}){
+            for(unsigned s=1;s<=count;++s){
+                scalar(bike(s)+0x490,phase==1?3500.f:phase==2?4000.f:500.f);
+                scalar(bike(s)+0x494,phase==1?4000.f:0.f);
+                scalar(bike(s)+0x498,phase==1?3000.f:phase==2?3500.f:1000.f);
+            }
+            std::array<unsigned,3> handles{};
+            for(unsigned tick=0;tick<8;++tick){
+                frame(1.f/60.f,true,true);
+                for(unsigned s=1;s<=count;++s){
+                    const auto handle=word(cache(s));
+                    check(row_for(handle)!=0,"native AI dispatcher retains every nearby managed engine");
+                    check(word(cache(s)+0xC)==word(0x800A1830),"manager refreshes native cache epoch after dispatcher");
+                    if(tick>=4)check(handle==handles[s-1],"settled RPM loop retains handle across native stale sweeps");
+                    handles[s-1]=handle;
+                }
+            }
+        }
+    }
+    // A genuinely stale, unmanaged loop must still be stopped by the same
+    // dispatcher; retaining managed engines must not disable native cleanup.
+    const auto stale=start_native(),unrelated_loop=start_native();
+    put(cache(4),stale);put(cache(4)+4,0xEF);put(cache(4)+0xC,word(0x800A1830)-2);
+    call(func_8005980C,bike(4));settle_releases();
+    check(word(cache(4))==~0u&&!row_for(stale),"native dispatcher releases a genuinely stale unmanaged loop");
+    check(row_for(unrelated_loop)&&managed()==3,"stale cleanup preserves current managed engines and unrelated sounds");
+
     // Retain nearby detail and extend useful range without increasing voices.
     unsigned preceding_gain=0;
     for(float distance:{0.f,8.f,12.f,60.f,130.f,200.f,300.f,320.f,400.f}){
@@ -335,25 +421,18 @@ int main(int argc,char**argv){
         if(distance>=320)check(!voice,"extended range ends in released silence");
         preceding_gain=gain;
     }
-    // A quiet pack handoff must have an audible fade, not disappear in one
-    // update merely because its initial gain was below a full-scale fade step.
+    // An approaching fourth bike cannot fade an existing bike out of the pack.
     reset();position(1,100,0);position(2,150,0);position(3,240,0);frames(60);
     const auto outgoing=word(cache(3));
     check(row_for(outgoing)&&managed()==3,"quiet handoff begins with three native engines");
     unsigned fading_gain=half(row_for(outgoing)+0x9E);
     check(fading_gain>1,"quiet outgoing engine has measurable native gain");
     position(4,200,0);
-    unsigned audible_fade_frames=0;
     for(unsigned i=0;i<60;++i){
         frame();const auto voice=row_for(outgoing),gain=voice?half(voice+0x9E):0;
-        check(gain<=fading_gain,"deselected quiet engine fades monotonically");
-        if(i<2)check(voice&&gain>0,"quiet handoff retains an audible outgoing voice across frames");
-        audible_fade_frames+=gain>0;
-        fading_gain=gain;
-        check(active()<=3&&managed()<=3,"source handoff keeps the three-voice budget");
+        check(voice&&gain==fading_gain,"fourth approaching engine does not silence a distant bike");
+        check(active()==4&&managed()==4,"four approaching engines play together");
     }
-    check(audible_fade_frames>=2&&!row_for(outgoing)&&row_for(word(cache(4)))&&managed()==3,
-          "quiet fade completes and the approaching rival receives its bounded voice");
 
     // Move continuously rather than taking the >80-unit teleport cleanup path.
     // Read native mixer gain; the test does not reproduce the attenuation curve.
@@ -402,51 +481,88 @@ int main(int argc,char**argv){
     // A packed field must retain sound while those stops await the audio worker.
     for(unsigned type:{0u,12u,25u,26u}){
         reset();
-        for(unsigned s=1;s<=3;++s){position(s,float(s),5);put(bike(s),type);scalar(bike(s)+0xC,6000);}
-        frames();check(managed()==3,"transition fixture begins with three audible rivals");
+        for(unsigned s=1;s<=13;++s){position(s,float(s),5);put(bike(s),type);scalar(bike(s)+0xC,6000);}
+        frames();check(managed()==13,"transition fixture begins with all thirteen audible rivals");
         for(unsigned phase:{1u,2u,0u,1u}){
-            for(unsigned s=1;s<=3;++s){
+            for(unsigned s=1;s<=13;++s){
                 scalar(bike(s)+0x490,phase==1?3500.f:phase==2?4000.f:500.f);
                 scalar(bike(s)+0x494,phase==1?4000.f:0.f);
                 scalar(bike(s)+0x498,phase==1?3000.f:phase==2?3500.f:1000.f);
             }
-            for(unsigned i=0;i<4;++i){
-                frame();check(managed()==3,"packed idle to acceleration transition has no silent frame");
-                check(active()==3,"completed sound transition retains three native rows");
+            for(unsigned i=0;i<16;++i){
+                frame();check(managed()==13,"packed idle to acceleration transition has no missing engine");
+                check(active()==13,"completed sound transition retains thirteen native rows");
             }
             const auto profile=word(0x800A4B48+type*4);
             const unsigned offset=phase==1?8:phase==2?12:value(profile+0x24)>0?4:12;
-            for(unsigned s=1;s<=3;++s)
+            for(unsigned s=1;s<=13;++s)
                 check(half(row_for(word(cache(s)))+0xA6)==word(profile+offset),"packed transitions eventually reach every native RPM sample");
         }
     }
     // An occupied transition row is not free, even across several game frames.
-    reset();for(unsigned s=1;s<=3;++s){position(s,float(s),5);scalar(bike(s)+0xC,6000);}
-    frames();for(unsigned s=1;s<=3;++s){scalar(bike(s)+0x490,3500);scalar(bike(s)+0x494,4000);scalar(bike(s)+0x498,3000);}
-    for(unsigned i=0;i<10;++i){frame(1.f/60.f,false);check(active()==4&&managed()==3,"worker delay allows only one retiring transition row");}
-    child_voice(row_for(word(cache(1))));check(active()==4,"transition allowance cannot admit a script child");
-    settle_releases();frames();check(active()==3&&managed()==3,"worker release completes remaining transitions");
-    // Capacity pressure preserves the old loop instead of spending effect reserve.
-    reset(8);for(unsigned s=1;s<=3;++s){position(s,float(s),5);scalar(bike(s)+0xC,6000);}
-    frames();const auto protected_effect=start_native();
-    std::array<unsigned,3> old_handles{word(cache(1)),word(cache(2)),word(cache(3))};
-    for(unsigned s=1;s<=3;++s){scalar(bike(s)+0x490,3500);scalar(bike(s)+0x494,4000);scalar(bike(s)+0x498,3000);}
-    frames();check(active()==4&&managed()==3&&row_for(protected_effect),"congested transition preserves four free rows and unrelated effect");
-    for(unsigned s=1;s<=3;++s)check(word(cache(s))==old_handles[s-1],"no spare transition row keeps existing loop alive");
-    auto end_effect=context(protected_effect);end_effect.r5=0;func_800806B4(m,&end_effect);settle_releases();frames();
-    for(unsigned s=1;s<=3;++s)check(word(cache(s))!=old_handles[s-1],"sound transition retries after capacity returns");
-    // Full-volume falloff is intentionally flat; voice priority must not be.
+    reset();for(unsigned s=1;s<=13;++s){position(s,float(s),5);scalar(bike(s)+0xC,6000);}
+    frames();for(unsigned s=1;s<=13;++s){scalar(bike(s)+0x490,3500);scalar(bike(s)+0x494,4000);scalar(bike(s)+0x498,3000);}
+    for(unsigned i=0;i<10;++i){frame(1.f/60.f,false);check(active()==14&&managed()==13,"worker delay allows only one retiring transition row");}
+    child_voice(row_for(word(cache(1))));check(active()==14,"transition allowance cannot admit a script child");
+    settle_releases();frames();check(active()==13&&managed()==13,"worker release completes remaining transitions");
+    // Every passby remains audible beside the fallen listener.
     reset();shortword(body(0)+rr64::engine::rider::bike_attached,0);
     for(unsigned s=1;s<=3;++s)position(s,18.f+2.f*s,0);
     frames();position(4,1,0);frames(30);
-    check(row_for(word(cache(4)))&&managed()==3,"closest passby replaces farther engines beside fallen listener");
+    check(row_for(word(cache(4)))&&managed()==4,"new passby joins the other engines beside fallen listener");
     test_rival_doppler_cases();
+    // Alive handles alone miss worker-side silence. Consume actual authored
+    // note tuning, final exponential pitch and mixer gain for every bike.
+    for(unsigned type=0;type<32;++type)for(unsigned phase=0;phase<3;++phase){
+        if(type==22)continue;
+        reset();rr64::rival_engine::set_volume_percent(100);
+        put(bike(1),type);position(1,8,0);scalar(bike(1)+0xC,6000);
+        scalar(bike(1)+0x490,phase==0?500.f:phase==1?5900.f:6000.f);
+        scalar(bike(1)+0x494,phase==1?6000.f:0.f);
+        scalar(bike(1)+0x498,phase==0?1000.f:6000.f);
+        frames(60);const auto voice=row_for(word(cache(1))),handle=word(cache(1));
+        check(voice!=0,"every model reaches its native worker note");
+        initialize_engine_note(voice);
+        check(value(voice+0x2c)==-12.f,"real engine note retains ROM sample tuning");
+        for(float speed:{0.f,-150.f,150.f,-1000.f,1000.f,0.f}){
+            vec(bike(1)+0x178,speed,0);frames(90);worker_pitch_and_gain(voice);
+            check(word(cache(1))==handle&&m[((voice+0xbb)&0x7fffff)^3]!=0&&
+                      half(voice+0xa0)>0&&native_volume==half(voice+0xa0)&&
+                      std::isfinite(native_ratio)&&native_ratio>0&&native_ratio<=2,
+                  "every RPM and approaching/receding note stays audible in native worker");
+        }
+    }
+    reset();shortword(body(0)+rr64::engine::rider::bike_attached,0);
+    for(unsigned s=1;s<14;++s){
+        put(bike(s),s%3==0?25:s%3==1?0:12);
+        position(s,float(s)*2,5);vec(bike(s)+0x178,0,100);
+        scalar(bike(s)+0xC,6000);scalar(bike(s)+0x490,5900);
+        scalar(bike(s)+0x494,6000);scalar(bike(s)+0x498,6000);
+    }
+    frames(90);
+    for(unsigned s=1;s<14;++s){
+        const auto voice=row_for(word(cache(s)));
+        check(voice!=0,"fallen listener retains all thirteen passing engines");
+        initialize_engine_note(voice);worker_pitch_and_gain(voice);
+        check(half(voice+0xa0)>0&&native_volume==half(voice+0xa0),
+              "every mixed-family passby reaches nonzero native physical gain");
+    }
+    // Control: deliberately invalid pitch still follows the stock silent-note
+    // behavior. This proves the check can see silence despite a valid handle.
+    reset();const auto clipped_handle=start_native(),clipped_voice=row_for(clipped_handle);
+    initialize_engine_note(clipped_voice);scalar(clipped_voice+0x30,50);
+    worker_pitch_and_gain(clipped_voice);
+    check(row_for(clipped_handle)&&half(clipped_voice+0xa0)==0&&native_volume==0,
+          "native over-range pitch control exposes silence behind a live handle");
+    scalar(clipped_voice+0x30,0);worker_pitch_and_gain(clipped_voice);
+    check(row_for(clipped_handle)&&half(clipped_voice+0xa0)==0,
+          "native over-range note remains silent until its next note starts");
     // Bounded producer benchmark: real fourteen-racer/four-view scan and
     // actual native memory operations; no sound device, IO or allocator calls.
     reset(16,4);for(unsigned s=0;s<14;++s)position(s,float(s),5);frames();
     const auto before_alloc=allocations.load();const auto start=std::chrono::steady_clock::now();
     constexpr unsigned iterations=20000;for(unsigned i=0;i<iterations;++i)frame();
     const auto micros=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count()/iterations;
-    check(allocations.load()==before_alloc,"hot path has zero host heap allocations");check(active()<=3,"long producer run stays bounded");
-    std::printf("{\"passed\":true,\"checks\":%u,\"benchmark_frames\":%u,\"microseconds_per_frame\":%.3f,\"benchmark_heap_allocations\":0,\"native_allocator\":true,\"game_launched\":false}\n",checks,iterations,micros);
+    check(allocations.load()==before_alloc,"hot path has zero host heap allocations");check(active()==10,"long four-player run sustains every AI engine");
+    std::printf("{\"passed\":true,\"checks\":%u,\"benchmark_frames\":%u,\"microseconds_per_frame\":%.3f,\"benchmark_heap_allocations\":0,\"native_allocator\":true,\"native_worker_pitch_gain\":true,\"game_launched\":false}\n",checks,iterations,micros);
 }

@@ -20,11 +20,14 @@ extern "C" void func_80062594(unsigned char*, recomp_context*) noexcept(false);
 extern "C" void rr64_static_collision_legacy(unsigned char*, recomp_context*);
 extern "C" void func_8001BD50(unsigned char*, recomp_context*);
 extern "C" void func_80034370(unsigned char*, recomp_context*);
+extern "C" void func_80014604(unsigned char*, recomp_context*);
+extern "C" void func_80014DE4(unsigned char*, recomp_context*);
 namespace {
 std::vector<unsigned char> rom, captured;
 unsigned failures = 0, responses = 0;
 unsigned actor_kind=2, body_offset=0x28;
 bool imported=false;
+rr64::netplay::PhysicsRules rules{};
 unsigned imported_header=0x2000000;
 constexpr unsigned grid=0x80100000, objects=0x80120000, terrain=0x80200000,
                    placements=0x80220000, descriptors=0x80240000, actor=0x80300000,
@@ -54,6 +57,8 @@ std::vector<unsigned char> image(const Source& s,bool resident){
     write_u32(m.data(),globals::main_mode,0x17);write_u32(m.data(),globals::pending_mode,0x17);
     write_u32(m.data(),globals::terrain_cell_grid,grid);write_u32(m.data(),0x800dde98,objects);
     write_u32(m.data(),0x800dea8c,70);
+    write_u32(m.data(),0x800dacd0,1000);write_u32(m.data(),0x800df080,70000);
+    write_u32(m.data(),0x800dea88,3);
     for(unsigned i=0;i<4900;++i){
         const auto c=source(i);const unsigned d=grid+i*16,o=objects+i*16;
         if(c.bytes){write_u32(m.data(),d+4,0xb0000000|c.source);write_u16(m.data(),d+14,c.bytes/8);write_s8(m.data(),d+12,1);}
@@ -204,9 +209,98 @@ void combined_bank_and_imported_scope(){
     rom.resize(original_bytes);imported=false;rr64::online_terrain::reset();
     std::cout<<"source_scope combined_stock=pass imported_negative=pass historical_identity=pass\n";
 }
+void results_collision(){
+    // The results dispatcher continues native physics after the reel. A replay
+    // camera can leave the terminal actor's cell unloaded; compare that exact
+    // condition against the original resident contact and following motion.
+    const auto s=source(1096);const auto [a,b]=building_segment(s);
+    unsigned cases=0;
+    for(unsigned kind:{1u,2u})for(float radius:{.5f,1.5f}){
+        actor_kind=kind;
+        auto resident=image(s,true);body(resident,a,b,radius);
+        const auto untouched=resident;const auto expected=run(resident,s.cell,5,true);
+        check(force_changed(untouched,resident),"results oracle has a real authored building contact");
+        for(unsigned mode:{0xbu,0x14u,0x19u,0x1eu})for(unsigned owner=0;owner<3;++owner){
+            rules={};
+            auto fixed=image(s,false);body(fixed,a,b,radius);prepare(fixed);
+            write_u32(fixed.data(),globals::main_mode,mode);
+            write_u32(fixed.data(),globals::pending_mode,mode);
+            if(owner){rules.active=rules.connected=rules.authoritative=true;
+                rules.is_host=owner==1;rules.phase=rr64::netplay::Phase::Race;}
+            const auto before=fixed;
+            const auto actual=run(fixed,s.cell,5,false);
+            check(actual.body==expected.body&&actual.response==expected.response,
+                  "results collision matches resident contact for offline/host/guest");
+            grids_unchanged(before,fixed);
+            auto next=resident;advance(next);advance(fixed);
+            for(unsigned q=0;q<128;++q)check(word(fixed,actor+body_offset+q*4)==word(next,actor+body_offset+q*4),
+                "results next motion retains resident building response");
+            ++cases;
+        }
+    }
+    rules={};actor_kind=2;
+    auto ready=image(s,false);body(ready,a,b,.5f);prepare(ready);
+    for(unsigned refusal=0;refusal<5;++refusal){
+        auto m=ready;rules={};
+        const unsigned mode=refusal==0?0x4u:refusal==1?0x39u:0x19u;
+        write_u32(m.data(),globals::main_mode,mode);write_u32(m.data(),globals::pending_mode,mode);
+        if(refusal>=2){rules.active=true;rules.connected=refusal!=2;rules.authoritative=refusal!=3;
+            rules.phase=refusal==4?rr64::netplay::Phase::TrackSelect:rr64::netplay::Phase::Race;}
+        // Bind the reusable bank to this image before applying the refusal;
+        // a mapping mismatch would otherwise hide an overly broad mode gate.
+        const auto selected=rules;rules={};write_u32(m.data(),globals::main_mode,0x17);
+        prepare(m);rules=selected;write_u32(m.data(),globals::main_mode,mode);
+        const auto before=m;const auto actual=run(m,s.cell,5,false);
+        auto stock=before;const auto expected=run(stock,s.cell,5,true);
+        check(actual.body==expected.body&&!force_changed(before,m),"menus/disconnected/non-authoritative sessions retain stock scope");
+        grids_unchanged(before,m);
+    }
+    rules={};
+    std::cout<<"results_collision cases="<<cases<<" all_result_modes=4 ownership_refusals=5\n";
+}
+void results_floors(){
+    struct Floor { unsigned hit,height,surface;bool operator==(const Floor&)const=default; };
+    const auto floor=[](std::vector<unsigned char>& m,Vec point){
+        constexpr unsigned query=0x80400000;
+        std::memset(m.data()+query-kRdramBegin,0,0x6c);
+        auto c=context();c.f_odd=&c.f0.u32h;c.r4=guest_address(query);
+        func_80014604(m.data(),&c);
+        for(unsigned i=0;i<3;++i)write_float(m.data(),query+i*4,point[i]*4);
+        c.r4=guest_address(query);func_80014DE4(m.data(),&c);
+        std::uint16_t surface=0;read_u16(m.data(),query+0x64,surface);
+        return Floor{unsigned(c.r2)!=0,word(m,query+8),surface};
+    };
+    unsigned supported=0;
+    for(unsigned cell:{1096u,1271u,1272u,1341u,1342u}){
+        const auto s=source(cell);if(!s.bytes)continue;
+        for(float dx:{20.f,125.f,240.f})for(float dy:{20.f,125.f,240.f})for(float z:{25.f,75.f,150.f}){
+            const Vec point{float(cell/70)*250-8750+dx,float(cell%70)*250-8750+dy,z};
+            auto resident=image(s,true);const auto expected=floor(resident,point);
+            if(!expected.hit)continue;
+            ++supported;
+            for(unsigned mode:{0xbu,0x14u,0x19u,0x1eu}){
+                auto fixed=image(s,false);prepare(fixed);
+                write_u32(fixed.data(),globals::main_mode,mode);write_u32(fixed.data(),globals::pending_mode,mode);
+                const auto before=fixed;
+                check(floor(fixed,point)==expected,"all result modes retain exact native floor height/surface after eviction");
+                grids_unchanged(before,fixed);
+                if(supported==1){
+                    auto private_image=before;
+                    const auto live=fixed;
+                    rr64::prediction::ReplayScope scope;
+                    check(rr64::online_terrain::bind_replay(private_image.data(),rom),"results private image owns authenticated terrain scratch");
+                    check(floor(private_image,point)==expected,"historical result floor preserves native support");
+                    check(fixed==live,"historical floor leaves the live guest unchanged");
+                }
+            }
+        }
+    }
+    check(supported!=0,"authored terrain supplies actual result floor contacts");
+    std::cout<<"results_floor supported_points="<<supported<<" result_modes=4\n";
+}
 }
 namespace recomp{std::span<const std::uint8_t> get_rom(){return rom;}}
-namespace rr64::netplay{PhysicsRules get_physics_rules(){return {};}}
+namespace rr64::netplay{PhysicsRules get_physics_rules(){return rules;}}
 namespace rr64::experimental_course{
 bool installed() noexcept{return imported;}
 bool active() noexcept{return imported;}
@@ -216,6 +310,12 @@ unsigned terrain_rom_offset() noexcept{return imported_header;}
 extern "C" void func_800784B4(unsigned char*,recomp_context* c){c->r2=1;}
 extern "C" void func_80078588(unsigned char*,recomp_context* c){c->r2=1;}
 extern "C" void func_8004E754(unsigned char*,recomp_context*){std::abort();}
+// Stock floor cases: only the unrelated camera observer/imported indexing are
+// boundaries; original floor arithmetic and production terrain bank are real.
+extern "C" void rr64_highlight_camera_floor_cell(unsigned char*,void*){}
+extern "C" void rr64_experimental_course_floor_indices(unsigned char*,void*){}
+extern "C" void rr64_experimental_course_floor_subindices(unsigned char*,void*){}
+extern "C" int rr64_experimental_course_floor_cell_allowed(unsigned){return 1;}
 #define RESPONSE(name) extern "C" void name(unsigned char*,recomp_context*){++responses;}
 RESPONSE(func_80056B04) RESPONSE(func_80056BA8) RESPONSE(func_80056DA8)
 RESPONSE(n_alSeqpDelete_copy_80056F10) RESPONSE(n_alSeqpDelete_copy_80056F2C)
@@ -285,5 +385,7 @@ int main(int argc,char** argv){
     }
     authentication_and_ownership();
     combined_bank_and_imported_scope();
+    results_collision();
+    results_floors();
     std::cout<<"Static collision smoke: cases="<<cases<<" contacts="<<contact_cases<<" failures="<<failures<<'\n';return failures?1:0;
 }

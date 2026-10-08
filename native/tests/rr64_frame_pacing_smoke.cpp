@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -91,6 +92,43 @@ void verifyProductionVsyncRequest() {
         "a request must update Vulkan's desired mode even if a delayed rebuild still reports the old mode");
 }
 
+void verifyManualTarget() {
+    using RT64::RR64FramePacing::manualTargetRate;
+    for (const auto display : {0u, 60u, 120u, 144u}) {
+        for (const auto requested : {30u, 60u, 120u, 144u, 240u}) {
+            require(manualTargetRate(requested, display, false) == requested,
+                "VSync off keeps the requested FPS even above the detected display rate");
+            const auto synchronized = manualTargetRate(requested, display, true);
+            require(synchronized <= requested && (!display || synchronized <= display) &&
+                (synchronized == requested || synchronized == display),
+                "VSync on retains the manual cap and the known display ceiling");
+            require(display || synchronized == requested,
+                "an unknown display rate cannot impose a zero FPS cap");
+        }
+    }
+    const auto nativePath = std::filesystem::path(__FILE__).parent_path().parent_path();
+    const auto frontend = compactSource(nativePath /
+        "lib/RecompFrontend/recompui/src/renderer/rt64_render_context.cpp");
+    require(frontend.find("application->userConfig.rr64VsyncEnabled=config.vsync_enabled;") !=
+        std::string::npos, "launcher VSync preference must reach the renderer user configuration");
+    const auto workload = compactSource(nativePath / "lib/rt64/src/hle/rt64_workload_queue.cpp");
+    const auto update = workload.find("voidWorkloadQueue::threadConfigurationUpdate(");
+    require(update != std::string::npos, "workload configuration update must be identifiable");
+    const auto opening = workload.find('{', update);
+    const auto body = workload.substr(opening, blockEnd(workload, opening) - opening);
+    require(body.find("conststd::scoped_locklock(ext.sharedResources->configurationMutex);") !=
+        std::string::npos && body.find("caseUserConfiguration::RefreshRate::Manual:"
+        "workloadConfig.targetRate=RR64FramePacing::manualTargetRate("
+        "ext.sharedResources->userConfig.refreshRateTarget,ext.sharedResources->swapChainRate,"
+        "ext.sharedResources->userConfig.rr64VsyncEnabled);break;") != std::string::npos,
+        "manual target selection must use the locked VSync configuration and tested policy");
+    require(body.find("caseUserConfiguration::RefreshRate::Display:"
+        "workloadConfig.targetRate=ext.sharedResources->swapChainRate;break;") != std::string::npos &&
+        body.find("caseUserConfiguration::RefreshRate::Original:default:"
+        "workloadConfig.targetRate=0;break;") != std::string::npos,
+        "Display and Original target selection remain unchanged");
+}
+
 void verifyPendingVsyncChanges() {
     using RT64::RR64FramePacing::PendingVsyncChange;
     PendingVsyncChange pending;
@@ -152,6 +190,163 @@ void verifyPendingVsyncChanges() {
     }
 }
 
+void verifyRationalCadence(bool oldPolicyControl) {
+    using namespace RT64::RR64FramePacing;
+    uint64_t testedIntervals = 0;
+    for (const uint32_t source : {60u, 15u, 30u, 50u}) {
+        for (const uint32_t target : {117u, 61u, 75u, 90u, 100u, 119u, 120u, 144u, 165u, 240u}) {
+            if (target <= source || !validGeneratedFrameCount(target, source, target / source)) continue;
+            for (unsigned pattern = 0; pattern < 4; ++pattern) {
+                RationalFrameCadence producer, presenter;
+                uint64_t totalSlots = 0, oldTotal = 0, oldRemainder = 0;
+                for (uint32_t update = 0; update < source * 12u; ++update) {
+                    const bool eligible = pattern == 0 || (pattern == 1 && update % 2 == 0) ||
+                        (pattern == 2 && update % 23 < 4);
+                    const uint32_t generatedSlots = producer.advance(target, source);
+                    const uint32_t outputSlots = presenter.advance(target, source);
+                    const uint64_t before = uint64_t(update) * target / source;
+                    const uint32_t expected = uint32_t(uint64_t(update + 1u) * target / source - before);
+                    require(generatedSlots == expected && outputSlots == expected,
+                        "producer and presenter retain rational phase through alternating eligibility");
+                    const uint32_t images = eligible ? generatedSlots : 1u;
+                    for (uint32_t slot = 0; slot < outputSlots; ++slot) {
+                        require(ownedPresentationImageIndex(slot, outputSlots, images) < images,
+                            "every repeated or generated owned output remains in its leased batch");
+                    }
+                    if (eligible) {
+                        for (uint32_t slot = 0; slot < generatedSlots; ++slot) {
+                            const double expectedWeight = std::clamp(
+                                (double((before + slot + 1u) * source) - double(uint64_t(update) * target)) /
+                                target, 0.0, 1.0);
+                            require(std::abs(producer.interpolationWeight(slot + 1u) - expectedWeight) < 0.000001,
+                                "generated weights stay on the source timeline after rejected intervals");
+                        }
+                    }
+                    // Exact pre-fix policies: generation restarted after any
+                    // rejected match, and native repeats required an integer ratio.
+                    if (!eligible) oldRemainder = 0;
+                    uint32_t oldGenerated = 1;
+                    if (eligible) {
+                        oldRemainder += target;
+                        oldGenerated = uint32_t(oldRemainder / source);
+                        oldRemainder %= source;
+                    }
+                    const uint32_t oldSlots = presentationFrameCount(eligible, oldGenerated, target, source);
+                    oldTotal += oldSlots;
+                    totalSlots += oldPolicyControl ? oldSlots : outputSlots;
+                    require(totalSlots == uint64_t(update + 1u) * target / source,
+                        "mixed native/interpolated output must meet the rational target without eligibility-dependent drops");
+                    ++testedIntervals;
+                }
+                require(totalSlots == uint64_t(target) * 12u,
+                    "twelve source seconds produce exactly twelve target seconds without overspeed");
+                if (target == 117 && source == 60 && (pattern == 1 || pattern == 3)) {
+                    require(oldTotal == 60u * 12u && totalSlots == 117u * 12u,
+                        "the saved 117 FPS failure reproduces 60 output slots per source second");
+                }
+            }
+        }
+    }
+    // Workloads and VIs are not one-to-one. A VI may select an older exact
+    // writer or be skipped altogether. Its output clock must not accumulate
+    // catch-up debt, and resampling must stay inside that selected batch.
+    struct CompletedBatch { uint32_t source, images; };
+    std::array<CompletedBatch, 120> completed{};
+    RationalFrameCadence authoring, output;
+    uint32_t priorSelectedRate = 0, rateIntervals = 0, skipped = 0, mismatches = 0;
+    bool selectedOlderRate = false;
+    for (uint32_t writer = 0; writer < completed.size(); ++writer) {
+        const uint32_t source = writer >= 50 && writer < 65 ? 30u : 60u;
+        const auto generated = authoring.advance(117, source);
+        completed[writer] = {source, generated};
+        if (writer == 0 || writer % 17 == 0 || (writer >= 10 && writer < 14)) {
+            ++skipped;
+            continue;
+        }
+        const auto &selected = completed[writer - 1u];
+        selectedOlderRate |= selected.source != source;
+        if (selected.source != priorSelectedRate) {
+            rateIntervals = 0;
+            priorSelectedRate = selected.source;
+        }
+        const auto slots = output.advance(117, selected.source);
+        require(slots == uint64_t(rateIntervals + 1u) * 117 / selected.source -
+            uint64_t(rateIntervals) * 117 / selected.source,
+            "skipped VIs incur no catch-up debt and an older writer owns its source rate");
+        ++rateIntervals;
+        mismatches += slots != selected.images;
+        uint32_t previousImage = 0;
+        for (uint32_t slot = 0; slot < slots; ++slot) {
+            const auto image = ownedPresentationImageIndex(slot, slots, selected.images);
+            require(image >= previousImage && image < selected.images,
+                "resume resamples only the selected older batch, never current producer images");
+            previousImage = image;
+        }
+        require(previousImage == selected.images - 1,
+            "phase divergence still includes the selected writer's latest image");
+    }
+    require(skipped > 0 && mismatches > 0 && selectedOlderRate,
+        "the asynchronous fixture must actually exercise skips, divergent phase, and older source rates");
+
+    RationalFrameCadence cadence;
+    for (const auto rates : {std::array<uint32_t, 2>{117, 60}, {144, 60}, {120, 60},
+        {60, 60}, {117, 0}, {117, 60}, {90, 30}, {0, 60}, {30, 60}}) {
+        RationalFrameCadence fresh;
+        require(cadence.advance(rates[0], rates[1]) == fresh.advance(rates[0], rates[1]),
+            "rate changes discard the old fractional phase");
+        require(cadence.advance(rates[0], rates[1]) == fresh.advance(rates[0], rates[1]),
+            "source and target changes restart at the current rate");
+    }
+    cadence.reset();
+    require(cadence.advance(117, 60) == 1 && cadence.advance(117, 60) == 2,
+        "scene reset starts a fresh rational cadence");
+    cadence.reset();
+    uint32_t pressureTotal = 0, suppressedSlots = 0;
+    for (uint32_t update = 0; update < 60; ++update) {
+        const auto slots = cadence.advance(117, 60);
+        const bool nativePressureBatch = update % 7 == 0;
+        pressureTotal += nativePressureBatch ? 1u : slots;
+        suppressedSlots += nativePressureBatch ? slots - 1u : 0u;
+    }
+    require(pressureTotal + suppressedSlots == 117 && cadence.advance(117, 60) == 1,
+        "native pressure remains one slot and never creates catch-up debt");
+    for (uint32_t images = 1; images <= MaximumCadenceFrames; ++images) {
+        for (uint32_t slots = 1; slots <= MaximumCadenceFrames; ++slots) {
+            uint32_t previous = 0;
+            for (uint32_t slot = 0; slot < slots; ++slot) {
+                const auto index = ownedPresentationImageIndex(slot, slots, images);
+                require(index >= previous && index < images,
+                    "owned sampling is monotonic and cannot escape its immutable lease");
+                previous = index;
+            }
+            require(previous == images - 1u, "owned sampling includes the latest available image");
+        }
+    }
+    require(cadence.advance(UINT32_MAX, 1) == MaximumCadenceFrames,
+        "extreme configured ratios retain the existing output bound");
+
+    const auto nativePath = std::filesystem::path(__FILE__).parent_path().parent_path();
+    const auto workload = compactSource(nativePath / "lib/rt64/src/hle/rt64_workload_queue.cpp");
+    const auto present = compactSource(nativePath / "lib/rt64/src/hle/rt64_present_queue.cpp");
+    const auto advance = workload.find("retainedFrameCadence.advance(workloadConfig.targetRate,workload.viOriginalRate)");
+    require(advance != std::string::npos && advance < workload.find("if(requiresFrameMatching){") &&
+        workload.find("displayFrames=retainedCadenceFrames;") != std::string::npos &&
+        workload.find("curFrameWeight=retainedFrameCadence.interpolationWeight(frame+1u);") != std::string::npos,
+        "production generation consumes its cadence before matching can reject it");
+    require(present.find("outputFrameCadence.advance(targetRate,viOriginalRate)") <
+        present.find("ownedFrameBatches.find(") &&
+        present.find("((ownedFrames&&ownedFrames->previousWriterWorkloadId==0)?1u:cadenceFrames)") != std::string::npos &&
+        present.find("ownedFrames->images[RR64FramePacing::ownedPresentationImageIndex(") != std::string::npos,
+        "production presentation shares rational slots while retaining native pressure and bounded owned indexing");
+    const auto snapshot = present.find("commandList->copyTexture(repeatTexture,sourceTexture);");
+    const auto unlock = present.find("ext.sharedResources->workloadMutex.unlock();", snapshot);
+    require(snapshot != std::string::npos && unlock != std::string::npos && snapshot < unlock &&
+        present.find("notifyPresentId(present);", unlock) != std::string::npos,
+        "native repeats copy before releasing the workload or allowing its next writer");
+    std::cout << "RR64 rational cadence: " << testedIntervals << " mixed-eligibility intervals passed; "
+        "117/60 old native/alternating policy = 60 FPS, current = 117 output slots per source second.\n";
+}
+
 void verifyProductionMatchingGate() {
     // This source contract deliberately checks the real queue wiring as well
     // as the pure policy below. It rejects an unchanged R18 queue even when
@@ -206,7 +401,9 @@ int main(int argc, char** argv) {
         "presentation time deltas remain in microseconds");
     verifyProductionMatchingGate();
     verifyProductionVsyncRequest();
+    verifyManualTarget();
     verifyPendingVsyncChanges();
+    verifyRationalCadence(argc == 3 && std::string_view(argv[2]) == "--old-rational-cadence");
     require(!requiresFrameMatching(true, false, 60, 60) &&
         !requiresFrameMatching(true, false, 60, 0) &&
         !requiresFrameMatching(true, false, 30, 60) &&

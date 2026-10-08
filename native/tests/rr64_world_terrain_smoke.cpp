@@ -10,11 +10,15 @@
 #include <cstdlib>
 #include <chrono>
 #include "rr64_local_world_window.hpp"
+#ifdef RR64_TERRAIN_RSP_HANDOFF
+void rr64_terrain_rsp_handoff(const std::vector<std::uint8_t>& memory, unsigned entry, unsigned role);
+#endif
 bool testLocalWindow=true;
 double testDistancePercent=100.0;
 
 extern "C" void func_8007D814(std::uint8_t*, recomp_context*);
 extern "C" void guMtxF2L(std::uint8_t*, recomp_context*);
+extern "C" void do_break(std::uint32_t) { std::abort(); }
 namespace {
 std::vector<std::uint8_t> driver_rom;
 bool driver_enabled = true, camera_current = true;
@@ -154,6 +158,10 @@ void driver_checks() {
         "terrain bridge enables extended interpretation and calls bounded cache");
     const auto first_commands = memory_word(memory, 0x8020020cu);
     check_tag(first_commands+24u, 0u);
+    const auto compiled_cell = extended_word(first_commands + 24u + 36u);
+#ifdef RR64_TERRAIN_RSP_HANDOFF
+    rr64_terrain_rsp_handoff(memory, 0x802001f8u, 0u);
+#endif
     check(allocation_bytes(1u) == other_before, "drawing slot0 leaves slot1 cache untouched");
     const auto first_before = allocation_bytes(0u);
     setup(1u, 2u); rr64_world_terrain_begin(memory.data()); rr64_world_terrain_draw(memory.data());
@@ -173,6 +181,98 @@ void driver_checks() {
     if(diagnostics){const auto evidence=rr64::world::terrain_statistics().evidence;
         check(evidence.views[0].stock_union[0]==1 && evidence.views[0].extended_last[0]==0,
             "stock observation retained and last extended bitmap cleared on empty pass");}
+    // The stock caller has already written DE00 at the observation hook. Keep
+    // its real root/command inputs; the driver replaces only the DE operand.
+    constexpr unsigned live_root = 0x80480000u, stock_list = 0x80400000u;
+    auto observe_call = [&](unsigned index, unsigned address) {
+        memory_word(memory, grid + index * 16u, live_root);
+        memory_word(memory, live_root + 0x1cu, std::bit_cast<unsigned>(1200.0f));
+        memory_word(memory, live_root + 0x20u, std::bit_cast<unsigned>(-3400.0f));
+        for (unsigned i = 0; i < 4; ++i)
+            memory_word(memory, live_root + 0x24u + i * 4u,
+                        std::bit_cast<unsigned>(i == 3u ? 1.0f : 0.0f));
+        memory_word(memory, address, 0xde000000u);
+        memory_word(memory, address + 4u, stock_list);
+        memory_word(memory, 0x800ac650u, address + 8u);
+        rr64_world_terrain_observe(memory.data(), grid + index * 16u);
+    };
+    auto finish_frame = [&](unsigned occupied_tail = 0u, bool valid_footer = true) {
+        const auto end = memory_word(memory, 0x800ac650u);
+        const auto base = memory_word(memory, 0x8009cb90u);
+        memory_word(memory, end, 0xe9000000u); memory_word(memory, end + 4u, 0u);
+        memory_word(memory, end + 8u, valid_footer ? 0xdf000000u : 0u);
+        memory_word(memory, end + 12u, 0u);
+        memory_word(memory, 0x800ac650u, occupied_tail ? occupied_tail : end + 16u);
+        rr64_world_terrain_finalize(memory.data(), (end + 16u - base - 0x140u) / 4u);
+    };
+#ifdef RR64_TERRAIN_RSP_HANDOFF
+    memory_word(memory, 0x800dde80u, std::bit_cast<unsigned>(1200.25f));
+#endif
+    setup(0u, 80u); rr64_world_terrain_begin(memory.data());
+    observe_call(0u, 0x80200180u);
+    memory_word(memory, 0x800ac650u, 0x80200200u);
+    auto guest_before = std::vector<unsigned char>(memory.begin(), memory.begin() + kRdramSize);
+    const auto prior_frames = rr64::world::terrain_statistics().frames;
+    rr64_world_terrain_draw(memory.data());
+    check(memory_word(memory, 0x80200184u) == stock_list &&
+        memory_word(memory, 0x800ac650u) == 0x80200200u,
+        "terrain preparation reserves no guest tail and changes no stock operand before frame completion");
+    finish_frame();
+    const auto stock_trampoline = memory_word(memory, 0x80200184u);
+    const auto stock_wrapper = memory_word(memory, stock_trampoline + 20u);
+#ifdef RR64_TERRAIN_RSP_HANDOFF
+    rr64_terrain_rsp_handoff(memory, 0x80200180u, 1u);
+#endif
+    check(rr64::world::terrain_statistics().replaced_stock_cells == 1u &&
+        rr64::world::terrain_statistics().visible_cells == 0u &&
+        rr64::world::terrain_statistics().frames == prior_frames + 1u &&
+        memory_word(memory, 0x800ac650u) == 0x80200228u,
+        "stock-only pass replaces its draw in place, without appending duplicate terrain");
+    check(stock_trampoline == 0x80200210u &&
+        memory_word(memory, 0x80200200u) == 0xe9000000u &&
+        memory_word(memory, 0x80200208u) == 0xdf000000u &&
+        memory_word(memory, stock_trampoline) == 0xe0525464u &&
+        memory_word(memory, stock_trampoline + 8u) == 0x6400002cu &&
+        memory_word(memory, stock_trampoline + 12u) == 1u &&
+        memory_word(memory, stock_trampoline + 16u) == 0xde010000u,
+        "guest trampoline enables extended addresses before a no-push jump; original main-list DF precedes its storage");
+    check_tag(stock_wrapper + 40u, 0u);
+    check(extended_word(stock_wrapper + 76u) == compiled_cell,
+        "stock and distant roles call the identical compiled vertex/index/material list");
+    const std::array<std::array<unsigned,2>, 7> footer{{
+        {0xe7000000u,0u},{0x6400002au,0u},{0x6400001cu,0u},{0x6400001au,0u},
+        {0x6400002cu,0u},{0xe0525464u,0x20000000u},{0xdf000000u,0u}}};
+    check(extended_word(stock_wrapper) == 0xe0525464u &&
+        extended_word(stock_wrapper + 4u) == 0x10000064u &&
+        extended_word(stock_wrapper + 8u) == 0x6400002cu &&
+        extended_word(stock_wrapper + 12u) == 1u,
+        "stock sublist enables and bounds extended addressing before its native data");
+    for (unsigned i = 0; i < 3; ++i)
+        check(extended_word(stock_wrapper + 16u + i * 8u) ==
+            std::array{0x64000019u,0x6400001bu,0x64000029u}[i],
+            "stock wrapper saves the same material states as distant terrain");
+    for (unsigned i = 0; i < footer.size(); ++i)
+        check(extended_word(stock_wrapper + 96u + i * 8u) == footer[i][0] &&
+            extended_word(stock_wrapper + 100u + i * 8u) == footer[i][1],
+            "stock wrapper restores state and addressing without changing projection or scissor");
+    for (unsigned i = 0; i < kRdramSize; ++i)
+        if ((i < 0x200184u || i >= 0x200188u) &&
+            (i < 0x200200u || i >= 0x200228u) &&
+            (i < 0xac650u || i >= 0xac654u))
+            if (memory[i] != guest_before[i]) {
+                check(false, "stock substitution changes only its call operand, bounded bridge and command pointer");
+                break;
+            }
+#ifdef RR64_TERRAIN_RSP_HANDOFF
+    memory_word(memory, 0x800dde80u, std::bit_cast<unsigned>(1200.0f));
+#endif
+    const auto submitted = allocation_bytes(0u);
+    rr64_world_terrain_begin(memory.data());
+    observe_call(0u, 0x80200180u);
+    memory_word(memory, 0x800ac650u, 0x80200200u);
+    rr64_world_terrain_draw(memory.data());
+    check(allocation_bytes(0u) == submitted && memory_word(memory, 0x80200184u) == stock_list,
+        "same-slot epoch cannot overwrite an already submitted stock replacement");
     for (unsigned invalid = 0; invalid < 6u; ++invalid) {
         setup(0u, 4u + invalid); camera_current = true; driver_enabled = true;
         memory_word(memory, 0x8009cb90u, 0x80200000u); memory_word(memory, 0x800bc9a0u, 0x4650u);
@@ -325,6 +425,90 @@ void driver_checks() {
         "stock-owned first cell is excluded without changing remaining visibility");
     const auto compact_commands=memory_word(memory, 0x8024020cu);
     for (unsigned index=1u; index<4900u; ++index) { check_tag(compact_commands+24u+(index-1u)*56u, index); }
+    setup(0u, 90u); rr64_world_terrain_begin(memory.data());
+    observe_call(1u, 0x80200180u); observe_call(0u, 0x80200188u);
+    memory_word(memory, 0x800ac650u, 0x80200200u);
+    rr64_world_terrain_draw(memory.data());
+    finish_frame();
+    check(rr64::world::terrain_statistics().replaced_stock_cells == 2u &&
+        rr64::world::terrain_statistics().visible_cells == 4898u,
+        "maximum world retains exactly one producer for each stock and distant cell");
+    check_tag(memory_word(memory, memory_word(memory, 0x80200184u) + 20u) + 40u, 1u);
+    check_tag(memory_word(memory, memory_word(memory, 0x8020018cu) + 20u) + 40u, 0u);
+    check(memory_word(memory, 0x80200180u) == 0xde000000u &&
+        memory_word(memory, 0x80200188u) == 0xde000000u,
+        "stock call order survives a different immutable asset ordering");
+    for (unsigned invalid = 0; invalid < 9; ++invalid) {
+        setup(1u, 91u + invalid); rr64_world_terrain_begin(memory.data());
+        observe_call(0u, 0x80240180u); observe_call(1u, 0x80240188u);
+        if (invalid == 0) memory_word(memory, 0x8024018cu, stock_list + 8u);
+        if (invalid == 1) observe_call(0u, 0x80240190u);
+        if (invalid == 2) rr64_world_terrain_observe(memory.data(), grid + 1u);
+        if (invalid == 3) {
+            memory_word(memory, live_root + 0x1cu, std::bit_cast<unsigned>(1201.0f));
+            rr64_world_terrain_observe(memory.data(), grid + 16u);
+        }
+        if (invalid == 4) memory_word(memory, 0x800a1830u, 200u);
+        const unsigned final_pointer = 0x80240200u;
+        memory_word(memory, final_pointer - 8u, 0xfa000000u);
+        memory_word(memory, final_pointer - 4u, 0u);
+        memory_word(memory, 0x800ac650u, final_pointer);
+        const auto first_target = memory_word(memory, 0x80240184u);
+        auto second_target = memory_word(memory, 0x8024018cu);
+        rr64_world_terrain_draw(memory.data());
+        if (invalid == 6u) {
+            second_target += 16u;
+            memory_word(memory, 0x8024018cu, second_target);
+        }
+        if (invalid == 8u) memory_word(memory, 0x800a1830u, 201u);
+        finish_frame(invalid == 5u ? 0x80240000u + 0x140u + 0x4650u * 8u - 24u : 0u,
+                     invalid != 7u);
+        check(rr64::world::terrain_statistics().replaced_stock_cells == 0u &&
+            memory_word(memory, 0x80240184u) == first_target &&
+            memory_word(memory, 0x8024018cu) == second_target,
+            "invalid capture, completed footer, final call, epoch or remaining capacity refuses every stock replacement");
+    }
+    setup(0u, 100u); rr64_world_terrain_begin(memory.data());
+    for (unsigned i = 0; i < 300u; ++i) observe_call(i, 0x80200148u + i * 8u);
+    memory_word(memory, 0x80200aa8u, 0xfa000000u);
+    memory_word(memory, 0x80200aacu, 0u);
+    memory_word(memory, 0x800ac650u, 0x80200ab0u);
+    rr64_world_terrain_draw(memory.data());
+    finish_frame();
+    check(rr64::world::terrain_statistics().replaced_stock_cells == 0u &&
+        rr64::world::terrain_statistics().visible_cells == 4600u,
+        "stock wrapper budget refusal preserves the existing distant pass");
+    for (unsigned i = 0; i < 300u; ++i)
+        check(memory_word(memory, 0x8020014cu + i * 8u) == stock_list,
+            "capacity refusal leaves every stock draw target intact");
+    setup(0u, 105u);
+    memory_word(memory, rr64::lod::test::Fixture::race_player_count, 2u);
+    memory_word(memory, 0x8009db88u, 2u);
+    for (unsigned view_index = 0; view_index < 2u; ++view_index) {
+        memory_word(memory, globals::active_viewport, view_index);
+        pack(memory, 0x800b6568u + view_index * 0x180u, projection);
+        pack(memory, 0x800b6de8u + view_index * 0x180u, view);
+        rr64_world_terrain_begin(memory.data());
+        observe_call(view_index, 0x80200180u + view_index * 0x100u);
+        memory_word(memory, 0x802001f8u + view_index * 0x100u, 0xfa000000u);
+        memory_word(memory, 0x802001fcu + view_index * 0x100u, 0u);
+        memory_word(memory, 0x800ac650u, 0x80200200u + view_index * 0x100u);
+        rr64_world_terrain_draw(memory.data());
+    }
+    check(memory_word(memory, 0x80200184u) == stock_list &&
+        memory_word(memory, 0x80200284u) == stock_list,
+        "later viewport preparation preserves both original calls until finalization");
+    finish_frame();
+    check(rr64::world::terrain_statistics().replaced_stock_cells == 2u,
+        "completed frame commits both independently preserved viewport passes");
+    for (unsigned view_index = 0; view_index < 2u; ++view_index) {
+        const auto bridge = memory_word(memory, 0x80200184u + view_index * 0x100u);
+        const auto wrapper = memory_word(memory, bridge + 20u);
+        check(extended_word(wrapper + 44u) == 0x52510000u + view_index * 0x2000u + view_index,
+            "pending stock wrappers retain their original viewport identity");
+    }
+    memory_word(memory, rr64::lod::test::Fixture::race_player_count, 1u);
+    memory_word(memory, 0x8009db88u, 1u); memory_word(memory, globals::active_viewport, 0u);
     rr64::world::terrain_reset_session();driver_rom=fixture(4u,0u);
     const auto isolated_entry=refs+(926u+700u)*12u;
     put32(driver_rom,isolated_entry,static_cast<unsigned>(partition-isolated_entry));
@@ -354,6 +538,15 @@ void driver_checks() {
     check(rr64_world_terrain_stock_state(memory.data(),grid+700u*16u,5u)==5u,"Big Game stock terrain remains unrestricted");
     check(rr64::world::terrain_statistics().course_excluded_cells==0&&rr64::world::terrain_statistics().visible_cells==2,
         "Big Game keeps all previously visible terrain and clears lap selection");
+    rr64::world::terrain_reset_session(); driver_rom = fixture(4u, 0x14u, 2u, 0u, true);
+    setup(0u, 110u); rr64_world_terrain_begin(memory.data());
+    observe_call(0u, 0x80200180u);
+    memory_word(memory, 0x800ac650u, 0x80200200u);
+    rr64_world_terrain_draw(memory.data());
+    finish_frame();
+    check(rr64::world::terrain_statistics().replaced_stock_cells == 0u &&
+        memory_word(memory, 0x80200184u) == stock_list,
+        "animated stock material retains original producer until live phase parity is certified");
     rr64::world::terrain_reset_session(); driver_rom.assign(16u, 0u);
     const auto allocations_before_refusal = allocations.size();
     check(rr64_terrain_streaming_range(memory.data(), native_range) == native_range &&
@@ -401,7 +594,11 @@ void course_checks(){
     frame.publish(&memory,4,selected);
     check(!frame.read(&memory,4)[71]&&frame.read(&memory,5)[71]&&frame.read(&other,4)[71],"course selection cannot leak into another frame or mapping");
 }
+#ifdef RR64_TERRAIN_RSP_HANDOFF
+int rr64_terrain_driver_smoke_main() {
+#else
 int main() {
+#endif
     if(std::getenv("RR64_BOUNDS_BENCHMARK")){
         std::array<float,16> identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
         rr64::world::WorldFrustum frustum(identity,identity);
@@ -431,7 +628,7 @@ int main() {
     }
     course_checks();
     matrix_parity(); driver_checks();
-    std::printf("Terrain driver smoke: %s (%d failures); actual7D814,frustum,privatecache,slot lifetime,Gfx guards\n",
+    std::printf("Terrain driver smoke: %s (%d failures); actual7D814,frustum,stock handoff,atomic refusals,privatecache,slot lifetime,Gfx guards\n",
         failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
 }

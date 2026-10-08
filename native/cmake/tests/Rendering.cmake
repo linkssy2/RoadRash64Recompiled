@@ -23,7 +23,7 @@ if(MSVC)
 endif()
 add_executable(RR64HighlightCameraBoundarySmoke EXCLUDE_FROM_ALL
     tests/rr64_highlight_camera_boundary_smoke.cpp tests/rr64_matching_test_callbacks.cpp
-    src/rr64_highlight_render_boundary.cpp)
+    src/rr64_highlight_render_boundary.cpp src/rr64_shadow_tags.cpp)
 target_include_directories(RR64HighlightCameraBoundarySmoke PRIVATE src
     $<TARGET_PROPERTY:RR64WorldMatchingSmoke,INCLUDE_DIRECTORIES>
     $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES>)
@@ -36,17 +36,37 @@ endif()
 add_executable(RR64AuthoredCadenceSmoke EXCLUDE_FROM_ALL
     tests/rr64_authored_cadence_smoke.cpp
 )
+set(_shadow_fixture "${CMAKE_CURRENT_BINARY_DIR}/rr64_shadow_tags_fixture.c")
+file(GLOB _shadow_functions "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_*.c")
+add_custom_command(OUTPUT "${_shadow_fixture}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract_shadow_tags_fixture.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs" "${_shadow_fixture}"
+    DEPENDS scripts/extract_shadow_tags_fixture.py ${_shadow_functions}
+    VERBATIM)
+add_executable(RR64ShadowTagsSmoke EXCLUDE_FROM_ALL tests/rr64_shadow_tags_smoke.cpp
+    tests/rr64_matching_test_callbacks.cpp src/rr64_shadow_tags.cpp "${_shadow_fixture}")
+target_include_directories(RR64ShadowTagsSmoke PRIVATE src "${RT64_ROOT}"
+    $<TARGET_PROPERTY:RR64WorldMatchingSmoke,INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES> "${RR64_SDL2_INCLUDE_DIRS}")
+target_compile_features(RR64ShadowTagsSmoke PRIVATE cxx_std_20)
+target_link_libraries(RR64ShadowTagsSmoke PRIVATE rt64)
+target_link_directories(RR64ShadowTagsSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
+if(MSVC)
+    target_compile_options(RR64ShadowTagsSmoke PRIVATE /clang:-march=nehalem)
+endif()
 add_executable(RR64InterpolationPressureSmoke EXCLUDE_FROM_ALL
     tests/rr64_interpolation_pressure_smoke.cpp
 )
 target_include_directories(RR64InterpolationPressureSmoke PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/rt64/src"
 )
-foreach(RR64_CPU_TEST RR64OwnedTextureReuseSmoke RR64RSPVertexSmoke RR64WorldMatchingPerformanceSmoke RR64TMEMLoadSmoke RR64MatchingPreflightSmoke RR64RSPTriangleBatchSmoke RR64TranslationRejectionSmoke)
+foreach(RR64_CPU_TEST RR64OwnedTextureReuseSmoke RR64RSPVertexSmoke RR64RSPTransformIndexSmoke RR64WorldMatchingPerformanceSmoke RR64TMEMLoadSmoke RR64MatchingPreflightSmoke RR64RSPTriangleBatchSmoke RR64TranslationRejectionSmoke)
     if(RR64_CPU_TEST STREQUAL "RR64OwnedTextureReuseSmoke")
         set(RR64_CPU_FIXTURE tests/rr64_owned_texture_reuse_smoke.cpp)
     elseif(RR64_CPU_TEST STREQUAL "RR64RSPVertexSmoke")
         set(RR64_CPU_FIXTURE tests/rr64_rsp_vertex_smoke.cpp)
+    elseif(RR64_CPU_TEST STREQUAL "RR64RSPTransformIndexSmoke")
+        set(RR64_CPU_FIXTURE tests/rr64_rsp_transform_index_smoke.cpp)
     elseif(RR64_CPU_TEST STREQUAL "RR64TMEMLoadSmoke")
         set(RR64_CPU_FIXTURE tests/rr64_tmem_load_smoke.cpp)
     elseif(RR64_CPU_TEST STREQUAL "RR64MatchingPreflightSmoke")
@@ -326,6 +346,21 @@ if(RR64_TEST_POWERSHELL)
     rr64_generated_world_test(RR64WorldTerrainSmoke generate_world_terrain_assets_fixture.ps1
         rr64_world_terrain_smoke.cpp src/rr64_world_terrain_assets.cpp src/rr64_world_terrain.cpp
         src/rr64_actor_render_snapshot.cpp src/rr64_actor_pose.cpp)
+    # Run both terrain paths through the real RSP and strict frame matcher.
+    add_executable(RR64TerrainHandoffRSPSmoke EXCLUDE_FROM_ALL
+        tests/rr64_terrain_handoff_rsp_smoke.cpp tests/rr64_world_terrain_smoke.cpp
+        tests/rr64_matching_test_callbacks.cpp src/rr64_world_terrain_assets.cpp
+        src/rr64_world_terrain.cpp src/rr64_actor_render_snapshot.cpp src/rr64_actor_pose.cpp
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/RR64WorldTerrainSmoke/original_functions.c")
+    target_include_directories(RR64TerrainHandoffRSPSmoke PRIVATE ${RR64_ACTOR_MATH_INCLUDES}
+        "${N64MODERN_RUNTIME_ROOT}/thirdparty" "${N64MODERN_RUNTIME_ROOT}/thirdparty/concurrentqueue"
+        "${RT64_ROOT}" "${RR64_SDL2_INCLUDE_DIRS}"
+        $<TARGET_PROPERTY:RR64WorldMatchingSmoke,INCLUDE_DIRECTORIES>)
+    target_compile_options(RR64TerrainHandoffRSPSmoke PRIVATE ${RR64_ACTOR_MATH_OPTIONS})
+    target_compile_definitions(RR64TerrainHandoffRSPSmoke PRIVATE RR64_TERRAIN_RSP_HANDOFF NOMINMAX)
+    target_compile_features(RR64TerrainHandoffRSPSmoke PRIVATE cxx_std_20)
+    target_link_libraries(RR64TerrainHandoffRSPSmoke PRIVATE rt64)
+    target_link_directories(RR64TerrainHandoffRSPSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
     rr64_generated_world_test(RR64WorldObjectAssetsSmoke generate_world_object_assets_fixture.ps1
         rr64_world_object_assets_smoke.cpp src/rr64_world_object_assets.cpp)
     rr64_generated_world_test(RR64HighlightTrafficSmoke generate_highlight_traffic_fixture.ps1
@@ -337,8 +372,12 @@ if(RR64_TEST_POWERSHELL)
         tests/rr64_world_asset_batch_smoke.cpp src/rr64_world_terrain_assets.cpp
         src/rr64_world_object_assets.cpp
         "${CMAKE_CURRENT_BINARY_DIR}/generated/RR64WorldTerrainAssetsSmoke/original_functions.c"
+        tests/rr64_world_asset_batch_object_oracle.c)
+    add_custom_target(RR64WorldAssetBatchObjectOracle DEPENDS
         "${CMAKE_CURRENT_BINARY_DIR}/generated/RR64WorldObjectAssetsSmoke/original_functions.c")
+    add_dependencies(RR64WorldAssetBatchSmoke RR64WorldAssetBatchObjectOracle)
     target_include_directories(RR64WorldAssetBatchSmoke PRIVATE ${RR64_ACTOR_MATH_INCLUDES}
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
         "${N64MODERN_RUNTIME_ROOT}/thirdparty" "${N64MODERN_RUNTIME_ROOT}/thirdparty/concurrentqueue")
     target_compile_options(RR64WorldAssetBatchSmoke PRIVATE ${RR64_ACTOR_MATH_OPTIONS})
     add_executable(RR64WorldObjectsSmoke EXCLUDE_FROM_ALL tests/rr64_world_objects_smoke.cpp

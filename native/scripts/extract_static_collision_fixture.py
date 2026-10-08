@@ -19,15 +19,18 @@ for source in sorted(a.recompiled_dir.glob('funcs_*.c')):
 boundaries = {'func_80056B04', 'func_80056BA8', 'func_80056DA8',
               'n_alSeqpDelete_copy_80056F10', 'n_alSeqpDelete_copy_80056F2C',
               'func_800565BC', 'func_80061BBC', 'func_800784B4',
-              'func_80078588', 'func_8004E754'}
+              'func_80078588', 'func_8004E754', 'rr64_highlight_camera_floor_cell',
+              'rr64_experimental_course_floor_indices', 'rr64_experimental_course_floor_subindices'}
 production = {'rr64_online_terrain_collision_begin',
               'rr64_online_terrain_collision_objects',
               'rr64_online_terrain_collision_walls'}
-todo = ['func_80062594', 'func_8001BD50', 'func_8001BDF8', 'func_80034370']
+floor_hooks = {'rr64_online_terrain_query_begin', 'rr64_online_terrain_lookup'}
+todo = ['func_80062594', 'func_8001BD50', 'func_8001BDF8', 'func_80034370',
+        'func_80014604', 'func_80014DE4']
 seen = set()
 while todo:
     name = todo.pop()
-    if name in seen or name in boundaries or name in production:
+    if name in seen or name in boundaries or name in production or name in floor_hooks:
         continue
     if name not in functions:
         raise ValueError('Unreviewed external collision dependency: ' + name)
@@ -47,7 +50,7 @@ a.output.parent.mkdir(parents=True, exist_ok=True)
 a.output.write_text('\n'.join(parts), encoding='utf-8')
 a.output.with_suffix('.json').write_text(json.dumps({
     'nativeFunctions': sorted(seen), 'testBoundaries': sorted(boundaries),
-    'productionHooks': sorted(production),
+    'productionHooks': sorted(production | floor_hooks),
     'negativeControl': 'same62594 with only immutable collision hooks omitted',
     'assetsEmbedded': False,
 }, indent=2)+'\n')

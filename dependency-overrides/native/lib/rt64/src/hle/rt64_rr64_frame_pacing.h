@@ -14,6 +14,13 @@ namespace RT64::RR64FramePacing {
     constexpr uint32_t MaximumCadenceFrames = 8;
     constexpr uint32_t ConsoleRefreshRate = 60;
 
+    constexpr uint32_t manualTargetRate(uint32_t requestedRate,
+        uint32_t displayRate, bool vsync)
+    {
+        // Manual tearing output may exceed the monitor's refresh rate.
+        return vsync && displayRate > 0 ? std::min(requestedRate, displayRate) : requestedRate;
+    }
+
     constexpr bool requiresFrameMatching(bool stablePresentation,
         bool raytracingEnabled, uint32_t targetRate, uint32_t originalRate)
     {
@@ -245,8 +252,54 @@ namespace RT64::RR64FramePacing {
         int64_t deadlineNanoseconds = 0;
     };
 
-    // Rational targets alternate floor/ceil frame counts. The accumulator in
-    // WorkloadQueue carries the fractional remainder between source updates.
+    // One source interval consumes its output slots even when matching fails.
+    // Keep only the fractional remainder: eligibility cannot restart 117/60
+    // at one image on every fallback, and long sessions cannot grow the clock.
+    class RationalFrameCadence {
+    public:
+        constexpr void reset() {
+            target = source = remainder = previousRemainder = 0;
+        }
+
+        constexpr uint32_t advance(uint32_t targetRate, uint32_t sourceRate) {
+            if (target != targetRate || source != sourceRate) {
+                reset();
+                target = targetRate;
+                source = sourceRate;
+            }
+            if (source == 0 || target <= source) {
+                remainder = previousRemainder = 0;
+                return 1;
+            }
+            previousRemainder = remainder;
+            const uint64_t ticks = uint64_t(remainder) + target;
+            remainder = uint32_t(ticks % source);
+            return uint32_t(std::min<uint64_t>(ticks / source, MaximumCadenceFrames));
+        }
+
+        // Index zero is the previous weight; index one is the first output.
+        constexpr float interpolationWeight(uint32_t index) const {
+            return target == 0 ? 1.0f : std::clamp(
+                float(int64_t(source) * index - previousRemainder) / float(target),
+                0.0f, 1.0f);
+        }
+
+    private:
+        uint32_t target = 0, source = 0;
+        uint32_t remainder = 0, previousRemainder = 0;
+    };
+
+    // Only immutable owned images can be resampled to the presenter's slots.
+    // Include the latest image when a skipped VI leaves fewer slots than images.
+    constexpr uint32_t ownedPresentationImageIndex(uint32_t outputIndex,
+        uint32_t outputCount, uint32_t imageCount)
+    {
+        return outputCount == 0 || imageCount == 0 ? 0u :
+            std::min(uint32_t((uint64_t(outputIndex + 1u) * imageCount - 1u) /
+                outputCount), imageCount - 1u);
+    }
+
+    // Rational targets alternate floor/ceil frame counts.
     constexpr bool validGeneratedFrameCount(uint32_t target, uint32_t source, uint32_t count) {
         if (!source || target <= source || !count || count > MaximumCadenceFrames) return false;
         const uint64_t ceiling = (uint64_t(target) + source - 1) / source;
