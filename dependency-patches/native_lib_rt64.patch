@@ -4496,7 +4496,7 @@ index 08d9d2f..5949334 100644
              bool valid() const;
          };
 diff --git a/src/render/rt64_framebuffer_renderer.cpp b/src/render/rt64_framebuffer_renderer.cpp
-index 9fae0d4..b82763d 100644
+index 9fae0d4..57d9b90 100644
 --- a/src/render/rt64_framebuffer_renderer.cpp
 +++ b/src/render/rt64_framebuffer_renderer.cpp
 @@ -4,6 +4,13 @@
@@ -4916,7 +4916,16 @@ index 9fae0d4..b82763d 100644
  #       if RT_ENABLED
              // TODO: Move heuristics of RT proj elsewhere?
              // TODO: Use detected scenes logic instead.
-@@ -1508,6 +1857,13 @@ namespace RT64 {
+@@ -1489,6 +1838,8 @@ namespace RT64 {
+                 const auto &viewport = drawData.rspViewports[proj.transformsIndex];
+                 FixedRect intersectionRect = proj.scissorRect.intersection(viewport.rect(viewportClipRatios));
+                 bool coversWholeWidth = !intersectionRect.isEmpty() && (intersectionRect.ulx <= fbPair.scissorRect.ulx) && (intersectionRect.lrx >= fbPair.scissorRect.lrx);
++                coversWholeWidth = coversWholeWidth || (liveRace && !intersectionRect.isEmpty() &&
++                    rr64SplitColumnView(intersectionRect.left(true), intersectionRect.right(true), fbPair.scissorRect.left(true), fbPair.scissorRect.right(true)));
+                 bool horizontalRatio = !intersectionRect.isEmpty() && (intersectionRect.width(true, true) > intersectionRect.height(true, true));
+                 bool useWideViewport = (viewportOrigin == G_EX_ORIGIN_NONE) && coversWholeWidth && horizontalRatio;
+                 if (useWideViewport) {
+@@ -1508,6 +1859,13 @@ namespace RT64 {
  
              for (uint32_t d = 0; (d < proj.gameCallCount) && (globalCallIndex < p.maxGameCall); d++) {
                  const GameCall &call = proj.gameCalls[d];
@@ -4930,7 +4939,7 @@ index 9fae0d4..b82763d 100644
                  renderIndices.instanceIndex = call.callDesc.callIndex;
                  renderIndices.faceIndicesStart = call.meshDesc.faceIndicesStart;
                  renderIndices.rdpTileIndex = call.callDesc.tileIndex;
-@@ -1625,6 +1981,73 @@ namespace RT64 {
+@@ -1625,6 +1983,73 @@ namespace RT64 {
  
                          float invRatioScale = 1.0f / aspectRatioScale;
                          float horizontalMisalignment = 0.0f;
@@ -5004,7 +5013,7 @@ index 9fae0d4..b82763d 100644
                          switch (proj.type) {
                          case Projection::Type::Perspective:
                          case Projection::Type::Orthographic: {
-@@ -1637,6 +2060,8 @@ namespace RT64 {
+@@ -1637,6 +2062,8 @@ namespace RT64 {
                              instanceDrawCall.type = InstanceDrawCall::Type::RegularRect;
                              triangles.indexStart = call.meshDesc.rawVertexStart;
  
@@ -5013,7 +5022,7 @@ index 9fae0d4..b82763d 100644
                              bool tileCopiesUsed = false;
                              for (uint32_t t = 0; (t < call.callDesc.tileCount) && !tileCopiesUsed; t++) {
                                  tileCopiesUsed = drawData.callTiles[call.callDesc.tileIndex + t].tileCopyUsed;
-@@ -1652,7 +2077,10 @@ namespace RT64 {
+@@ -1652,7 +2079,10 @@ namespace RT64 {
                                  horizontalMisalignment = p.horizontalMisalignment;
                              }
  
@@ -5025,7 +5034,7 @@ index 9fae0d4..b82763d 100644
                              triangles.screenScale = { viewportRect.width / framebuffer.viewport.width, viewportRect.height / framebuffer.viewport.height };
                              triangles.screenOffset.x = halfPixelOffset.x + ((viewportRect.x + viewportRect.width / 2.0f) - halfViewportSize.x) / halfViewportSize.x;
                              triangles.screenOffset.y = halfPixelOffset.y + (halfViewportSize.y - (viewportRect.y + viewportRect.height / 2.0f)) / halfViewportSize.y;
-@@ -1676,7 +2104,20 @@ namespace RT64 {
+@@ -1676,7 +2106,20 @@ namespace RT64 {
                              break;
                          }
  
@@ -5047,7 +5056,17 @@ index 9fae0d4..b82763d 100644
  
                          bool usesViewport = (proj.type == Projection::Type::Perspective) || (proj.type == Projection::Type::Orthographic);
                          if (usesViewport) {
-@@ -1760,6 +2201,85 @@ namespace RT64 {
+@@ -1704,7 +2147,8 @@ namespace RT64 {
+                     if (rtScene.instanceIndices.empty()) {
+                         float projRatioScale = 1.0f / aspectRatioScale;
+                         float invRatioScale = 1.0f / aspectRatioScale;
+-                        const bool coversScissorWidth = (proj.scissorRect.ulx <= fbPair.scissorRect.ulx) && (proj.scissorRect.lrx >= fbPair.scissorRect.lrx);
++                        const bool coversScissorWidth = ((proj.scissorRect.ulx <= fbPair.scissorRect.ulx) && (proj.scissorRect.lrx >= fbPair.scissorRect.lrx)) ||
++                            (liveRace && rr64SplitColumnView(proj.scissorRect.left(true), proj.scissorRect.right(true), fbPair.scissorRect.left(true), fbPair.scissorRect.right(true)));
+                         if (coversScissorWidth) {
+                             invRatioScale = 1.0f;
+                         }
+@@ -1760,6 +2204,85 @@ namespace RT64 {
          checkRasterScene(rasterScene);
      }
  
@@ -5133,7 +5152,7 @@ index 9fae0d4..b82763d 100644
      void FramebufferRenderer::endFramebuffers(RenderWorker *worker, const DrawBuffers *drawBuffers, const OutputBuffers *outputBuffers, bool rtEnabled) {
          bool shaderViewRtEnabled = false;
          std::vector<BufferUploader::Upload> shaderUploads = {
-@@ -1917,4 +2437,4 @@ namespace RT64 {
+@@ -1917,4 +2440,4 @@ namespace RT64 {
          unsigned int im3dVertexCount;
      };
  };
@@ -5165,10 +5184,22 @@ index 3add9c3..03e4fcc 100644
          void recordSetup(RenderWorker *worker, std::vector<BufferUploader *> bufferUploaders, RSPProcessor *rspProcessor, VertexProcessor *vertexProcessor, const OutputBuffers *outputBuffers, bool rtEnabled);
          void recordFramebuffer(RenderWorker *worker, uint32_t framebufferIndex);
 diff --git a/src/render/rt64_projection_processor.cpp b/src/render/rt64_projection_processor.cpp
-index e842dcc..cc2a440 100644
+index e842dcc..c3aca80 100644
 --- a/src/render/rt64_projection_processor.cpp
 +++ b/src/render/rt64_projection_processor.cpp
-@@ -14,7 +14,7 @@ namespace RT64 {
+@@ -5,8 +5,11 @@
+ #include "rt64_projection_processor.h"
+ 
+ #include "common/rt64_math.h"
++#include "common/rt64_rr64_hud_view.h"
+ #include "hle/rt64_workload_queue.h"
+ 
++extern "C" int rr64_is_race_mode_active();
++
+ namespace RT64 {
+     inline void adjustProjectionMatrix(interop::float4x4 &matrix, const float aspectRatioScale) {
+         matrix[0][0] *= aspectRatioScale;
+@@ -14,7 +17,7 @@ namespace RT64 {
          matrix[2][0] *= aspectRatioScale;
          matrix[3][0] *= aspectRatioScale;
      }
@@ -5177,7 +5208,20 @@ index e842dcc..cc2a440 100644
      // ProjectionProcessor
  
      ProjectionProcessor::ProjectionProcessor() { }
-@@ -126,7 +126,20 @@ namespace RT64 {
+@@ -92,7 +95,12 @@ namespace RT64 {
+                 }
+ 
+                 if (!intersectionRect.isEmpty()) {
++                    // Must match the framebuffer renderer's wide-viewport rule.
++                    const bool liveRace = RR64FramePacing::stablePresentationEnabled() ?
++                        workload.presentationScene.raceActive : (rr64_is_race_mode_active() != 0);
+                     bool coversWholeWidth = (intersectionRect.ulx <= fbPair.scissorRect.ulx) && (intersectionRect.lrx >= fbPair.scissorRect.lrx);
++                    coversWholeWidth = coversWholeWidth || (liveRace &&
++                        rr64SplitColumnView(intersectionRect.left(true), intersectionRect.right(true), fbPair.scissorRect.left(true), fbPair.scissorRect.right(true)));
+                     bool horizontalRatio = (intersectionRect.width(true, true) > intersectionRect.height(true, true));
+                     adjustAspectRatio = (viewportOrigin == G_EX_ORIGIN_NONE) && coversWholeWidth && horizontalRatio;
+                 }
+@@ -126,7 +134,20 @@ namespace RT64 {
  
                  // We only interpolate the projection if the view matrix has been interpolated.
                  const bool interpolateProjection = rigidBody->lerpTranslation || rigidBody->lerpRotation;

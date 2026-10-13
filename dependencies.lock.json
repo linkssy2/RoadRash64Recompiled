@@ -144,7 +144,7 @@
       },
       {
         "path": "src/common/rt64_rr64_hud_view.h",
-        "sha256": "1dfb878786ee0c67bf532be12eae82578a17a6d3a54aff687dc843cdf5d9e63b"
+        "sha256": "361c3285be752e3b15ea3cd3c38258f47ea7a3fe21fa538432f1ddc37cc8a062"
       },
       {
         "path": "src/common/rt64_rr64_menu_borders.h",

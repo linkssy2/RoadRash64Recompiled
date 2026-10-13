@@ -81,6 +81,15 @@ int main() {
      check(!automaticHUDBounds(projection,call,data,320,240).valid);
    }
  }
+ // 3/4-player columns widen like a full-width camera; full-width, centred
+ // and off-grid regions are left to RT64's generic rule.
+ check(rr64SplitColumnView(0,160,0,320));
+ check(rr64SplitColumnView(160,320,0,320));
+ check(rr64SplitColumnView(1,159,0,320));
+ check(!rr64SplitColumnView(0,320,0,320));
+ check(!rr64SplitColumnView(80,240,0,320));
+ check(!rr64SplitColumnView(0,100,0,320));
+ check(!rr64SplitColumnView(0,0,0,0));
  std::printf("Split HUD coordinate checks: %u cases, %u failures\n",cases,failures);
  return failures?1:0;
 }
