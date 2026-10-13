@@ -138,7 +138,9 @@ extern "C" void rr64_hud_widgets_end(unsigned char *rdram) {
         if (local_x <= vw * .36f && (local_y <= vh * .36f || local_y >= vh * .75f)) {
             frame.labels[i] = {uint16_t(col ? 512 : 0),
                                int16_t(row && local_y < vh * .25f ? height * .05f * 4 : 0)};
-        } else if (local_x >= vw * .68f && local_y >= vh * .62f) {
+        } else if (local_x >= vw * (frame.views > 2 ? .55f : .68f) && local_y >= vh * .62f) {
+            // The quadrant speed readout starts 74% across a left-column view
+            // but only 62% across a right-column one; both must anchor whole.
             frame.labels[i] = {uint16_t(frame.views > 2 && !col ? 512 : 1024), 0};
         }
         auto &p = frame.labels[i];

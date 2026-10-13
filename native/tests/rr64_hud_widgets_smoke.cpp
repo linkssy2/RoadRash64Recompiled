@@ -94,6 +94,21 @@ int main() {
     check((word(0x8020000C)&4095)==1024);
     check(248*4+int16_t(uint32_t(word(0x80200010))>>16)+320*4==248*4);
     rr64_hud_label_end(rdram);rr64_hud_widgets_clear(rdram);
+    // Quadrant speed readouts sit at different native x per column (view-local
+    // 118.5 left, 98.5 right). Each takes one view right-edge anchor: the
+    // centre line for the left column, the screen edge for the right.
+    word(0x800A6578)=4;word(0x800A4F24)=2;word(0x800A76A0)=0;
+    rr64_hud_widgets_begin(rdram);
+    put(0x800D9690,118.5f);put(0x800D9694,97.8f);
+    put(0x800D9690+88,258.5f);put(0x800D9694+88,97.8f);
+    word(0x800A76A0)=2;rr64_hud_widgets_end(rdram);
+    for(unsigned i=0;i<2;++i) {
+        word(0x800AC650)=0x80200000;
+        rr64_hud_label_begin(rdram,0x800D9650+i*88);
+        check((word(0x8020000C)&4095)==(i?1024:512));
+        rr64_hud_label_end(rdram);
+    }
+    rr64_hud_widgets_clear(rdram);
     // Pause Options uses the whole screen, even in the lower player's HUD area.
     half(0x800A2192)=1;word(0x800A76A0)=0;rr64_hud_widgets_begin(rdram);
     rr64_hud_widgets_end(rdram);word(0x800A76A0)=1;word(0x800AC650)=0x80200000;
