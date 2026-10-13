@@ -529,14 +529,80 @@ extern "C" void rr64_trace_race_frame(unsigned char *rdram, void *context, unsig
     race_trace_last_sample = now;
 }
 
+// Game-time clock shared by the handling probe and the autotest handling
+// scenarios, so runs at different step sizes compare at equal game time.
+// race_time sums the deltas of every update since the race mode began;
+// moving_since is the race_time at which the local bike first passed speed 1.
+struct HandlingClock {
+    bool active = false;
+    double race_time = 0.0;
+    double moving_since = -1.0;
+};
+HandlingClock handling_clock;
+
+// RR64_HANDLING_PROBE=<path> writes the local bike's rigid-body state once per
+// update during a race: the game time, the step about to run, speed, velocity
+// and the three orientation axes of the body at bike+0x108.
+void handling_probe_frame(unsigned char *rdram, float step) {
+    static FILE *const probe = [] {
+        const std::string path = environment_text("RR64_HANDLING_PROBE");
+        return path.empty() ? nullptr : std::fopen(path.c_str(), "w");
+    }();
+    if (!race_mode_active.load(std::memory_order_relaxed)) {
+        handling_clock = {};
+        return;
+    }
+    std::uint32_t bike = 0;
+    float speed = 0.0f;
+    if (!rr64::engine::read_u32(rdram, rr64::engine::globals::bike_pool_pointer, bike) ||
+        !rr64::engine::valid_guest_range(bike, rr64::engine::bike::stride) ||
+        !rr64::engine::read_float(rdram, bike + 0x184u, speed)) {
+        return;
+    }
+    if (!handling_clock.active) {
+        handling_clock = {true, 0.0, -1.0};
+    }
+    if (handling_clock.moving_since < 0.0 && speed > 1.0f) {
+        handling_clock.moving_since = handling_clock.race_time;
+    }
+    if (probe) {
+        float v[12]{};
+        const std::uint32_t offsets[12] = {0x178u, 0x17Cu, 0x180u, 0x220u, 0x224u, 0x228u,
+                                           0x22Cu, 0x230u, 0x234u, 0x238u, 0x23Cu, 0x240u};
+        for (int i = 0; i < 12; ++i) {
+            rr64::engine::read_float(rdram, bike + offsets[i], v[i]);
+        }
+        std::uint16_t buttons = 0;
+        std::int8_t stick_x = 0;
+        rr64::engine::read_u16(rdram, rr64::engine::globals::controller_buttons, buttons);
+        rr64::engine::read_s8(rdram, rr64::engine::globals::controller_stick_x, stick_x);
+        std::fprintf(probe,
+                     "[RR64-HANDLING] t=%.5f moving=%.5f dt=%.6f speed=%.4f "
+                     "vel=%.4f,%.4f,%.4f a0=%.4f,%.4f,%.4f a1=%.4f,%.4f,%.4f "
+                     "a2=%.4f,%.4f,%.4f buttons=0x%04X stick=%d\n",
+                     handling_clock.race_time, handling_clock.moving_since, step, speed, v[0],
+                     v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11],
+                     static_cast<unsigned>(buttons), static_cast<int>(stick_x));
+        std::fflush(probe);
+    }
+    handling_clock.race_time += step;
+}
+
 // Runs after func_8004E830 derives the frame's step and before the update
 // dispatch. RR64_FIXED_STEP replaces the measured, smoothed delta with exactly
-// 1/60 s, written as func_8000B1DC would derive it. RR64_FIXED_STEP_STATS
-// reports the measured cadence with or without the override.
+// 1/RR64_FIXED_STEP_HZ s (default 60), written as func_8000B1DC would derive
+// it. RR64_FIXED_STEP_STATS reports the measured cadence with or without the
+// override.
 extern "C" void rr64_fixed_step_frame(unsigned char *rdram) {
     static const bool fixed = environment_flag_enabled("RR64_FIXED_STEP");
     static const bool stats = environment_flag_enabled("RR64_FIXED_STEP_STATS");
-    if ((!fixed && !stats) || rdram == nullptr) {
+    if (rdram == nullptr) {
+        return;
+    }
+    if (!fixed && !stats) {
+        std::uint32_t delta_bits = 0;
+        rr64::engine::read_u32(rdram, rr64::engine::globals::physics_delta, delta_bits);
+        handling_probe_frame(rdram, float_from_bits(delta_bits));
         return;
     }
 
@@ -571,21 +637,30 @@ extern "C" void rr64_fixed_step_frame(unsigned char *rdram) {
     }
 
     if (!fixed) {
+        std::uint32_t delta_bits = 0;
+        rr64::engine::read_u32(rdram, rr64::engine::globals::physics_delta, delta_bits);
+        handling_probe_frame(rdram, float_from_bits(delta_bits));
         return;
     }
+    static const float rate = [] {
+        const std::string text = environment_text("RR64_FIXED_STEP_HZ");
+        const float parsed = text.empty() ? 60.0f : std::strtof(text.c_str(), nullptr);
+        return std::isfinite(parsed) && parsed >= 16.0f && parsed <= 240.0f ? parsed : 60.0f;
+    }();
     const auto write_float = [rdram](std::uint32_t address, float value) {
         std::uint32_t bits = 0;
         std::memcpy(&bits, &value, sizeof(bits));
         rr64::engine::write_u32(rdram, address, bits);
     };
-    const float step = 1.0f / 60.0f;
+    const float step = 1.0f / rate;
     write_float(rr64::engine::globals::physics_delta, step);
     write_float(0x8009CBACu, step * step);
     write_float(0x8009CBB0u, step * 60.0f);
     write_float(0x8009CBB4u, 1.0f / step);
     write_float(0x8009CD78u, step); // func_8000B1DC moving-average state
     // Frame time in the game's 1e-4 s units; func_8005D9A4 adapts above 350.
-    write_float(rr64::engine::globals::total_ticks, 10000.0f / 60.0f);
+    write_float(rr64::engine::globals::total_ticks, 10000.0f * step);
+    handling_probe_frame(rdram, step);
 }
 
 extern "C" int rr64_is_live_race_mode(unsigned int mode) {
@@ -1198,6 +1273,25 @@ extern "C" void rr64_autotest_input(unsigned char *rdram, unsigned int mode) {
             std::fflush(stderr);
             append_autotest_trace(line);
             autotest_scenario_logged = true;
+        }
+        if (scenario == "brake" || scenario == "turn") {
+            // Timed in game seconds from the moment the bike first moves, so
+            // runs at different step sizes see the same inputs at the same
+            // game time. brake: full throttle 6 s, then heavy brake only.
+            // turn: full throttle, weaving right then left for one second
+            // each from 2 s to 6 s.
+            const double moving = handling_clock.moving_since < 0.0
+                                      ? 0.0
+                                      : handling_clock.race_time - handling_clock.moving_since;
+            const bool braking = scenario == "brake" && moving >= 6.0;
+            inject_at(rr64::engine::globals::controller_buttons, braking ? 0x4000u : 0x2000u);
+            if (scenario == "turn") {
+                const bool weaving = moving >= 2.0 && moving < 6.0;
+                const bool right = (static_cast<int>(moving) & 1) == 0;
+                rr64::engine::write_s8(rdram, rr64::engine::globals::controller_stick_x,
+                                       weaving ? (right ? 40 : -40) : 0);
+            }
+            return;
         }
         if (scripted_drive) {
             const std::uint32_t scenario_frame = race_trace_frame_count;
