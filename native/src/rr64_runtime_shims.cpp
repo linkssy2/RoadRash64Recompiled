@@ -529,6 +529,65 @@ extern "C" void rr64_trace_race_frame(unsigned char *rdram, void *context, unsig
     race_trace_last_sample = now;
 }
 
+// Runs after func_8004E830 derives the frame's step and before the update
+// dispatch. RR64_FIXED_STEP replaces the measured, smoothed delta with exactly
+// 1/60 s, written as func_8000B1DC would derive it. RR64_FIXED_STEP_STATS
+// reports the measured cadence with or without the override.
+extern "C" void rr64_fixed_step_frame(unsigned char *rdram) {
+    static const bool fixed = environment_flag_enabled("RR64_FIXED_STEP");
+    static const bool stats = environment_flag_enabled("RR64_FIXED_STEP_STATS");
+    if ((!fixed && !stats) || rdram == nullptr) {
+        return;
+    }
+
+    if (stats) {
+        constexpr std::uint32_t report_frames = 600;
+        static std::uint32_t frames = 0;
+        static double delta_sum = 0.0;
+        static double delta_min = 0.0;
+        static double delta_max = 0.0;
+        static auto window_start = std::chrono::steady_clock::now();
+        std::uint32_t measured_bits = 0;
+        if (rr64::engine::read_u32(rdram, rr64::engine::globals::physics_delta, measured_bits)) {
+            const double measured = float_from_bits(measured_bits);
+            delta_min = frames == 0 ? measured : std::min(delta_min, measured);
+            delta_max = frames == 0 ? measured : std::max(delta_max, measured);
+            delta_sum += measured;
+            ++frames;
+        }
+        if (frames >= report_frames) {
+            const auto now = std::chrono::steady_clock::now();
+            const double seconds = std::chrono::duration<double>(now - window_start).count();
+            std::fprintf(stderr,
+                         "[RR64-FIXED-STEP] fixed=%u updates_per_second=%.3f "
+                         "measured_delta_ms=min %.3f mean %.3f max %.3f\n",
+                         fixed ? 1u : 0u, seconds > 0.0 ? frames / seconds : 0.0,
+                         delta_min * 1000.0, delta_sum / frames * 1000.0, delta_max * 1000.0);
+            std::fflush(stderr);
+            frames = 0;
+            delta_sum = 0.0;
+            window_start = now;
+        }
+    }
+
+    if (!fixed) {
+        return;
+    }
+    const auto write_float = [rdram](std::uint32_t address, float value) {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        rr64::engine::write_u32(rdram, address, bits);
+    };
+    const float step = 1.0f / 60.0f;
+    write_float(rr64::engine::globals::physics_delta, step);
+    write_float(0x8009CBACu, step * step);
+    write_float(0x8009CBB0u, step * 60.0f);
+    write_float(0x8009CBB4u, 1.0f / step);
+    write_float(0x8009CD78u, step); // func_8000B1DC moving-average state
+    // Frame time in the game's 1e-4 s units; func_8005D9A4 adapts above 350.
+    write_float(rr64::engine::globals::total_ticks, 10000.0f / 60.0f);
+}
+
 extern "C" int rr64_is_live_race_mode(unsigned int mode) {
     return is_live_race_mode(mode) ? 1 : 0;
 }

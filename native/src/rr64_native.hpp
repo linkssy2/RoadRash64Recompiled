@@ -173,6 +173,7 @@ void rr64_trace_race_frame(unsigned char *rdram, void *context, unsigned int mod
                            unsigned int pending_mode, unsigned int pause_state,
                            unsigned int physics_delta_bits, unsigned int update_ticks_bits,
                            unsigned int wait_ticks_bits, unsigned int total_ticks_bits);
+void rr64_fixed_step_frame(unsigned char *rdram);
 int rr64_is_live_race_mode(unsigned int mode);
 int rr64_is_race_mode_active();
 // Published race scene includes the results/highlight handoff, unlike live simulation.

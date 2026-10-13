@@ -258,7 +258,7 @@ hook = [
     { func = "game_thread_entry_8005AC00", before_vram = 0x8005AEC4, text = "rr64_trace_guest_stage(\"main-loop-before-8004E830\");" },
     { func = "func_8004E830", text = "rr64_engine_observe_frame(rdram); rr64_offline_modifiers_frame(rdram); rr64_achievement_observe_frame(rdram); rr64_trace_guest_value(\"frame-entry-mode\", MEM_W(0X1810, S32(0X800A << 16)));" },
     { func = "func_8004E830", before_vram = 0x8004E84C, text = "rr64_trace_guest_stage(\"frame-before-80012110\");" },
-    { func = "func_8004E830", before_vram = 0x8004E924, text = "rr64_trace_guest_stage(\"frame-before-80048564\"); rr64_trace_race_frame(rdram, ctx, MEM_W(0X1810, S32(0X800A << 16)), MEM_W(0X1814, S32(0X800A << 16)), MEM_HU(0X2192, S32(0X800A << 16)), MEM_W(-0X3458, S32(0X800A << 16)), MEM_W(0X2198, S32(0X800A << 16)), MEM_W(0X219C, S32(0X800A << 16)), MEM_W(0X21A4, S32(0X800A << 16)));" },
+    { func = "func_8004E830", before_vram = 0x8004E924, text = "rr64_fixed_step_frame(rdram); rr64_trace_guest_stage(\"frame-before-80048564\"); rr64_trace_race_frame(rdram, ctx, MEM_W(0X1810, S32(0X800A << 16)), MEM_W(0X1814, S32(0X800A << 16)), MEM_HU(0X2192, S32(0X800A << 16)), MEM_W(-0X3458, S32(0X800A << 16)), MEM_W(0X2198, S32(0X800A << 16)), MEM_W(0X219C, S32(0X800A << 16)), MEM_W(0X21A4, S32(0X800A << 16)));" },
     { func = "func_8004E830", before_vram = 0x8004E938, text = "rr64_trace_guest_stage(\"frame-before-send-800B07B8\");" },
     { func = "func_8004E830", before_vram = 0x8004E94C, text = "rr64_trace_guest_stage(\"frame-before-recv-800B07F0\");" },
     { func = "func_8004E830", before_vram = 0x8004E954, text = "rr64_trace_guest_stage(\"frame-after-recv\");" },
