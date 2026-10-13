@@ -134,6 +134,61 @@ int main() {
         check(rr64_offline_modifiers_freeze_actor(m, actor), "all live offline race modes supported");
     }
     set_requested(Flag::FreezeOpponents, false);
+
+    // All Tracks opens locked race levels and relocks only those it opened.
+    constexpr unsigned levels = 0x800A5334u;
+    const auto level = [&](unsigned index) {
+        std::uint16_t value = 0;
+        read_u16(m, levels + index * 2, value);
+        return value;
+    };
+    write_u32(m, globals::main_mode, 0x21);
+    write_u32(m, globals::pending_mode, 0x21);
+    write_u16(m, levels + 0 * 2, 1); // Earned before the cheat.
+    write_u16(m, levels + 8 * 2, 1);
+    const auto table = [&] {
+        std::vector<std::uint16_t> values;
+        for (unsigned i = 0; i < 16; ++i)
+            values.push_back(level(i));
+        return values;
+    };
+    const auto earned = table();
+    before = memory;
+    rr64_offline_modifiers_frame(m);
+    check(memory == before, "disabled All Tracks leaves race levels untouched");
+    set_requested(Flag::AllTracks, true);
+    check(!enabled(Flag::AllBikes), "All Tracks is independent of All Bikes");
+    rules.active = true;
+    rr64_offline_modifiers_frame(m);
+    check(table() == earned, "online session does not open race levels");
+    rules.active = false;
+    rr64_offline_modifiers_frame(m);
+    unsigned dirty = 0;
+    read_u32(m, local_race::menu_dirty, dirty);
+    check(dirty == 1, "open selector refreshes after toggling All Tracks");
+    bool all = true;
+    for (unsigned i = 0; i < 15; ++i)
+        all = all && level(i) == 1;
+    check(all, "every race level and reversed copy is open");
+    check(level(15) == 0, "no entry beyond the native table is written");
+    rules.active = true;
+    rr64_offline_modifiers_frame(m);
+    check(level(0) == 1 && level(8) == 1 && level(3) == 0 && level(14) == 0,
+          "going online relocks opened levels but keeps earned ones");
+    rules.active = false;
+    rr64_offline_modifiers_frame(m);
+    set_requested(Flag::AllTracks, false);
+    rr64_offline_modifiers_frame(m);
+    check(table() == earned, "switching off restores the exact earned level table");
+    set_requested(Flag::AllTracks, true);
+    set_requested(Flag::AllBikes, true);
+    rr64_offline_modifiers_frame(m);
+    check(enabled(Flag::AllBikes) && enabled(Flag::AllTracks) && level(5) == 1,
+          "All Bikes and All Tracks can be enabled together");
+    set_requested(Flag::AllTracks, false);
+    rr64_offline_modifiers_frame(m);
+    check(enabled(Flag::AllBikes) && level(5) == 0, "All Bikes alone leaves race levels native");
+    set_requested(Flag::AllBikes, false);
     if (failures) return 1;
     std::puts("[OFFLINE-OPPONENTS] all checks passed");
     return 0;

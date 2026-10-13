@@ -14,13 +14,15 @@ struct Option {
     const char *label;
     const char *description;
 };
-constexpr std::array<Option, 5> options{{
+constexpr std::array<Option, 6> options{{
     {Flag::RiderHealth, "infinite_rider_health", "Infinite Rider Health",
      "Prevents rider stamina damage for local players. Physical crashes, ejects and busts still happen."},
     {Flag::BikeDurability, "indestructible_bikes", "Indestructible Bikes",
      "Prevents crash damage to local players' bikes. Crashes and normal recovery still happen."},
     {Flag::AllBikes, "all_bikes", "All Bikes Available",
      "Shows all bikes in selection and the bike shop. Big Game purchases still cost money; permanent unlock flags are unchanged."},
+    {Flag::AllTracks, "all_tracks", "All Tracks Available",
+     "Unlocks every race level, including reversed courses, in Thrash and local multiplayer selection. Saves and Big Game progress are unchanged; switching off relocks only the levels this option opened."},
     {Flag::AllWeapons, "all_weapons", "Start with All Weapons",
      "Gives local racers every weapon at maximum starting quantity. Also grants once when switched on during a race. Use and theft remain normal; cops keep their police equipment."},
     {Flag::FreezeOpponents, "freeze_opponents", "Prevent Opponents from Moving",

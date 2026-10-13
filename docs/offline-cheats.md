@@ -16,6 +16,13 @@ These options never become online lobby settings or authoritative game rules.
   native previews and selection/purchase code. Big Game purchases still use
   normal prices and save the purchased bike normally. This option does not
   write permanent unlock flags. Custom Cop keeps its cop-rider restriction.
+- **All Tracks Available** opens every native race level and its reversed copy
+  (the `5F420` availability table at `800A5334`), matching the original
+  main-menu code's track unlock without entering it each launch. It is
+  independent of All Bikes. Only levels that were locked are opened and
+  remembered; switching off or going online relocks exactly those, never earned
+  levels. A level earned while this is on may stay hidden until the main menu
+  restores saved unlocks. Saves and Big Game progress are not written.
 - **Start with All Weapons** grants the native maximum inventory quantity once
   per race and once when enabled during a live race. Ordinary use/theft remains
   unchanged; disabling the toggle does not confiscate a granted inventory.

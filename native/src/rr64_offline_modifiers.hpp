@@ -8,6 +8,7 @@ enum class Flag : unsigned {
     AllWeapons = 4,
     AllBikes = 8,
     FreezeOpponents = 16,
+    AllTracks = 32,
 };
 
 // UI publishes preferences only. Guest mutations remain on the game thread.
