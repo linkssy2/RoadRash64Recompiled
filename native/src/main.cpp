@@ -131,6 +131,7 @@
 #include "rr64_online_terrain.hpp"
 #include "rr64_highlights.hpp"
 #include "rr64_offline_modifiers.hpp"
+#include "rr64_quadrant_hud.hpp"
 #include "rr64_race_pack_mod.hpp"
 #include "rr64_race_pack_mod_ui.hpp"
 #include "rr64_mk64_import.hpp"
@@ -145,6 +146,7 @@ constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
 constexpr const char* kExtendedHorizonHazeOption = "rr64_extended_horizon_haze";
 constexpr const char* kAchievementsEnabledOption = "rr64_achievements_enabled";
+constexpr const char* kFullQuadrantHudOption = "rr64_full_quadrant_hud";
 constexpr const char* kControllerRumbleEnabledOption = "rr64_controller_rumble_enabled";
 constexpr const char* kProximityVoiceEnabledOption = "rr64_proximity_voice_enabled";
 const std::u8string kProgramId = u8"RoadRash64Recompiled";
@@ -2041,6 +2043,13 @@ void init_recompui_config() {
         [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
             apply_draw_distance(std::get<double>(value));
         });
+    graphics_config.add_bool_option(kFullQuadrantHudOption, "Full 3-4 Player HUD",
+        "Shows the original two-player health bars and weapon box in each view of 3- and 4-player split screen, at their two-player size. Off keeps the original reduced quadrant HUD.",
+        false);
+    graphics_config.add_option_change_callback(kFullQuadrantHudOption,
+        [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
+            rr64::quadrant_hud::set_enabled(std::get<bool>(value));
+        });
     graphics_config.add_bool_option(
         kRemoveDistanceFogOption,
         "Remove Distance Fog",
@@ -2147,6 +2156,7 @@ void init_recompui_config() {
         });
     rr64::presentation_options::max_lod.store(std::get<bool>(recompui::config::get_graphics_config().get_option_value("rr64_max_lod")));
     rr64::presentation_options::world_distance.store(1); // Draw Distance replaces the legacy world toggle.
+    rr64::quadrant_hud::set_enabled(std::get<bool>(recompui::config::get_graphics_config().get_option_value(kFullQuadrantHudOption)));
     {using A=ultramodern::renderer::AspectRatio;
     const auto aspect=static_cast<A>(std::get<uint32_t>(recompui::config::get_graphics_config().get_option_value(recompui::config::graphics::options::ar_option)));
     rr64_dynamic_ultrawide.store(aspect==A::Manual);

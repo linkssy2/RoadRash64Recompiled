@@ -184,7 +184,9 @@ hook = [
     { func = "func_80030220", before_vram = 0x80033124, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_hud_sprite_end(rdram);\n#endif\n" },
     { func = "func_8001EB90", text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif(rr64_course_items_hud_hide((unsigned)ctx->r5)) { ctx->r2=0; return; }\n#endif\n" },
     # Replace registered MK item icons only at the original weapon sprite draw.
-    { func = "func_8001EF8C", before_vram = 0x8001F19C, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nif(rr64_mk64_item_hud_draw_record(rdram,(unsigned)ctx->r16)) { ctx->r3=ADD32(ctx->r19,1); goto L_8001F5C8; }\n#endif\n" },
+    { func = "func_8001EF8C", before_vram = 0x8001F19C, text = "rr64_quadrant_hud_sprite_begin(rdram, (unsigned)ctx->r16);\n#ifdef RR64_EXPERIMENTAL_COURSE\nif(rr64_mk64_item_hud_draw_record(rdram,(unsigned)ctx->r16)) { ctx->r3=ADD32(ctx->r19,1); goto L_8001F5C8; }\n#endif\n" },
+    # Close the explicit alignment of a full 3/4-player HUD sprite; every record reaches 1F5CC.
+    { func = "func_8001EF8C", before_vram = 0x8001F5CC, text = "rr64_quadrant_hud_sprite_end(rdram);" },
     # Health fills are HUD overlays, although the original code uses world
     # depth compare/write (0x00552230). Clear only those two bits at these
     # native HUD producers: single/online and local two-player layouts.
@@ -200,7 +202,7 @@ hook = [
     { func = "func_80030220", before_vram = 0x80032040, text = "ctx->r4 = (int64_t)(int32_t)rr64_online_hud_actor_pointer(rdram, ctx->r4, 0xE0);" },
     { func = "func_80030220", before_vram = 0x800324C8, text = "ctx->r2 = (int64_t)(int32_t)rr64_online_hud_actor_pointer(rdram, ctx->r2, 0xE4);" },
     { func = "func_80030220", before_vram = 0x800326CC, text = "ctx->r4 = (int64_t)(int32_t)rr64_online_hud_actor_pointer(rdram, ctx->r4, 0xE0);" },
-    { func = "func_80030220", before_vram = 0x800342C4, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_hud_quadrants(rdram,ctx);\nrr64_course_items_hud_end();\n#endif\nrr64_hud_widgets_end(rdram); rr64_online_hud_end(rdram); rr64_custom_cop_hud(rdram, ctx);" },
+    { func = "func_80030220", before_vram = 0x800342C4, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_hud_quadrants(rdram,ctx);\nrr64_course_items_hud_end();\n#endif\nrr64_hud_widgets_end(rdram); rr64_quadrant_hud_draw(rdram, ctx); rr64_online_hud_end(rdram); rr64_custom_cop_hud(rdram, ctx);" },
     # Scope an entire native label (backing and glyphs) to one HUD anchor.
     { func = "func_80079780", before_vram = 0x80079818, text = "rr64_hud_label_begin(rdram, (unsigned)ctx->r16);" },
     { func = "func_80079780", before_vram = 0x800798F8, text = "rr64_hud_label_end(rdram);" },

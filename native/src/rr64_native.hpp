@@ -18,6 +18,7 @@
 #include "rr64_shadow_tags.hpp"
 #include "rr64_offline_modifiers.hpp"
 #include "rr64_offline_modifiers_bikes.hpp"
+#include "rr64_quadrant_hud.hpp"
 #ifdef RR64_EXPERIMENTAL_COURSE
 #include "rr64_experimental_course.hpp"
 #include "rr64_course_material.hpp"
@@ -45,6 +46,7 @@ void rr64_hud_widgets_end(unsigned char *);
 void rr64_hud_label_begin(unsigned char *, unsigned);
 void rr64_hud_label_end(unsigned char *);
 void rr64_hud_widgets_clear(unsigned char *);
+void rr64_hud_label_pin_view(unsigned char *, unsigned index, unsigned view);
 void rr64_hud_countdown_begin(unsigned char *);
 void rr64_hud_countdown_end(unsigned char *);
 void rr64_online_private_selection_begin(unsigned char *);

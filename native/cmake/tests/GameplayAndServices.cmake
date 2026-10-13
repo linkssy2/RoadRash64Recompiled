@@ -30,6 +30,19 @@ target_include_directories(RR64OfflineOpponentsSmoke PRIVATE
     "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon"
 )
 
+# ROM-free checks for the optional full 3/4-player HUD pass and placement.
+add_executable(RR64QuadrantHudSmoke EXCLUDE_FROM_ALL
+    tests/rr64_quadrant_hud_smoke.cpp
+    src/rr64_quadrant_hud.cpp
+)
+target_include_directories(RR64QuadrantHudSmoke PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
+    "${N64MODERN_RUNTIME_ROOT}/ultramodern/include"
+    "${N64MODERN_RUNTIME_ROOT}/librecomp/include"
+    "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon"
+)
+
 # ROM-free validation for the Big Game name-entry grid navigation shim.
 add_executable(RR64NameEntryNavigationSmoke EXCLUDE_FROM_ALL
     tests/rr64_name_entry_navigation_smoke.cpp

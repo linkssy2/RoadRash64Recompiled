@@ -60,6 +60,7 @@ add_executable(RoadRash64Recompiled
     src/rr64_offline_modifiers_health.cpp
     src/rr64_offline_modifiers_weapons.cpp
     src/rr64_offline_modifiers_bikes.cpp
+    src/rr64_quadrant_hud.cpp
     src/rr64_race_pack_mod.cpp
     src/rr64_race_pack_mod_ui.cpp
     src/rr64_mk64_import.cpp
