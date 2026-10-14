@@ -258,6 +258,9 @@ void rr64_highlights_crash(unsigned char*,unsigned) { ++fixture::crashes; }
 int rr64_highlights_presenting() { return fixture::presenting; }
 int rr64_offline_bike_protected(unsigned char*,unsigned) { return 0; }
 int rr64_offline_rider_protected(unsigned char*,unsigned) { return 0; }
+unsigned rr64_offline_combat_multiplier(unsigned char*,unsigned) { return 0; }
+void rr64_quadrant_hud_sprite_begin(unsigned char*,unsigned) {}
+void rr64_quadrant_hud_sprite_end(unsigned char*) {}
 int rr64_valid_combat_statistics(unsigned a) { return rr64::engine::valid_combat_statistics(a); }
 int rr64_online_hit(unsigned char*,void*,unsigned) { return 0; }
 void rr64_combat_impact_rumble(unsigned char*,unsigned,unsigned,unsigned) {}

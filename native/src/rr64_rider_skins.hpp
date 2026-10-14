@@ -30,6 +30,9 @@ void prepare_session() noexcept;
 void begin_session() noexcept;
 bool can_change() noexcept;
 bool enabled() noexcept;
+inline constexpr const char *random_cpu_option = "rr64_random_cpu_skins";
+void set_random_cpu(bool enabled) noexcept;
+unsigned random_cpu_selection(unsigned racer, unsigned donor) noexcept;
 unsigned count() noexcept;
 // Zero means an unmodified original rider; custom indices are never guest IDs.
 const Appearance *appearance(unsigned one_based) noexcept;

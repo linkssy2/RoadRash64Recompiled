@@ -323,7 +323,7 @@ if(RR64_TEST_POWERSHELL)
         rr64_profile_names_smoke.cpp src/rr64_profile_names.cpp src/rr64_name_entry.cpp)
     rr64_generated_world_test(RR64CampaignBikeSmoke generate_campaign_bike_fixture.ps1
         rr64_campaign_bike_smoke.cpp src/rr64_campaign_completion.cpp src/rr64_campaign_bonus_save.cpp
-        src/rr64_local_race_options.cpp src/rr64_thrash_options.cpp
+        src/rr64_campaign_coop.cpp src/rr64_local_race_options.cpp src/rr64_thrash_options.cpp
         src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp
         src/rr64_character_menu.cpp src/rr64_character_preferences.cpp)
     target_compile_features(RR64CampaignBikeSmoke PRIVATE cxx_std_20)

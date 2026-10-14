@@ -162,6 +162,19 @@ int main(int argc, char **argv) {
   }
   for (unsigned i = 0; i < source.size(); ++i)
     command(m, dl + i * 8, source[i]);
+  // A CPU using stock rider 7 has its own loaded material headers.
+  // No native donor/model substitution is needed to draw the custom textures.
+  put(m, entity + 4, 0x800d8570);
+  put(m, 0x800d8570 + 0x1c, 7);
+  put(m, 0x800d8570 + 0xe4, entity);
+  put(m, 0x800a1578 + 7 * 8, 7);
+  for(unsigned slot=0;slot<4;++slot)
+    put(m, 0x800d3840 + (7 * 4 + slot) * 8, 0x80500000 + slot*0x1000);
+  configure(m, 2);
+  check(rr64_rider_skin_actor_list(m,node,dl,0)!=dl,
+        "non-donor CPU native headers receive the selected custom appearance");
+  check(word(m,0x800d8570+0x1c)==7,"CPU renderer preserves native rider identity");
+  put(m, entity + 4, 0);
   std::array<MaterialCommand, 20> pure{};
   const rider_skins::ImageBinding b{0x07000000, 0x07000800, 0x82000000,
                                     0x82000800};

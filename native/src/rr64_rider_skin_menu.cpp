@@ -131,13 +131,14 @@ extern "C" void rr64_rider_skin_spawn(unsigned char *m, unsigned canonical) {
                                         : 0);
 }
 extern "C" unsigned rr64_rider_skin_actor_selection(unsigned char *m, unsigned node) {
-    if (!eligible(m) || (node & 3u) || !engine::valid_guest_range(node, 0x44) || word(m, node) != 2)
+    if (!m || !rider_skins::enabled() || (node & 3u) || !engine::valid_guest_range(node, 0x44) || word(m, node) != 2)
         return 0;
     const unsigned entity = word(m, node + 4);
     if ((entity & 3u) || !engine::valid_guest_range(entity, engine::rider::stride))
         return 0;
     const unsigned slots = preview_slots(m);
     if (slots) {
+        if (!eligible(m)) return 0;
         const unsigned slot = word(m, node + 0x40), pool = word(m, preview_pool);
         return slot < slots && engine::valid_guest_range(pool, slots * engine::rider::stride) &&
                        entity == pool + slot * engine::rider::stride &&
@@ -152,12 +153,36 @@ extern "C" unsigned rr64_rider_skin_actor_selection(unsigned char *m, unsigned n
     if (actor < actors || (actor - actors) % actor_stride)
         return 0;
     const unsigned canonical = (actor - actors) / actor_stride;
+    const unsigned count = word(m, 0x800A656Cu), native = word(m, actor + 0x1c);
+    const unsigned bike = word(m, actor + 0xe0);
+    if (count > engine::kMaximumRacers || canonical >= count || native >= 40 ||
+        !half(m, actor + 0x24) || word(m, actor + 0xe4) != entity ||
+        !engine::valid_guest_range(bike, engine::bike::stride) || (bike & 3u) ||
+        word(m, bike + 4) != actor || word(m, entity + engine::rider::bike_pointer) != bike ||
+        word(m, bike + engine::bike::rider_pointer) != entity)
+        return 0;
+    const auto rules = netplay::get_physics_rules();
+    bool cpu = half(m, actor + 0x26) != 0;
+    if (rules.active) {
+        if (!rules.connected || !rules.authoritative || !rules.authority_humans ||
+            (rules.authority_humans >> engine::kMaximumRacers) || rules.local_slot >= 14)
+            return 0;
+        for (unsigned slot = 0; slot < 14; ++slot)
+            if ((rules.authority_humans & (1u << slot)) &&
+                (rules.is_host ? slot : online_flow::mapped_slot(slot, rules.local_slot,
+                    rules.replicated_riders)) == canonical)
+                return 0; // Remote humans may use native AI control on the guest.
+        cpu = true;
+    }
+    if (cpu) {
+        const unsigned gender = half(m, 0x800a1574 + native * 8);
+        if (gender > 1) return 0;
+        return rider_skins::random_cpu_selection(canonical, gender ? 0 : 10);
+    }
     unsigned actual_rider = 0;
     const unsigned appearance = rider_skins::race_selection(canonical);
-    return local_human(m, canonical, &actual_rider) < 4 && actual_rider == entity &&
-                   word(m, actor + 0x1c) == rider_skins::native_donor(appearance)
-               ? appearance
-               : 0;
+    return !rules.active && local_human(m, canonical, &actual_rider) < 4 && actual_rider == entity &&
+                   native == rider_skins::native_donor(appearance) ? appearance : 0;
 }
 extern "C" void rr64_rider_skin_selection_hint(unsigned char *m, void *context) {
     if (!context || !eligible(m) || !rr64_custom_cop_can_start(m))

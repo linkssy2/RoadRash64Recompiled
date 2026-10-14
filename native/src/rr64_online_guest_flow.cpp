@@ -1,4 +1,5 @@
 #include "rr64_online_flow.hpp"
+#include "rr64_campaign_coop.hpp"
 #include "rr64_online_bike_profile.hpp"
 #include "rr64_netplay.hpp"
 #include "rr64_engine_layout.hpp"
@@ -32,6 +33,7 @@ extern "C" int rr64_online_postrace_wait_for_setup() {
 
 extern "C" unsigned rr64_online_postrace_route_mode(unsigned char *m,unsigned requested) {
     const auto s=netplay::get_status();
+    requested=rr64_coop_mode(m,requested);
     const unsigned stage=online_flow::postrace_stage(read(m,engine::globals::main_mode),requested);
     if(!stage || !s.active || !s.connected) return requested;
     // Guests consume the persistent command below. A sampled host edge, or a

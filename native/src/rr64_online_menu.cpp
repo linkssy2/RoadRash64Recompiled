@@ -8,6 +8,7 @@
 #include "recompinput/input_state.h"
 
 #include <array>
+#include <bit>
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -476,6 +477,8 @@ void initialize_ui() {
 }
 
 void update_ui() {
+    const int coop_input=campaign_coop::input_request.exchange(-1);
+    if (coop_input>=0) recompinput::players::set_single_player_mode(coop_input==0);
     if (!g_ui.initialized) {
         return;
     }
@@ -733,6 +736,7 @@ extern "C" void rr64_online_menu_apply_pending_guest_input(unsigned char *rdram)
     if (rdram && rr64::popup_input::consume_menu_action()) {
         MEM_W(0, 0xFFFFFFFF8009E238ULL) = 0;
     }
+    rr64_coop_main_menu(rdram);
     // Fifth stock-style main-menu row opens Host/Join directly. Consume the
     // accepted action before the original four-entry dispatcher can see it.
     if (rdram && MEM_W(0, 0xFFFFFFFF8009E128ULL) == 4 && (MEM_W(0, 0xFFFFFFFF8009E238ULL) & 5)) {
@@ -756,6 +760,7 @@ extern "C" void rr64_online_game_setup_before_update(unsigned char *rdram) {
     if (rdram == nullptr) {
         return;
     }
+    rr64_coop_selection_begin(rdram);
     const rr64::netplay::Status status = rr64::netplay::get_status();
     if (!status.active || !status.connected || status.phase < rr64::netplay::Phase::GameSetup) {
         return;
@@ -776,6 +781,7 @@ extern "C" void rr64_online_game_setup_after_update(unsigned char *rdram) {
     if (rdram == nullptr) {
         return;
     }
+    rr64_coop_selection_end(rdram);
     rr64_online_private_selection_end(rdram);
     // The original main-menu handler is not running while selecting a rider.
     // Consume the return at this menu's epilogue too, after native input writes.
@@ -798,21 +804,38 @@ extern "C" void rr64_online_game_setup_after_update(unsigned char *rdram) {
     }
 }
 
-// Use the game's font and selection colors for the extra row, while keeping
-// the original four authored menu graphics and their transitions intact.
-extern "C" void func_800796F8(unsigned char *, recomp_context *);
+// Match the authored main-menu rows: black lettering, pale-gold selection
+// with a dark backing, and the same left edge and 24-pixel row spacing.
+extern "C" void func_800795AC(unsigned char *, recomp_context *);
 extern "C" void rr64_online_main_menu_draw(unsigned char *rdram, void *context) {
-    recomp_context draw = *static_cast<recomp_context *>(context);
-    draw.r29 -= 64;
-    const char label[] = "Online";
-    for (unsigned i = 0; i < sizeof(label); ++i)
-        MEM_B(32 + i, draw.r29) = label[i];
-    draw.r4 = draw.r29 + 32;
-    draw.r5 = 0x43000000; // x=128, centered under the authored rows
-    draw.r6 = 0x43420000; // y=194
-    draw.r7 = rr64::engine::guest_address(MEM_W(0, 0xFFFFFFFF8009E128ULL) == 4 ? 0x8009E20Cu
-                                                                               : 0x8009E208u);
-    MEM_W(16, draw.r29) = 3;
-    MEM_W(20, draw.r29) = 0x3F800000; // original menu font scale
-    func_800796F8(rdram, &draw);
+    if (!rdram || !context) return;
+    const char *labels[] = {"ONLINE", "BIG GAME CO-OP"};
+    for (unsigned row = 0; row < 2; ++row) {
+        recomp_context draw = *static_cast<recomp_context *>(context);
+        draw.r29 -= 128;
+        for (unsigned i = 0;; ++i) {
+            MEM_B(64 + i, draw.r29) = labels[row][i];
+            if (!labels[row][i]) break;
+        }
+        const bool selected = MEM_W(0, 0xFFFFFFFF8009E128ULL) == row + 4;
+        float sx = 1, sy = 1;
+        rr64::engine::read_float(rdram, 0x800B07D0u, sx);
+        rr64::engine::read_float(rdram, 0x800B07D4u, sy);
+        draw.r4 = draw.r29 + 64;
+        draw.r5 = std::bit_cast<unsigned>(124.f * sx);
+        draw.r6 = std::bit_cast<unsigned>((186.f + row * 24.f) * sy);
+        draw.r7 = selected ? 220 : 0;
+        MEM_W(16, draw.r29) = selected ? 210 : 0;
+        MEM_W(20, draw.r29) = selected ? 130 : 0;
+        MEM_W(24, draw.r29) = 255;
+        MEM_W(28, draw.r29) = 45;
+        MEM_W(32, draw.r29) = 36;
+        MEM_W(36, draw.r29) = 12;
+        MEM_W(40, draw.r29) = selected ? 190 : 0;
+        MEM_W(44, draw.r29) = 3;
+        MEM_W(48, draw.r29) = 0;
+        MEM_W(52, draw.r29) = 1;
+        MEM_W(56, draw.r29) = 0x3F800000;
+        func_800795AC(rdram, &draw);
+    }
 }

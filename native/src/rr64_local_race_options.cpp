@@ -4,8 +4,10 @@
 #include "rr64_custom_cop.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_local_players.hpp"
+#include "rr64_campaign_coop.hpp"
 #include "rr64_netplay.hpp"
 #include "rr64_prediction_rules.hpp"
+#include "rr64_highlights.hpp"
 #include "librecomp/addresses.hpp"
 #include <atomic>
 #include <fstream>
@@ -18,6 +20,7 @@ namespace {
 using namespace rr64::engine;
 namespace layout = rr64::engine::local_race;
 std::atomic<unsigned> saved{0}, revision{0};
+std::atomic<unsigned> local_traffic{1};
 std::atomic<unsigned> online_saved{0};
 std::atomic<unsigned> solo_saved{10}, solo_revision{0};
 std::atomic<unsigned> solo_stock{rr64::local_race_options::unknown_thrash_stock};
@@ -88,6 +91,10 @@ bool local() {
         return status.connected && !status.replicated_riders;
     return rr64_thrash_options_active() ||
            rr64::local_players::active.load(std::memory_order_acquire);
+}
+bool offline_multiplayer() {
+    return rr64::local_players::active.load() && !rr64::prediction::active() &&
+           !rr64_thrash_options_active() && !rr64::netplay::get_status().active;
 }
 unsigned menu_humans(unsigned char *rdram) {
     if (rr64_thrash_options_active())
@@ -229,12 +236,15 @@ void initialize(const std::filesystem::path &directory) {
             // Preserve the old Off/full-field and Match Track/Level 1 choices.
             saved.store((bits & 1 ? 10u : 0u) | (((bits >> 1) & 3) << 4) | ((bits & 8) ? 64u : 0u));
             revision.fetch_add(1);
-        } else if ((version == 2 || version == 3 || version == 4 || version == 5) &&
+        } else if ((version >= 2 && version <= 6) &&
                    bits <= (version == 2   ? 511u
                             : version == 3 ? 1023u
                             : version == 4 ? 2047u : 0x07FFFFFFu) &&
                    (bits & 15) <= 10) {
             saved.store(bits);
+            unsigned traffic = 1;
+            if (version == 6 && file >> traffic && traffic <= 1)
+                local_traffic.store(traffic);
         }
     }
 }
@@ -262,7 +272,8 @@ void flush() {
     if (!initialized || current == written_revision)
         return;
     std::ofstream file(settings_path, std::ios::trunc);
-    file << "5 " << saved.load(std::memory_order_acquire) << '\n';
+    file << "6 " << saved.load(std::memory_order_acquire) << ' '
+         << local_traffic.load(std::memory_order_acquire) << '\n';
     file.close();
     if (file)
         written_revision = current;
@@ -312,8 +323,11 @@ extern "C" int rr64_local_player_roaming(unsigned char *rdram, unsigned actor) {
 extern "C" void rr64_local_options_menu_begin(unsigned char *rdram) {
     menu_active = false;
     mk64_items_row = false;
-    if (read(rdram, globals::multiplayer_stage) != 1)
+    if (read(rdram, globals::multiplayer_stage) != 1) {
         restore_choices = true;
+        if (offline_multiplayer())
+            write(rdram, 0x8009EAD8, local_traffic.load());
+    }
 }
 extern "C" int rr64_custom_cop_enabled() {
     return local() && (choices() & 512u);
@@ -349,6 +363,48 @@ extern "C" void rr64_local_options_reset_race() {
     race_bike_choice = 0;
     rr64_custom_cop_reset();
 }
+// Temporarily redirect camera preparation only. Results, HUD identity and
+// controller ownership still belong to the busted player after the call.
+extern "C" unsigned rr64_local_spectator_begin(unsigned char *m, unsigned view) {
+    if (!m || view >= 4 || (!rr64::local_players::active.load() && !rr64_coop_spectating()) || rr64::prediction::active())
+        return 0;
+    const unsigned mode = read(m, globals::main_mode);
+    if (!is_live_race_mode(mode) || read(m, globals::pending_mode) != mode)
+        return 0;
+    const unsigned humans = read(m, layout::humans), total = read(m, 0x800A656C);
+    if (humans < 2 || humans > 4 || view >= humans || total < humans || total > 14)
+        return 0;
+    const unsigned original = read(m, 0x800A657C + view * 4);
+    if (original >= humans)
+        return 0;
+    const auto flag = [&](unsigned actor, unsigned offset) {
+        const unsigned state = read(m, 0x800D8570 + actor * 0x118 + 0xE8);
+        std::uint16_t value = 0;
+        return valid_guest_range(state, 0x64) && read_u16(m, state + offset, value) && value != 0;
+    };
+    // Avoid a transport/status snapshot for the ordinary, non-busted camera.
+    if ((!flag(original, 0x4C) && !(rr64_coop_spectating() && flag(original, 0x4E))) ||
+        (!offline_multiplayer() && !rr64_coop_spectating()) || rr64_highlights_presenting())
+        return 0;
+    for (unsigned step = 1; step < humans; ++step) {
+        const unsigned target = (original + step) % humans;
+        if (!flag(target, 0x48) || flag(target, 0x4C) || flag(target, 0x4E) || flag(target, 0x50))
+            continue;
+        const unsigned camera = read(m, 0x800A4FA0 + view * 4);
+        if (camera > 255)
+            return 0;
+        write(m, 0x800A657C + view * 4, target);
+        write(m, 0x800A4FA0 + view * 4, 5); // Native chase camera.
+        return (original + 1) | (camera << 8);
+    }
+    return 0;
+}
+extern "C" void rr64_local_spectator_end(unsigned char *m, unsigned view, unsigned saved) {
+    if (!m || view >= 4 || !(saved & 255u))
+        return;
+    write(m, 0x800A657C + view * 4, (saved & 255u) - 1);
+    write(m, 0x800A4FA0 + view * 4, saved >> 8);
+}
 extern "C" void rr64_local_bike_profiles_reset() {
     // Called once at ROM initialization, including a reused RDRAM mapping.
     // The runtime owns heap teardown; no pointer from the old heap survives.
@@ -368,7 +424,22 @@ extern "C" int rr64_local_options_input(unsigned char *rdram) {
     }
     const unsigned row = read(rdram, layout::menu_cursor);
     const unsigned buttons = read(rdram, layout::menu_buttons) & 0x60;
-    if ((row == 4 || row == 8 || row == 9 || (row == 10 && (bits & 512u))) && buttons) {
+    // Skip the stock mutually-exclusive traffic/pedestrian input handlers.
+    if (offline_multiplayer() && (row == 6 || row == 7) && buttons) {
+        if (row == 6) {
+            const unsigned value = read(rdram, 0x8009EAD8) == 0 ? 1u : 0u;
+            local_traffic.store(value);
+            revision.fetch_add(1);
+            write(rdram, 0x8009EAD8, value);
+        } else {
+            const unsigned value = (((bits >> 4) & 3u) + ((buttons & 0x40) ? 1u : 3u)) & 3u;
+            bits = (bits & ~48u) | (value << 4);
+            save(bits);
+            write(rdram, layout::pedestrian_choice, value);
+        }
+        write(rdram, layout::menu_dirty, 1);
+    }
+    if ((row == 4 || row == 8 || row == 9 || (row == 10 && ((bits & 512u) || offline_multiplayer()))) && buttons) {
         const bool increase = (buttons & 0x40) != 0;
         const unsigned maximum = row == 4   ? rr64::local_race_options::max_ai(menu_humans(rdram))
                                  : row == 8 ? 7
@@ -390,22 +461,25 @@ extern "C" int rr64_local_options_input(unsigned char *rdram) {
     if (read(rdram, layout::ai_choice) != enabled)
         write(rdram, layout::menu_dirty, 1);
     write(rdram, layout::ai_choice, enabled);
-    return row == 4 || row == 8 || row == 9 || row == 10;
+    return row == 4 || row == 8 || row == 9 || row == 10 ||
+           (offline_multiplayer() && (row == 6 || row == 7));
 }
 
 extern "C" int rr64_local_options_navigation(unsigned char *rdram) {
     if (!menu_active)
         return -1;
     unsigned mask = 3u | (1u << 4) | (1u << 7) | (1u << 8) | (1u << 9);
-    if (mk64_items_row)
+    if (mk64_items_row || offline_multiplayer())
         mask |= 1u << 6;
-    if (choices() & 512u)
+    if ((choices() & 512u) || offline_multiplayer())
         mask |= 1u << 10;
     for (unsigned row = 2; row < 8; ++row)
         if (MEM_B(row - 2, guest_address(layout::visibility)))
             mask |= 1u << row;
+    // The old police-density row has no local label; AI Cops replaces it at row 10.
+    if (offline_multiplayer()) mask &= ~(1u << 5);
     unsigned row = std::min(read(rdram, layout::menu_cursor), 10u);
-    if (row == 10 && !(choices() & 512u))
+    if (row == 10 && !(choices() & 512u) && !offline_multiplayer())
         row = 9;
     const unsigned buttons = read(rdram, layout::menu_buttons);
     if (buttons & 0x18)
@@ -418,9 +492,11 @@ extern "C" unsigned rr64_local_options_table(unsigned stock) {
     return menu_active ? table_address : stock;
 }
 extern "C" unsigned rr64_local_options_visible(unsigned row, unsigned stock) {
+    if (menu_active && row == 5 && offline_multiplayer())
+        return 0; // Skip drawing AND vertical advance for the retired police row.
     if (menu_active && row == 10)
-        return (choices() & 512u) ? 1u : 0u;
-    return menu_active && (row == 4 || (row == 6 && mk64_items_row) ||
+        return ((choices() & 512u) || offline_multiplayer()) ? 1u : 0u;
+    return menu_active && (row == 4 || (row == 6 && (mk64_items_row || offline_multiplayer())) ||
                            row == 7 || row == 8 || row == 9) ? 1u : stock;
 }
 extern "C" void rr64_local_options_text(unsigned char *rdram, unsigned row, unsigned buffer) {
@@ -468,6 +544,10 @@ extern "C" void rr64_local_options_race(unsigned char *rdram) {
     const unsigned bits = choices();
     write(rdram, layout::racers,
           rr64::local_race_options::roster(bits & 15u, humans, read(rdram, layout::racers)));
+    // The stock multiplayer menu clears this count. Reserve cops before the
+    // native constructor allocates profiles; racers + cops never exceed 14.
+    if (offline_multiplayer())
+        write(rdram, 0x800A6570, (bits & 1024u) ? 3u : 0u);
     race_bike_choice = (bits >> 6) & 7;
     restore_choices = true;
 }

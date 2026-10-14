@@ -18,9 +18,20 @@ target_include_directories(RR64EngineContractSmoke PRIVATE
 )
 
 # ROM-free checks for opponent ownership and offline-only freeze boundaries.
+set(_rr64_combat_fixture "${CMAKE_CURRENT_BINARY_DIR}/rr64_offline_combat_fixture.cpp")
+add_custom_command(OUTPUT "${_rr64_combat_fixture}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract_offline_combat_fixture.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs" "${_rr64_combat_fixture}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract_offline_combat_fixture.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_15.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_16.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_7.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_9.c"
+    VERBATIM)
 add_executable(RR64OfflineOpponentsSmoke EXCLUDE_FROM_ALL
     tests/rr64_offline_opponents_smoke.cpp
     src/rr64_offline_modifiers.cpp
+    "${_rr64_combat_fixture}"
 )
 target_include_directories(RR64OfflineOpponentsSmoke PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

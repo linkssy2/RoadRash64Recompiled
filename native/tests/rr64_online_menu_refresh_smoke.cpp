@@ -11,6 +11,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "../src/rr64_campaign_coop.hpp"
 
 namespace fixture {
 unsigned checks = 0;
@@ -199,6 +200,13 @@ int main() {
     update_ui();
     require(fixture::status_reads == 0 && fixture::current_context == 2,
         "uninitialized UI must be a no-op");
+    campaign_coop::input_request.store(1);
+    update_ui();
+    require(!fixture::single_player && campaign_coop::input_request.load()==-1,
+        "co-op activates assigned ports without requiring the online overlay");
+    campaign_coop::input_request.store(0);
+    update_ui();
+    require(fixture::single_player, "campaign menus return input to Player 1");
     g_ui.initialized = true;
     for (unsigned frame = 0; frame < 100'000; ++frame) {
         update_ui();

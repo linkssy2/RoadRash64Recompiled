@@ -4,7 +4,8 @@
 and 10 (female). It never supplies replacement rider meshes. Native selection IDs,
 physics, animation, and Controller Pak records retain their original format.
 Custom appearance IDs live in the host catalog and a separate local preference
-file. Selection is supported offline and in local multiplayer, not online.
+file. Human selection is supported offline and in local multiplayer. CPU randomization
+also works online as a local presentation preference.
 
 The implementation is split by responsibility:
 
@@ -104,7 +105,7 @@ addresses. Each graph/selection is sampled at most three times, spaced by native
 frames. Rendering never performs log formatting or file I/O: the event thread
 drains copied samples using a non-blocking lock. Records are diagnostic context,
 not rendering authority; texture pixels are not recorded. `reason=0` means the
-replacement list was emitted, not that it was visually correct. Reasons 1â€“8
+replacement list was emitted, not that it was visually correct. Reasons 1Ã¢â‚¬â€œ8
 identify ownership/graphics, command-buffer bounds, changed context, invalid
 range, oversized list, texture staging, unmatched/unsupported commands, and
 frame-copy failure respectively. Queue omissions are counted. Both switches
@@ -113,3 +114,18 @@ default off; the trace is optional evidence, not part of the appearance correcti
 Headless suites cover archive failures, startup order, all local player slots,
 save separation, texture identity, preview isolation, LODs and material effects.
 These checks do not replace a visual test of the authored skins in the game.
+
+## Random CPU Rider Skins
+
+Gameplay settings stores `rr64_random_cpu_skins` (off by default). Each race
+latches it and a local cosmetic seed. Each non-police CPU has an equal chance
+of retaining its stock look or drawing a compatible enabled custom skin;
+male/female texture layouts follow the original ROM metadata. Choices persist
+through crashes, highlights and results. Setting changes apply next race.
+No mod catalog means normal stock appearances.
+
+The renderer matches each CPU's own native material headers, without replacing
+its native rider ID, name, bike, weapons, animation, stats or AI. Cosmetic hashing
+does not consume native RNG. Online ownership uses the confirmed human mask and
+guest slot mapping, so remote humans cannot be mistaken for CPUs. Players may
+see different appearances; no mod transfer or network protocol change is needed.

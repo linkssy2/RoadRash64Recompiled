@@ -48,6 +48,20 @@ renamed = []
 # by the native helper, allowing a black-screen run to identify the exact guest
 # initialization call that did not return.
 hook = [
+    # Offline campaign co-op retains native construction and a single prize.
+    { func = "func_80073728", before_vram = 0x8007384C, text = "rr64_coop_roster(rdram);" },
+    { func = "func_80073728", before_vram = 0x800738E4, text = "rr64_coop_riders(rdram);" },
+    { func = "func_80073540", before_vram = 0x8007361C, text = "ctx->r4 = (int32_t)rr64_coop_result_state(rdram,ctx->r4);" },
+    { func = "func_80072E74", before_vram = 0x80072EB0, text = "ctx->r16 = (int32_t)rr64_coop_result_actor(rdram,ctx->r16);" },
+    { func = "func_80073054", before_vram = 0x8007306C, text = "ctx->r20 = (int32_t)rr64_coop_result_actor(rdram,ctx->r20);" },
+    { func = "func_80072A14", before_vram = 0x80072A44, text = "ctx->r18 = (int32_t)rr64_coop_result_actor(rdram,ctx->r18);" },
+    { func = "func_80072B40", before_vram = 0x80072B6C, text = "ctx->r18 = (int32_t)rr64_coop_result_actor(rdram,ctx->r18);" },
+
+    # Override both directions of native melee damage and its separate impulse.
+    # Do not stack with pickup/global multipliers or alter driving/collision forces.
+    { func = "func_80060370", before_vram = 0x80060730, text = "{ unsigned scale = rr64_offline_combat_multiplier(rdram, (unsigned)ctx->r17); if (scale) ctx->f2.fl = (float)scale; }" },
+    { func = "func_80060370", before_vram = 0x80060898, text = "{ unsigned scale = rr64_offline_combat_multiplier(rdram, (unsigned)ctx->r18); if (scale) ctx->f2.fl = (float)scale; }" },
+    { func = "func_80065E98", before_vram = 0x80065EF8, text = "{ unsigned scale = rr64_offline_combat_multiplier(rdram, (unsigned)ctx->r16); if (scale) { ctx->f20.fl *= (float)scale; goto L_80065F48; } }" },
     # Tile bounds are inclusive. The shared 4-bit sprite path used width/height
     # instead of the last texel, exposing the next TMEM row beside route dots.
     # Match the 8-bit path; leave rectangle positions, scales and UVs intact.
@@ -129,6 +143,8 @@ hook = [
     { func = "func_8003FE48", before_vram = 0x80040034, text = "if (rr64_course_fall_action == 3) goto L_80040060;" },
     { func = "func_8003FE48", before_vram = 0x80040094, text = "if (rr64_course_fall_action == 2) ctx->r18 = 1;" },
     { func = "func_8003FE48", before_vram = 0x80040278, text = "if (rr64_course_fall_action == 2 || rr64_custom_cop_can_recover(rdram, ctx->r17)) ctx->r2 = 1;" },
+    # Hold only remount/reposition, after native busted/wrecked handling.
+    { func = "func_8003FE48", before_vram = 0x80040280, text = "if (rr64_offline_hold_recovery(rdram, (unsigned)ctx->r17)) goto L_800402A0;" },
     { func = "func_8003AD84", before_vram = 0x8003B46C, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_missing_floor(rdram, ctx, 0);\n#endif\n" },
     { func = "func_8003AD84", before_vram = 0x8003B2EC, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_missing_floor(rdram, ctx, 7);\n#endif\n" },
     { func = "func_8003AD84", before_vram = 0x8003B5CC, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_missing_floor(rdram, ctx, 8);\n#endif\n" },
@@ -393,7 +409,10 @@ hook = [
     { func = "func_8001B8F4", text = "rr64_lod_release_node(rdram, ctx->r4);" },
     { func = "func_8001B600", text = "rr64_lod_reset_actor_pool(rdram);" },
     { func = "func_80011988", before_vram = 0x80011C14, text = "rr64_lod_observe_allocation(rdram, ctx->r20, ctx->r16, ctx->r19); rr64_world_observe_allocation(rdram, ctx->r20, ctx->r16, ctx->r19);" },
-    { func = "func_8005D9A4", text = "rr64_highlight_camera_prepare(rdram, ctx); rr64_lod_begin_preparation(rdram); rr64_world_invalidate(rdram);" },
+    { func = "func_8005CE68", text = "unsigned rr64_spectator_view = ctx->r4; unsigned rr64_spectator_saved = rr64_local_spectator_begin(rdram, rr64_spectator_view);" },
+    { func = "func_8005CE68", before_vram = 0x8005D068, text = "rr64_local_spectator_end(rdram, rr64_spectator_view, rr64_spectator_saved);" },
+    { func = "func_8005D9A4", text = "unsigned rr64_spectator_view = ctx->r4; unsigned rr64_spectator_saved = rr64_local_spectator_begin(rdram, rr64_spectator_view); rr64_highlight_camera_prepare(rdram, ctx); rr64_lod_begin_preparation(rdram); rr64_world_invalidate(rdram);" },
+    { func = "func_8005D9A4", before_vram = 0x8005E790, text = "rr64_local_spectator_end(rdram, rr64_spectator_view, rr64_spectator_saved);" },
     { func = "func_8005D9A4", before_vram = 0x8005E6D8, text = "rr64_lod_observe_pair(rdram, ctx);" },
     { func = "func_8006AFFC", before_vram = 0x8006B6DC, text = "rr64_lod_prepare_shadow(rdram, ctx, 0);" },
     { func = "func_8006A638", text = "rr64_online_render_begin(rdram); rr64_highlights_draw_begin(rdram); rr64_lod_begin_draw(rdram); rr64_world_begin_draw(rdram);" },
@@ -525,6 +544,13 @@ hook = [
     { func = "func_8003AD84", before_vram = 0x8003D4B4, text = "rr64_engine_capture_dynamics_boundary(rdram, 4, 1, 0);" },
     { func = "func_8003AD84", before_vram = 0x8003D4F0, text = "rr64_engine_capture_dynamics_boundary(rdram, 4, 1, 0);" },
 
+    # Offline Moon Gravity scales only weight, including blended bike states.
+    # Keep drag, wheel contact, collision impulses and the shared constants intact.
+    { func = "func_80036948", before_vram = 0x80036988, text = "ctx->f4.fl = rr64_offline_gravity(rdram, (unsigned)ctx->r18, 1, ctx->f4.fl);" },
+    { func = "func_80036948", before_vram = 0x800369A4, text = "ctx->f2.fl = rr64_offline_gravity(rdram, (unsigned)ctx->r18, 1, ctx->f2.fl);" },
+    { func = "func_80045960", before_vram = 0x800459E0, text = "ctx->f2.fl = rr64_offline_gravity(rdram, (unsigned)ctx->r19, 0, ctx->f2.fl);" },
+    { func = "func_80045960", before_vram = 0x80045A20, text = "ctx->f4.fl = rr64_offline_gravity(rdram, (unsigned)ctx->r19, 0, ctx->f4.fl);" },
+    { func = "func_80045960", before_vram = 0x80045A44, text = "ctx->f2.fl = rr64_offline_gravity(rdram, (unsigned)ctx->r19, 0, ctx->f2.fl);" },
     # Rider lifecycle boundaries. ID 26 captures the complete per-rider update;
     # ID 27 isolates the one-update mounted-to-detached transition. Both are
     # local-player-only and remain dormant without RR64_NATIVE_DYNAMICS_LOG.
@@ -747,13 +773,13 @@ hook = [
     { func = "func_8002CD60", before_vram = 0x8002D3D8, text = "rr64_character_remember(rdram, 0); rr64_rider_skin_remember(rdram, 0);" },
     { func = "func_8002DC30", before_vram = 0x8002E190, text = "rr64_character_remember(rdram, 0); rr64_rider_skin_remember(rdram, 0);" },
     { func = "func_80027A90", before_vram = 0x80029D4C, text = "if (!rr64_custom_cop_confirm(rdram)) goto L_80029D74;" },
-    { func = "func_80027A90", before_vram = 0x80029860, text = "ctx->r6 = rr64_offline_bikes_count(rdram, rr64_custom_cop_bike_count(ctx->r6), 0);" },
-    { func = "func_80027A90", before_vram = 0x800298C8, text = "ctx->r6 = rr64_offline_bikes_count(rdram, rr64_custom_cop_bike_count(ctx->r6), 0);" },
+    { func = "func_80027A90", before_vram = 0x80029860, text = "ctx->r6 = rr64_offline_bikes_count(rdram, rr64_custom_cop_bike_count(ctx->r6), 0); ctx->r6 = rr64_coop_bike_count(ctx->r17,ctx->r6);" },
+    { func = "func_80027A90", before_vram = 0x800298C8, text = "ctx->r6 = rr64_offline_bikes_count(rdram, rr64_custom_cop_bike_count(ctx->r6), 0); ctx->r6 = rr64_coop_bike_count(ctx->r17,ctx->r6);" },
     { func = "func_80027A90", before_vram = 0x80029878, text = "if (rr64_custom_cop_enabled()) ctx->r3 = 1;" },
     { func = "func_80027A90", before_vram = 0x800298E0, text = "if (rr64_custom_cop_enabled()) ctx->r3 = 1;" },
     { func = "func_80027A90", before_vram = 0x80029890, text = "ctx->r2 = rr64_custom_cop_rider(rdram, ctx->r17, ctx->r2);" },
     { func = "func_80027A90", before_vram = 0x8002990C, text = "ctx->r2 = rr64_custom_cop_rider(rdram, ctx->r17, ctx->r2);" },
-    { func = "func_80027A90", before_vram = 0x80029948, text = "ctx->r2 = (int32_t)rr64_custom_cop_bike_entry(rdram, ctx->r17, ctx->r2);" },
+    { func = "func_80027A90", before_vram = 0x80029948, text = "ctx->r2 = (int32_t)rr64_custom_cop_bike_entry(rdram, ctx->r17, ctx->r2); ctx->r2 = (int32_t)rr64_coop_bike_entry(rdram, ctx->r17,ctx->r2);" },
     { func = "func_80027A90", before_vram = 0x80029974, text = "ctx->r3 = rr64_custom_cop_rider(rdram, ctx->r17, ctx->r3);" },
     { func = "func_8006C88C", before_vram = 0x8006CAF8, text = "if (rr64_custom_cop_active()) MEM_W(0, (int32_t)0x800D8524) = 8;\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_prepare_race(rdram);\n#endif\n" },
     { func = "func_8006CF60", before_vram = 0x8006D100, text = "if (rr64_custom_cop_active()) goto L_8006D148;" },
@@ -888,8 +914,8 @@ hook = [
     # A queued Local/Online start is fed back through the game's own menu input
     # handler so original local setup remains unchanged.
     # Extend the original main menu to five rows; Online is appended below Options.
-    { func = "func_80023860", before_vram = 0x80023CCC, text = "ctx->r2 = ((unsigned int)MEM_W(0, 0xFFFFFFFF8009E128ULL) < 5);" },
-    { func = "func_80023860", before_vram = 0x80023CC4, text = "ctx->r2 = 4;" },
+    { func = "func_80023860", before_vram = 0x80023CCC, text = "ctx->r2 = ((unsigned int)MEM_W(0, 0xFFFFFFFF8009E128ULL) < 6);" },
+    { func = "func_80023860", before_vram = 0x80023CC4, text = "ctx->r2 = 5;" },
     { func = "func_80023860", before_vram = 0x80023BB0, text = "rr64_online_main_menu_draw(rdram, ctx); rr64_online_menu_apply_pending_guest_input(rdram);" },
     { func = "func_80023860", before_vram = 0x80023C38, text = "ctx->r4 = rr64_online_menu_route_mode(ctx->r4);" },
     # BEGIN PRIVATE RNG CALL PROBES

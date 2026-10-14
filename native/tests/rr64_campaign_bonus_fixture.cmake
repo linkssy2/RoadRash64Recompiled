@@ -15,7 +15,7 @@ add_custom_command(OUTPUT "${_rr64_bonus_fixture}"
         "${_rr64_bonus_generated}/funcs_18.c"
     VERBATIM)
 add_executable(RR64CampaignBonusSmoke EXCLUDE_FROM_ALL tests/rr64_campaign_bonus_smoke.cpp
-    src/rr64_campaign_completion.cpp src/rr64_campaign_bonus_save.cpp
+    src/rr64_campaign_coop.cpp src/rr64_campaign_completion.cpp src/rr64_campaign_bonus_save.cpp
     src/rr64_ai_bike_selection.cpp "${_rr64_bonus_fixture}")
 target_compile_features(RR64CampaignBonusSmoke PRIVATE cxx_std_20)
 target_include_directories(RR64CampaignBonusSmoke PRIVATE

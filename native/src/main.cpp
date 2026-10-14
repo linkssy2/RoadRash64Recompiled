@@ -140,7 +140,7 @@
 #include "rr64_experimental_course.hpp"
 #endif
 
-constexpr const char* kVersion = "1.4.5";
+constexpr const char* kVersion = "1.4.6";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -1984,7 +1984,7 @@ void init_recompui_config() {
     for (unsigned slot = 0; slot < 4; ++slot) {
         const std::string key = "rr64_local_player_name_" + std::to_string(slot + 1);
         general_config.add_string_option(key, "Local Player " + std::to_string(slot + 1) + " Name",
-            "Name shown in local multiplayer. Uses up to 11 letters, numbers or spaces; unsupported characters are omitted. Empty names use PLAYER 1â€“4. Controller bindings are configured separately in Controls.",
+            "Name shown in local multiplayer. Uses up to 11 letters, numbers or spaces; unsupported characters are omitted. Empty names use PLAYER 1ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ4. Controller bindings are configured separately in Controls.",
             "PLAYER " + std::to_string(slot + 1), true);
         general_config.add_option_change_callback(key,
             [slot](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
@@ -2019,6 +2019,12 @@ void init_recompui_config() {
             rr64_log("[RR64-ACH] Achievement system enabled=%d.\n", enabled ? 1 : 0);
         }
     );
+    general_config.add_bool_option(rr64::rider_skins::random_cpu_option, "Random CPU Rider Skins",
+        "Mix default CPU riders with enabled More Characters skins. Applies next race in every mode. Online appearances are local to your screen; names, bikes and behavior stay unchanged.", false);
+    general_config.add_option_change_callback(rr64::rider_skins::random_cpu_option,
+        [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
+            rr64::rider_skins::set_random_cpu(std::get<bool>(value));
+        });
     rr64::achievements::initialize();
     rr64::achievements::register_config_tab();
     rr64_log("[RR64-CONFIG] Creating Graphics tab.\n");
@@ -2087,6 +2093,8 @@ void init_recompui_config() {
         {"Game Audio", "Adjust the overall game volume and nearby rival engines.",
             {recompui::config::sound::options::main_volume, rr64::rival_engine::enabled_option,
              rr64::rival_engine::volume_option}},
+        {"Rival Bike Balance", "Fine-tune each bike type relative to Rival Engine Volume.",
+            {"rr64_rival_sport_volume", "rr64_rival_chopper_volume", "rr64_rival_scooter_volume", "rr64_rival_insanity_volume"}},
         {"Music", "Adjust music volume or choose your soundtrack. MK64 course music is selected in race options.",
             {"custom_music_volume", "custom_music_track"}},
         {"Voice Chat", "Hear nearby riders during online races. Set up your input in Microphone.",
@@ -2141,6 +2149,7 @@ void init_recompui_config() {
     rr64_log("[RR64-CONFIG] Finalizing RecompFrontend configuration.\n");
     recompui::config::finalize();
     rr64::offline_modifiers::apply_config();
+    rr64::rider_skins::set_random_cpu(std::get<bool>(recompui::config::get_general_config().get_option_value(rr64::rider_skins::random_cpu_option)));
     // Registering another tab can relocate the frontend's config vector.
     auto& loaded_sound_config = recompui::config::get_config(recompui::config::sound::id);
     rr64::rival_engine::apply_volume_config(loaded_sound_config);

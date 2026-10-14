@@ -30,6 +30,8 @@ bool host_resume_postrace_setup() {
 }
 extern "C" int rr64_highlights_presenting(){return replay_holding;}
 extern "C" void rr64_online_game_setup_restart(){++setup_restarts;}
+// Co-op routing has its own production-code fixture; this test owns online flow.
+extern "C" unsigned rr64_coop_mode(unsigned char *, unsigned mode){return mode;}
 namespace recomp { void *alloc(unsigned char *, std::size_t){return nullptr;} }
 #include "../src/rr64_online_guest_flow.cpp"
 

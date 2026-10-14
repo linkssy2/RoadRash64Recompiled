@@ -13,7 +13,8 @@ namespace skin=rr64::rider_skins;
 namespace prefs=rr64::rider_skin_preferences;
 namespace engine=rr64::engine;
 namespace {
-unsigned checks=0,labels=0;bool online=false,cop=false;
+unsigned checks=0,labels=0;bool online=false,cop=false,host=true;
+unsigned humans=0x3fff,local=0;
 std::vector<unsigned char> memory(engine::kRdramSize);
 auto* m=memory.data();
 constexpr unsigned selected=0x8009f670,actors=0x800d8570,pool=0x80280000;
@@ -37,7 +38,7 @@ unsigned racer(unsigned canonical,unsigned slot,unsigned donor){
     put(n,2);put(n+4,r);return n;
 }
 }
-rr64::netplay::PhysicsRules rr64::netplay::get_physics_rules(){PhysicsRules r;r.active=online;return r;}
+rr64::netplay::PhysicsRules rr64::netplay::get_physics_rules(){PhysicsRules r;r.active=online;r.connected=true;r.authoritative=true;r.is_host=host;r.local_slot=local;r.authority_humans=humans;r.replicated_riders=true;return r;}
 extern "C" int rr64_custom_cop_enabled(){return cop;}
 extern "C" unsigned rr64_custom_cop_bike_entry(unsigned char*,unsigned,unsigned){return cop?0x800a684c:0;}
 extern "C" int rr64_custom_cop_can_start(unsigned char*){return !cop;}
@@ -117,6 +118,44 @@ int main(){
         half(actors+canonical*0x118+0x26,0);online=true;check(!rr64_rider_skin_actor_selection(m,n),"online stays native");online=false;
         mode(0x14);check(rr64_rider_skin_actor_selection(m,n)==a,"results and highlights preserve appearance");mode(0x12);
     }
+    // Exercise the real owner gate and verify cosmetics write no native state.
+    skin::set_random_cpu(true);
+    unsigned customs=0,stock=0;
+    for(unsigned race=0;race<64;++race){
+        rr64_rider_skin_race_begin(m);mode(0x12);
+        for(unsigned canonical=0;canonical<14;++canonical){
+            const unsigned native=canonical%2?7:17, donor=canonical%2?0:10;
+            const unsigned node=racer(canonical,0,native);
+            half(actors+canonical*0x118+0x26,1);
+            half(0x800a1574+native*8,donor==0?1:0);
+            const auto before=memory;
+            const unsigned choice=rr64_rider_skin_actor_selection(m,node);
+            check(memory==before,"CPU appearance never alters native physics or RNG");
+            check(!choice || skin::native_donor(choice)==donor,"CPU skin fits original gender geometry");
+            customs+=choice!=0;stock+=choice==0;
+            skin::set_random_cpu(false);
+            check(rr64_rider_skin_actor_selection(m,node)==choice,"mid-race toggle changes wait for next race");
+            skin::set_random_cpu(true);
+            check(rr64_rider_skin_actor_selection(m,node)==choice,"CPU skin stays stable between draws");
+            mode(0x14);check(rr64_rider_skin_actor_selection(m,node)==choice,"CPU skin stays stable in highlights/results");mode(0x12);
+            online=true;humans=1u<<canonical;
+            check(!rr64_rider_skin_actor_selection(m,node),"online human protected even with native AI flag");
+            humans=1u<<((canonical+1)%14);
+            check(rr64_rider_skin_actor_selection(m,node)==choice,"online CPU uses local cosmetic choice");
+            host=false;local=(canonical+1)%14;humans=1u<<local;
+            const unsigned mapped=rr64::online_flow::mapped_slot(canonical,local,true);
+            if(mapped==canonical)check(rr64_rider_skin_actor_selection(m,node)==choice,"guest CPU appearance remains local");
+            humans=0x3fff;check(!rr64_rider_skin_actor_selection(m,node),"guest mapping protects every remote human");
+            online=false;host=true;local=0;
+            half(actors+canonical*0x118+0x26,0);
+            check(!rr64_rider_skin_actor_selection(m,node),"offline human never borrows CPU selection");
+            half(actors+canonical*0x118+0x26,1);put(actors+canonical*0x118+0x1c,40);
+            check(!rr64_rider_skin_actor_selection(m,node),"police keep identifiable native uniforms");
+        }
+    }
+    check(customs>0&&stock>0,"random roster contains stock and custom looks");
+    skin::set_random_cpu(false);rr64_rider_skin_race_begin(m);
+    for(unsigned i=0;i<14;++i)check(!skin::random_cpu_selection(i,0),"off restores original next race");
     skin::set_menu_selection(0,4);put(selected,10);rr64_rider_skin_remember(m,0);prefs::flush();
     prefs::initialize(directory);skin::clear_menu();half(0x8009eae8,0);put(selected,0);
     rr64_rider_skin_restore(m,0,0);check(skin::menu_selection(0)==4 && word(selected)==10,"restart restores stable appearance and female donor");

@@ -1,4 +1,5 @@
 #pragma once
+#include "rr64_campaign_coop.hpp"
 #include "rr64_ai_bike_selection.hpp"
 #include "rr64_rider_skin_menu.hpp"
 #include "rr64_rider_skin_render.hpp"

@@ -30,6 +30,7 @@ constexpr unsigned voice_stride = 0x13c, extra_heap = 0x14000;
 constexpr unsigned engine_profile_count = 32;
 constexpr float full_volume_distance = 12.f, audible_distance = 320.f;
 std::atomic<double> volume_percent{35.0};
+std::array<std::atomic<double>, 4> group_volumes{100.0, 75.0, 100.0, 100.0};
 std::atomic<bool> engines_enabled{true};
 #ifdef RR64_RIVAL_ENGINE_TEST_TRACE
 extern "C" void rr64_rival_engine_test_scan(unsigned);
@@ -335,6 +336,16 @@ bool scoped(const Binding &b, unsigned char *m, void *ctx, gpr stack) {
 }
 
 namespace rr64::rival_engine {
+void set_group_volume(BikeGroup group, double percent) noexcept {
+    const auto index = static_cast<unsigned>(group);
+    if (index < group_volumes.size())
+        group_volumes[index].store(std::isfinite(percent) ? std::clamp(percent, 0.0, 100.0) :
+                                  default_group_volume(group), std::memory_order_relaxed);
+}
+double get_group_volume(BikeGroup group) noexcept {
+    const auto index = static_cast<unsigned>(group);
+    return index < group_volumes.size() ? group_volumes[index].load(std::memory_order_relaxed) : 100.0;
+}
 void set_enabled(bool value) noexcept {
     // UI callbacks only publish the preference. Native voice cleanup belongs
     // on the next game/audio update, never on the UI thread.
@@ -508,6 +519,8 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
             continue;
         Candidate c;
         c.source = b;
+        const float balance = float(rr64::rival_engine::get_group_volume(
+            rr64::rival_engine::bike_group(word(m, b.bike))) / 100.0);
         for (unsigned i = 0; i < ear_count; ++i) {
             float sum = 0;
             for (unsigned j = 0; j < 3; ++j) {
@@ -521,7 +534,7 @@ extern "C" void rr64_rival_engine_frame(unsigned char *m, void *raw) {
             const float t = std::clamp((distance - full_volume_distance) /
                                            (audible_distance - full_volume_distance),
                                        0.f, 1.f);
-            const float gain = (1.f - t * t * (3.f - 2.f * t)) * volume;
+            const float gain = (1.f - t * t * (3.f - 2.f * t)) * volume * balance;
             if (rank <= c.rank)
                 continue;
             c.rank = rank;

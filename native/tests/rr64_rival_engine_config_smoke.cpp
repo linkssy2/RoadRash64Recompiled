@@ -13,6 +13,7 @@ namespace {
 std::filesystem::path directory;
 double observed_volume=-1;
 bool observed_enabled=false;
+std::array<double,4> observed_groups{};
 unsigned checks=0;
 void check(bool condition,const char *message) {
     ++checks;
@@ -42,6 +43,8 @@ void set_volume_percent(double value) noexcept {observed_volume=value;}
 double get_volume_percent() noexcept {return observed_volume;}
 void set_enabled(bool value) noexcept {observed_enabled=value;}
 bool get_enabled() noexcept {return observed_enabled;}
+void set_group_volume(BikeGroup group,double value) noexcept {observed_groups.at(static_cast<unsigned>(group))=value;}
+double get_group_volume(BikeGroup group) noexcept {return observed_groups.at(static_cast<unsigned>(group));}
 }
 int main(int argc,char **argv) {
     using namespace rr64::rival_engine;
@@ -73,6 +76,21 @@ int main(int argc,char **argv) {
     check(observed_volume==35,"missing option uses default at load");
     check(std::get<double>(old.get_option_value("main_volume"))==62,"existing main volume preserved");
     check(old.save_config() && read_json()[volume_option]==35,"old config gains saved default");
+    for (const auto &option : bike_volume_options) {
+        const auto index=static_cast<unsigned>(option.group);
+        check(observed_groups[index]==default_group_volume(option.group),"old configs gain per-type defaults");
+        old.set_option_value(option.id,42.0);
+        check(observed_groups[index]==42.0 && old.save_config(),"group slider delivered and saved");
+        auto loaded=make_config();check(loaded.load_config(),"group reload");
+        apply_volume_config(loaded);
+        check(observed_groups[index]==42.0,"group volume survives reload");
+        write_json({{option.id,160}});
+        auto bounded=make_config();check(bounded.load_config(),"group edited JSON load");
+        apply_volume_config(bounded);check(observed_groups[index]==100,"group JSON clamped");
+        write_json({{option.id,"invalid"}});
+        auto invalid=make_config();check(invalid.load_config(),"group invalid JSON load");
+        apply_volume_config(invalid);check(observed_groups[index]==default_group_volume(option.group),"group invalid value defaults");
+    }
     for(const auto &[input,expected]:std::array<std::pair<double,double>,5>{{{-40,0},{140,100},{0,0},{100,100},{47,47}}}) {
         write_json({{"main_volume",62},{volume_option,input}});
         auto loaded=make_config();check(loaded.load_config(),"numeric config loaded");

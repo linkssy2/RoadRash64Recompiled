@@ -244,10 +244,11 @@ bool textures(unsigned char *m, unsigned id, const Appearance &a) {
     }
     return true;
 }
-std::array<unsigned, 4> donor_headers(unsigned char *m, const Appearance &a) {
+std::array<unsigned, 4> donor_headers(unsigned char *m, unsigned native) {
     std::array<unsigned, 4> result{};
-    const unsigned skin = native_word(m, 0x800a1578 + a.donor * 8);
-    if (skin != (a.donor == 10 ? 33u : 0u))
+    if (native >= 40) return result;
+    const unsigned skin = native_word(m, 0x800a1578 + native * 8);
+    if (skin > 46)
         return result;
     for (unsigned i = 0; i < 4; ++i) {
         const unsigned p = native_word(m, 0x800d3840 + (skin * 4 + i) * 8);
@@ -536,7 +537,16 @@ extern "C" unsigned rr64_rider_skin_actor_list(unsigned char *m, unsigned node, 
     const unsigned material_count = half(m, node + 0x4a + lod * 2);
     if (!material_count || material_count > 8 || !textures(m, id, *a))
         return original;
-    const auto headers = donor_headers(m, *a);
+    unsigned native = a->donor;
+    const unsigned entity = native_word(m, node + 4);
+    if (valid_guest_range(entity, rider::stride)) {
+        const unsigned actor = native_word(m, entity + 4);
+        if (actor >= 0x800d8570 && actor < 0x800d8570 + 14 * 0x118 &&
+            (actor - 0x800d8570) % 0x118 == 0 &&
+            native_word(m, actor + 0xe4) == entity)
+            native = native_word(m, actor + 0x1c);
+    }
+    const auto headers = donor_headers(m, native);
     std::array<ImageBinding, 8> bindings{};
     unsigned size = 0;
     for (unsigned i = 0; i < material_count; ++i) {
@@ -672,7 +682,7 @@ extern "C" void rr64_rider_skin_preview_end(unsigned char *m) {
         p.trace.reason = 6;
         return;
     }
-    const auto headers = donor_headers(m, *a);
+    const auto headers = donor_headers(m, a->donor);
     p.trace.headers = headers;
     std::array<ImageBinding, 8> bindings{};
     unsigned size = 0;

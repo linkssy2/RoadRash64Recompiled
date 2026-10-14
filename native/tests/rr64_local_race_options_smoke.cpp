@@ -16,6 +16,8 @@
 #include "rr64_netplay.hpp"
 #include "rr64_prediction_replay.hpp"
 namespace { bool online = false, online_connected = false, online_host = false; }
+namespace { bool highlights = false; }
+extern "C" int rr64_highlights_presenting() { return highlights; }
 // This pre-existing roster regression exercises the normal cheats-OFF path.
 // Dedicated modifier fixtures separately cover enabled and online rejection.
 namespace rr64::offline_modifiers { bool enabled(Flag) { return false; } }
@@ -107,6 +109,14 @@ int main() {
     ok &= rr64_local_options_visible(8, 0) == 1;
     const unsigned table = rr64_local_options_table(layout::menu_table);
     ok &= table != layout::menu_table && get(table + 11 * 36) == 0;
+    MEM_B(3, guest_address(layout::visibility)) = 1;
+    ok &= rr64_local_options_visible(5, 1) == 0;
+    put(layout::menu_cursor, 4); put(layout::menu_buttons, 0x10);
+    ok &= rr64_local_options_navigation(rdram) == 6;
+    put(layout::menu_buttons, 8);
+    ok &= rr64_local_options_navigation(rdram) == 4;
+    MEM_B(3, guest_address(layout::visibility)) = 0;
+    put(layout::menu_cursor, 8);
     put(0x80300018, 0xBADF00D);
     rr64_local_options_text(rdram, 8, 0x80300000);
     ok &= MEM_B(0, guest_address(0x80300000)) == 'B';
@@ -773,6 +783,70 @@ int main() {
     rr64_thrash_options_mode(0);
     reset_online();
     check_solo(online_options() == multiplayer_preset, "solo and online music preserve local preset");
+    rr64::local_players::active.store(true);
+    put(layout::humans, 4); put(layout::menu_humans, 4);
+    put(layout::menu_cursor, 10); put(layout::menu_buttons, 0);
+    rr64_local_options_input(rdram);
+    check_solo(rr64_local_options_visible(10, 0) == 1, "AI cops available without Custom Cop");
+    for (unsigned toggle = 0; toggle < 2; ++toggle) {
+        put(layout::menu_buttons, 0x40); rr64_local_options_input(rdram);
+        reset_online();
+        rr64_local_options_race(rdram);
+        check_solo(get(0x800A6570) == ((online_options() & 1024u) ? 3u : 0u), "police allocated independently");
+        check_solo(get(layout::racers) + get(0x800A6570) <= 14, "police fit native actor capacity");
+    }
+    put(layout::menu_cursor, 6); rr64_local_options_input(rdram);
+    const auto traffic = get(0x8009EAD8);
+    put(layout::menu_cursor, 7); rr64_local_options_input(rdram);
+    check_solo(get(0x8009EAD8) == traffic, "pedestrian edit preserves traffic");
+    const auto peds = get(layout::pedestrian_choice);
+    put(layout::menu_cursor, 6); rr64_local_options_input(rdram);
+    check_solo(get(layout::pedestrian_choice) == peds && get(0x8009EAD8) != traffic, "traffic edit preserves pedestrians");
+    put(globals::main_mode, 0x1C); put(globals::pending_mode, 0x1C);
+    put(0x800A656C, 7);
+    for (unsigned i = 0; i < 4; ++i) {
+        put(0x800D8570 + i * 0x118 + 0xE8, 0x80310000 + i * 0x100);
+        write_u16(rdram, 0x80310048 + i * 0x100, 1);
+        write_u16(rdram, 0x8031004C + i * 0x100, 0);
+        write_u16(rdram, 0x8031004E + i * 0x100, 0);
+        write_u16(rdram, 0x80310050 + i * 0x100, 0);
+        put(0x800A657C + i * 4, i); put(0x800A4FA0 + i * 4, 3);
+    }
+    check_solo(!rr64_local_spectator_begin(rdram, 0), "active player keeps own camera");
+    write_u16(rdram, 0x8031004C, 1); write_u16(rdram, 0x80310048, 0);
+    write_u16(rdram, 0x80310150, 1); // Player 2 finished; watch Player 3.
+    const auto spectator_before = memory;
+    auto token = rr64_local_spectator_begin(rdram, 0);
+    check_solo(token && get(0x800A657C) == 2 && get(0x800A4FA0) == 5, "busted player follows unfinished survivor");
+    rr64_local_spectator_end(rdram, 0, token);
+    check_solo(memory == spectator_before, "camera scope restores all identity and mode fields");
+    highlights = true;
+    check_solo(!rr64_local_spectator_begin(rdram, 0), "highlights own their camera");
+    highlights = false; online = true;
+    check_solo(!rr64_local_spectator_begin(rdram, 0), "online view ownership unchanged");
+    online = false;
+    put(globals::pending_mode, 0x1E);
+    check_solo(!rr64_local_spectator_begin(rdram, 0), "results transition preserves original identity");
+    put(globals::pending_mode, 0x1C);
+    write_u16(rdram, 0x8031024C, 1); write_u16(rdram, 0x8031034E, 1);
+    check_solo(!rr64_local_spectator_begin(rdram, 0), "no spectator target when everyone is done");
+    for (unsigned humans = 2; humans <= 4; ++humans) {
+        put(layout::humans, humans);
+        for (unsigned view = 0; view < humans; ++view) {
+            for (unsigned i = 0; i < humans; ++i) {
+                write_u16(rdram, 0x80310048 + i * 0x100, i != view);
+                write_u16(rdram, 0x8031004C + i * 0x100, i == view);
+                write_u16(rdram, 0x8031004E + i * 0x100, 0);
+                write_u16(rdram, 0x80310050 + i * 0x100, 0);
+            }
+            const auto before = memory;
+            token = rr64_local_spectator_begin(rdram, view);
+            check_solo(token && get(0x800A657C + view * 4) == (view + 1) % humans,
+                       "every split-screen slot can spectate a survivor");
+            rr64_local_spectator_end(rdram, view, token);
+            check_solo(memory == before, "every spectator scope restores player ownership");
+        }
+    }
     std::printf("Thrash regression checks: %u\n", solo_checks);
     std::puts(ok ? "PASS local roster/menu, solo Thrash and online replay roaming" : "FAIL local race options");
     return ok ? 0 : 1;

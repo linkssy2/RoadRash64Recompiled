@@ -72,6 +72,8 @@ void rr64_custom_cop_ai_pool(unsigned char *memory, void *context);
 int rr64_local_player_roaming(unsigned char *memory, unsigned actor);
 void rr64_local_options_menu_begin(unsigned char *memory);
 void rr64_local_options_reset_race();
+unsigned rr64_local_spectator_begin(unsigned char *memory, unsigned view);
+void rr64_local_spectator_end(unsigned char *memory, unsigned view, unsigned saved);
 void rr64_local_bike_profiles_reset();
 int rr64_local_options_input(unsigned char *memory);
 int rr64_local_options_navigation(unsigned char *memory);
