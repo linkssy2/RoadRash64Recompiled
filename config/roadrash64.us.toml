@@ -273,6 +273,8 @@ hook = [
     { func = "func_8004E830", before_vram = 0x8004EA0C, text = "rr64_trace_guest_stage(\"frame-before-800589B4\");" },
     { func = "func_8004E830", before_vram = 0x8004EA14, text = "rr64_trace_guest_stage(\"frame-before-80058DBC\");" },
     { func = "func_8004E830", before_vram = 0x8004EAC4, text = "rr64_trace_guest_stage(\"frame-return\");" },
+    # Boot intro pages, before the frame counter picks the page: A or Start jumps to the next one.
+    { func = "func_80021B0C", before_vram = 0x80021B0C, text = "rr64_intro_skip(rdram);" },
     { func = "func_8000A3F4", text = "rr64_trace_guest_stage(\"render-worker-entry\");" },
     { func = "func_8000A3F4", before_vram = 0x8000A43C, text = "rr64_trace_guest_stage(\"render-worker-received-frame\");" },
     { func = "func_8000A3F4", before_vram = 0x8000A45C, text = "rr64_trace_guest_value(\"render-worker-draw-target\", ctx->r3);" },
