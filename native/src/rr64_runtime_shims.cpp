@@ -1111,6 +1111,10 @@ extern "C" void rr64_intro_skip(unsigned char *rdram) {
             return;
         }
     }
+    // Entering the menu this way is a player starting the game, as a Start
+    // press on this page is (next_player_started_title_session); A otherwise
+    // leaves the cheats and other session features off.
+    player_started_title_session.store(true, std::memory_order_relaxed);
     // func_80048544(0x20), then the main menu cursor func_80071F94 selects.
     rr64::engine::write_u32(rdram, rr64::engine::globals::pending_mode, 0x20u);
     rr64::engine::write_u32(rdram, rr64::engine::globals::mode_request_latch, 0u);
