@@ -1083,6 +1083,44 @@ extern "C" void rr64_trace_guest_input(unsigned int mode, unsigned int active_ma
     std::fflush(stderr);
 }
 
+// The boot intro (func_80021B0C) picks its page from the mode frame counter:
+// the N64 logo until frame 200, then pages starting at 300, 400, 500 and 600.
+// The last page counts its own frames and moves to the attract demo after 300.
+// Past the logo, a fresh A or Start press moves the counter to the next page;
+// on the last page it opens the main menu, the same request func_80071F94
+// makes for Start on that page.
+extern "C" void rr64_intro_skip(unsigned char *rdram) {
+    constexpr std::array<std::uint32_t, 4> page_starts = {300u, 400u, 500u, 600u};
+    constexpr std::uint16_t a_or_start = 0x9000u;
+    static bool held_before = true; // a button held through boot is not a press
+    std::uint32_t frames = 0;
+    std::uint16_t buttons = 0;
+    if (!rr64::engine::read_u32(rdram, rr64::engine::globals::mode_frame_count, frames) ||
+        !rr64::engine::read_u16(rdram, rr64::engine::globals::controller_buttons, buttons)) {
+        return;
+    }
+    const bool held = (buttons & a_or_start) != 0u;
+    const bool pressed = held && !held_before;
+    held_before = held;
+    if (!pressed || frames < 200u) {
+        return;
+    }
+    for (const std::uint32_t start : page_starts) {
+        if (frames < start) {
+            rr64::engine::write_u32(rdram, rr64::engine::globals::mode_frame_count, start);
+            return;
+        }
+    }
+    // Entering the menu this way is a player starting the game, as a Start
+    // press on this page is (next_player_started_title_session); A otherwise
+    // leaves the cheats and other session features off.
+    player_started_title_session.store(true, std::memory_order_relaxed);
+    // func_80048544(0x20), then the main menu cursor func_80071F94 selects.
+    rr64::engine::write_u32(rdram, rr64::engine::globals::pending_mode, 0x20u);
+    rr64::engine::write_u32(rdram, rr64::engine::globals::mode_request_latch, 0u);
+    rr64::engine::write_u32(rdram, rr64::engine::local_race::menu_cursor, 2u);
+}
+
 #include "rr64_autotest_control.hpp"
 extern "C" void rr64_prediction_request_verification_restart();
 extern "C" void rr64_autotest_input(unsigned char *rdram, unsigned int mode) {

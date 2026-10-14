@@ -138,6 +138,11 @@ inline bool write_float(unsigned char *rdram, std::uint32_t address, float value
 namespace globals {
 inline constexpr std::uint32_t main_mode = 0x800A1810u;
 inline constexpr std::uint32_t pending_mode = 0x800A1814u;
+// func_80048544 clears this word with every pending_mode request.
+inline constexpr std::uint32_t mode_request_latch = 0x8009CC50u;
+// Frames since the current mode began; the boot intro times its pages by it.
+// The terrain code reads the same word as terrain_request_epoch.
+inline constexpr std::uint32_t mode_frame_count = 0x800A1830u;
 inline constexpr std::uint32_t mode_records = 0x800A1BDCu;
 inline constexpr std::uint32_t gameplay_pause_state = 0x800A2192u;
 inline constexpr std::uint32_t active_input_mask = 0x800A2194u;
