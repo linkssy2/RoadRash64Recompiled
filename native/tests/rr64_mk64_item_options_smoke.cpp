@@ -174,8 +174,11 @@ int main(int argc, char **argv) {
         input(multiplayer, 0);
         if (multiplayer) {
             put(0x8009EAD8, 1);
-            input(true, 0x40);
-            check(get(0x8009EAD8) == 0);
+            // Light -> Some -> Heavy -> None; the native flag remains boolean.
+            for (unsigned enabled : {1u, 1u, 0u}) {
+                input(true, 0x40);
+                check(get(0x8009EAD8) == enabled);
+            }
             check(rr64_local_options_visible(6, 0) == 1);
         } else {
             put(0x8009EAC4, 1);
@@ -245,8 +248,10 @@ int main(int argc, char **argv) {
     check(get(0x8009EAD8) == 1);
     const unsigned pedestrians = get(menu::pedestrian_choice);
     put(menu::menu_cursor, 6);
-    item_options_native_multiplayer(rdram, &input_context);
-    check(get(0x8009EAD8) == 0 && get(menu::pedestrian_choice) == pedestrians);
+    for (unsigned enabled : {1u, 1u, 1u, 0u}) {
+        item_options_native_multiplayer(rdram, &input_context);
+        check(get(0x8009EAD8) == enabled && get(menu::pedestrian_choice) == pedestrians);
+    }
     option::flush();
     std::printf("MK64 native item options and local race completion: %u checks passed\n", checks);
 }

@@ -88,7 +88,7 @@ namespace {
 using namespace engine;
 constexpr unsigned far_staging_offset = 8704;
 constexpr unsigned texture_stride = far_staging_offset + 2560;
-constexpr unsigned texture_capacity = maximum_characters * texture_stride;
+constexpr unsigned texture_capacity = render_characters * texture_stride;
 constexpr unsigned frame_capacity = 1024 * 1024, guard = 0x534b494e;
 constexpr std::array<unsigned, 4> texture_offsets{0, 2560, 5120, 7680};
 struct Frame {
@@ -104,7 +104,7 @@ struct State {
     unsigned char *memory{};
     unsigned textures{};
     unsigned shell{};
-    std::array<bool, maximum_characters> copied{};
+    std::array<bool, render_characters> copied{};
     std::array<Frame, 2> frames{};
     std::array<Preview, 8> previews{};
     unsigned preview_depth{};
@@ -207,7 +207,7 @@ bool intact(unsigned char *m, unsigned base, unsigned bytes) {
     return true;
 }
 bool textures(unsigned char *m, unsigned id, const Appearance &a) {
-    if (!id || id > maximum_characters || (a.donor != 0 && a.donor != 10))
+    if (!id || id > render_characters || (a.donor != 0 && a.donor != 10))
         return false;
     for (unsigned i = 0; i < 4; ++i) {
         const unsigned w = i == 3 ? 32 : 64, h = i == 3 ? 16 : 32;

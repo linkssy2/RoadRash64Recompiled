@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <bit>
+#include <cmath>
 #include <memory>
 #include <mutex>
 
@@ -14,6 +16,14 @@ std::unique_ptr<const Catalog> resident;
 std::atomic<const Catalog *> active{};
 std::atomic_bool started{}, random_cpu{};
 std::atomic<std::uint64_t> race_seed{};
+std::atomic<unsigned> cpu_percent{100}, cpu_pool{0}, race_percent{100}, race_pool{0};
+std::array<std::unique_ptr<const Appearance>, stock_characters> stock;
+std::array<std::atomic<const Appearance *>, stock_characters> stock_active{};
+std::uint64_t cosmetic_hash(std::uint64_t v) {
+    v = (v ^ (v >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+    v = (v ^ (v >> 27)) * UINT64_C(0x94d049bb133111eb);
+    return v ^ (v >> 31);
+}
 std::array<std::atomic<unsigned>, 4> menus{};
 std::array<std::atomic<unsigned>, 14> racers{};
 std::string message = "Enable before starting the game. Local human skins and optional randomized CPU skins.";
@@ -117,6 +127,8 @@ unsigned count() noexcept {
     return c ? unsigned(c->size()) : 0;
 }
 const Appearance *appearance(unsigned index) noexcept {
+    if (index > maximum_characters && index <= render_characters)
+        return stock_active[index - maximum_characters - 1].load(std::memory_order_acquire);
     const auto *c = active.load(std::memory_order_acquire);
     return c && index && index <= c->size() ? &(*c)[index - 1] : nullptr;
 }
@@ -159,28 +171,77 @@ void clear_menu() noexcept {
 void set_random_cpu(bool value) noexcept {
     random_cpu.store(value, std::memory_order_release);
 }
-unsigned random_cpu_selection(unsigned racer, unsigned donor) noexcept {
+void set_cpu_percent(double value) noexcept {
+    cpu_percent.store(std::isfinite(value) ? unsigned(std::clamp(value, 0.0, 100.0) + 0.5) : 100);
+}
+void set_cpu_pool(unsigned value) noexcept { cpu_pool.store(value <= 2 ? value : 0); }
+bool cpu_skins_active() noexcept { return race_seed.load() && race_percent.load(); }
+// The user ROM owns the stock textures; keep host copies, never packaged assets.
+bool load_stock(std::span<const std::uint8_t> rom) {
+    constexpr std::size_t bank = 0xf6c440;
+    if (rom.size() < 0x1000000) return false;
+    const auto word = [&](std::size_t p) {
+        return (unsigned(rom[p]) << 24) | (unsigned(rom[p+1]) << 16) |
+               (unsigned(rom[p+2]) << 8) | rom[p+3];
+    };
+    if (word(bank) != 0x47) return false;
+    std::array<Appearance, stock_characters> pending;
+    for (unsigned n = 0; n < stock_characters; ++n) {
+        const auto identity = 0xa2174u + n * 8;
+        const unsigned gender = word(identity) >> 16, skin = word(identity + 4);
+        if (gender > 1 || skin > 46) return false;
+        auto &a = pending[n]; a.donor = gender ? 0 : 10;
+        for (unsigned part = 0; part < 4; ++part) {
+            const auto entry = bank + 16 + (skin * 4 + part) * 12;
+            const std::size_t p = entry + word(entry), size = word(entry + 4);
+            const unsigned w = part == 3 ? 32 : 64, h = part == 3 ? 16 : 32;
+            if (size != 64 + w*h + 512 || p > rom.size() || size > rom.size()-p ||
+                word(p) != 0x16 || word(p+44) != w || word(p+48) != h || word(p+52) != 8 ||
+                (word(p+32) & 65535) != 512 || (word(p+36) & 65535) != w*h ||
+                (word(p+36) >> 16 & 0x8004)) return false;
+            a.textures[part] = {w, h, {rom.begin()+p+64, rom.begin()+p+size}};
+        }
+    }
+    for (unsigned n = 0; n < stock_characters; ++n) install_stock(n, std::move(pending[n]));
+    return true;
+}
+void install_stock(unsigned native, Appearance a) {
+    if (native >= stock_characters || (a.donor != 0 && a.donor != 10)) return;
+    std::lock_guard lock(lifecycle);
+    if (stock[native]) return;
+    stock[native] = std::make_unique<const Appearance>(std::move(a));
+    stock_active[native].store(stock[native].get(), std::memory_order_release);
+}
+unsigned random_cpu_selection(unsigned racer, unsigned donor, unsigned mask) noexcept {
     const auto seed = race_seed.load(std::memory_order_acquire);
     const auto *c = active.load(std::memory_order_acquire);
-    if (!seed || !c || racer >= racers.size() || (donor != 0 && donor != 10))
+    if (!seed || racer >= racers.size() || !(mask & (1u << racer)) || (mask >> 14) || (donor != 0 && donor != 10))
         return 0;
-    unsigned compatible = 0;
-    for (const auto &a : *c) compatible += a.donor == donor;
-    if (!compatible) return 0;
-    // Cosmetic hashing never consumes the native simulation's random seed.
-    auto value = seed + (racer + 1) * UINT64_C(0x9e3779b97f4a7c15);
-    value = (value ^ (value >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-    value = (value ^ (value >> 27)) * UINT64_C(0x94d049bb133111eb);
-    value ^= value >> 31;
-    unsigned choice = unsigned(value % (compatible * 2));
-    if (choice < compatible) return 0; // Equal chance of a stock or custom look.
-    choice -= compatible;
-    for (unsigned i = 0; i < c->size(); ++i)
-        if ((*c)[i].donor == donor && choice-- == 0) return i + 1;
-    return 0;
+    // Rank the complete CPU roster, rather than rolling a coin per draw.
+    const auto rank_key = [&](unsigned slot) { return cosmetic_hash(seed + slot); };
+    unsigned rank = 0;
+    for (unsigned i = 0; i < 14; ++i)
+        if ((mask & (1u << i)) && (rank_key(i) < rank_key(racer) ||
+            (rank_key(i) == rank_key(racer) && i < racer))) ++rank;
+    const unsigned selected = (std::popcount(mask) * race_percent.load() + 50) / 100;
+    if (rank >= selected) return 0;
+    std::array<unsigned, render_characters> pool{};
+    unsigned size = 0;
+    const auto category = race_pool.load();
+    if (category != 2)
+        for (unsigned i = 0; i < stock_characters; ++i) {
+            const auto *a = appearance(maximum_characters + i + 1);
+            if (a && a->donor == donor) pool[size++] = maximum_characters + i + 1;
+        }
+    if (category != 1 && c)
+        for (unsigned i = 0; i < c->size(); ++i)
+            if ((*c)[i].donor == donor) pool[size++] = i + 1;
+    return size ? pool[cosmetic_hash(seed ^ (UINT64_C(0x9e3779b97f4a7c15) * (racer+1))) % size] : 0;
 }
 void clear_race() noexcept {
     // Latch the setting so paused edits cannot change an ongoing race/replay.
+    race_percent.store(cpu_percent.load());
+    race_pool.store(cpu_pool.load());
     race_seed.store(random_cpu.load(std::memory_order_acquire)
         ? std::uint64_t(std::chrono::steady_clock::now().time_since_epoch().count()) | 1u : 0,
         std::memory_order_release);

@@ -35,8 +35,14 @@ extern "C" void func_8006B740(unsigned char* rdram,recomp_context* ctx) {
  ctx->r2=placement_ok;
 }
 extern "C" void func_80056084(unsigned char*,recomp_context*) { ++voices; }
-int main() {
+int main(int argc, char** argv) {
     using namespace rr64::local_race_options;
+    if (argc == 5) {
+        initialize(argv[1]);
+        return cpu_weapon(false)==unsigned(std::atoi(argv[2])) &&
+               cpu_weapon(true)==unsigned(std::atoi(argv[3])) &&
+               (online_options() & 2047u)==unsigned(std::atoi(argv[4])) ? 0 : 1;
+    }
     bool ok = true;
     // Equipment alone never unlocks a role outside Custom Cop Mode.
     for (unsigned player = 0; player < 4; ++player) {
@@ -108,7 +114,7 @@ int main() {
     rr64_local_options_race(rdram); ok &= rr64_local_bike_level(0) == 6;
     ok &= rr64_local_options_visible(8, 0) == 1;
     const unsigned table = rr64_local_options_table(layout::menu_table);
-    ok &= table != layout::menu_table && get(table + 11 * 36) == 0;
+    ok &= table != layout::menu_table && get(table + 13 * 36) == 0;
     MEM_B(3, guest_address(layout::visibility)) = 1;
     ok &= rr64_local_options_visible(5, 1) == 0;
     put(layout::menu_cursor, 4); put(layout::menu_buttons, 0x10);
@@ -195,7 +201,7 @@ int main() {
     put(ai_pool+5*4,3);put(ai_pool+7*4,2);ai_context.r21=2;
     rr64_custom_cop_ai_pool(rdram,&ai_context);
     ok &= get(ai_pool+5*4)==3 && get(ai_pool+7*4)==2 && ai_context.r21==2;
-    rr64_local_options_input(rdram); // back to default Off
+    put(layout::menu_buttons, 0x20); rr64_local_options_input(rdram); // back to No Cops
     ok &= valid_online_options(512u|1024u|10u) && valid_online_options(2048u) &&
           valid_online_options(mk64_items_disabled_bit) && !valid_online_options(0x10000000u);
     reset_online();ok &= !(online_options()&1024u);
@@ -501,12 +507,12 @@ int main() {
         check_solo(get(0x8009EAC0) == 3, "AI row never writes extended count into native density");
     }
     const unsigned solo_table = rr64_thrash_options_table(0x8009EB4C);
-    check_solo(solo_table != 0x8009EB4C && get(solo_table + 11 * 36) == 0,
+    check_solo(solo_table != 0x8009EB4C && get(solo_table + 13 * 36) == 0,
                "solo menu uses an extended table with bounded terminator");
-    check_solo(get(solo_table + 10 * 36) == 0, "AI-cop row stays hidden when custom cop is off");
+    check_solo(get(solo_table + 10 * 36 + 8) == 0, "hidden AI-cop row adds no blank space");
     put(layout::menu_cursor, 9); put(layout::menu_buttons, 0x10);
-    check_solo(rr64_thrash_options_navigation(rdram) == 0,
-               "navigation wraps past hidden AI-cop row");
+    check_solo(rr64_thrash_options_navigation(rdram) == 11,
+               "navigation skips hidden AI-cop row and reaches weapon selectors");
     put(layout::menu_cursor, 9); put(layout::menu_buttons, 0x40);
     rr64_thrash_options_input(rdram);
     check_solo((thrash_options() & 512u) && get(solo_table + 10 * 36) != 0,
@@ -788,20 +794,36 @@ int main() {
     put(layout::menu_cursor, 10); put(layout::menu_buttons, 0);
     rr64_local_options_input(rdram);
     check_solo(rr64_local_options_visible(10, 0) == 1, "AI cops available without Custom Cop");
-    for (unsigned toggle = 0; toggle < 2; ++toggle) {
-        put(layout::menu_buttons, 0x40); rr64_local_options_input(rdram);
-        reset_online();
-        rr64_local_options_race(rdram);
-        check_solo(get(0x800A6570) == ((online_options() & 1024u) ? 3u : 0u), "police allocated independently");
-        check_solo(get(layout::racers) + get(0x800A6570) <= 14, "police fit native actor capacity");
+    for (unsigned humans = 1; humans <= 4; ++humans) {
+        put(layout::humans, humans); put(layout::menu_humans, humans);
+        unsigned seen = 0;
+        for (unsigned step = 0; step < 4; ++step) {
+            put(layout::menu_cursor, 10); put(layout::menu_buttons, 0x40);
+            rr64_local_options_input(rdram); reset_online(); rr64_local_options_race(rdram);
+            const unsigned police = get(0x800A6570);
+            check_solo(police <= 3, "police count bounded");
+            seen |= 1u << police;
+            float density = -1;
+            read_float(rdram, 0x800D855C, density);
+            constexpr float expected[] = {0.f, .2f, .25f, 1.f};
+            check_solo(density == expected[police], "police actors and encounter scheduler agree");
+            check_solo(get(layout::racers) + police <= 14, "police fit native actor capacity");
+        }
+        check_solo(seen == 15, "all four police densities reachable for every human count");
     }
-    put(layout::menu_cursor, 6); rr64_local_options_input(rdram);
-    const auto traffic = get(0x8009EAD8);
-    put(layout::menu_cursor, 7); rr64_local_options_input(rdram);
-    check_solo(get(0x8009EAD8) == traffic, "pedestrian edit preserves traffic");
-    const auto peds = get(layout::pedestrian_choice);
-    put(layout::menu_cursor, 6); rr64_local_options_input(rdram);
-    check_solo(get(layout::pedestrian_choice) == peds && get(0x8009EAD8) != traffic, "traffic edit preserves pedestrians");
+    unsigned traffic_seen = 0;
+    for (unsigned step = 0; step < 4; ++step) {
+        const auto peds = get(layout::pedestrian_choice);
+        put(layout::menu_cursor, 6); rr64_local_options_input(rdram); rr64_local_options_race(rdram);
+        float density = -1; read_float(rdram, 0x800D8560, density);
+        constexpr float expected[] = {0.f, .25f, .75f, 1.f};
+        for (unsigned i = 0; i < 4; ++i) if (density == expected[i]) traffic_seen |= 1u << i;
+        check_solo(get(layout::pedestrian_choice) == peds, "traffic edit preserves pedestrians");
+        const auto traffic = get(0x800D8560);
+        put(layout::menu_cursor, 7); rr64_local_options_input(rdram); rr64_local_options_race(rdram);
+        check_solo(get(0x800D8560) == traffic, "pedestrian edit preserves traffic density");
+    }
+    check_solo(traffic_seen == 15, "all native traffic densities reachable");
     put(globals::main_mode, 0x1C); put(globals::pending_mode, 0x1C);
     put(0x800A656C, 7);
     for (unsigned i = 0; i < 4; ++i) {
@@ -847,6 +869,34 @@ int main() {
             check_solo(memory == before, "every spectator scope restores player ownership");
         }
     }
+    online = false; rr64_thrash_options_mode(0); rr64::local_players::active.store(true);
+    put(0x800A656C, 2);
+    const unsigned weapon_actor=0x800D8570, weapon_bike=0x80380000, weapon_rider=0x80390000;
+    put(weapon_actor+0xE0,weapon_bike); put(weapon_actor+0xE4,weapon_rider);
+    put(weapon_rider+0x584,weapon_bike); write_u16(rdram,weapon_actor+0x26,1);
+    for(bool police : {false,true}) {
+        put(weapon_actor+0x20,police?7:5);
+        while(cpu_weapon(police)) cycle_cpu_weapon(police,true);
+        for(unsigned w=1;w<=14;++w) {
+            cycle_cpu_weapon(police,true); rr64_cpu_starting_weapon(rdram,0);
+            check_solo(get(weapon_rider+0x5B0)==w,"every native weapon selectable for racers and police");
+            check_solo(MEM_HU(0x838+w*2,guest_address(weapon_bike))==1,"selected weapon has native starting inventory");
+        }
+        online=true; const auto before=memory; rr64_cpu_starting_weapon(rdram,0);
+        cycle_cpu_weapon(police,true);
+        check_solo(memory==before&&cpu_weapon(police)==14,"online excludes weapon overrides and changes"); online=false;
+        write_u16(rdram,weapon_actor+0x26,0); const auto human=memory; rr64_cpu_starting_weapon(rdram,0);
+        check_solo(memory==human,"human equipment never overridden"); write_u16(rdram,weapon_actor+0x26,1);
+        cycle_cpu_weapon(police,true); const auto defaults=memory; rr64_cpu_starting_weapon(rdram,0);
+        check_solo(memory==defaults&&cpu_weapon(police)==0,"default preserves native loadout");
+    }
+    const auto settings=std::filesystem::temp_directory_path()/(
+        "rr64-cpu-options-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(settings); initialize(settings);
+    cycle_cpu_weapon(false,false); cycle_cpu_weapon(true,true); flush();
+    std::ifstream file(settings/"cpu-weapon-options.cfg"); unsigned version=0,racer_weapon=0,cop_weapon=0;
+    check_solo(bool(file>>version>>racer_weapon>>cop_weapon)&&version==1&&racer_weapon==14&&cop_weapon==1,
+               "independent weapon preferences persist with version and bounded native IDs");
     std::printf("Thrash regression checks: %u\n", solo_checks);
     std::puts(ok ? "PASS local roster/menu, solo Thrash and online replay roaming" : "FAIL local race options");
     return ok ? 0 : 1;

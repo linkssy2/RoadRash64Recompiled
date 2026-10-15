@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdint>
@@ -804,38 +805,43 @@ extern "C" void rr64_online_game_setup_after_update(unsigned char *rdram) {
     }
 }
 
-// Match the authored main-menu rows: black lettering, pale-gold selection
-// with a dark backing, and the same left edge and 24-pixel row spacing.
+// Stock rows are artwork with a pulsing selected overlay; use the same pulse
+// and native font without the HUD drop shadow for the added labels.
 extern "C" void func_800795AC(unsigned char *, recomp_context *);
 extern "C" void rr64_online_main_menu_draw(unsigned char *rdram, void *context) {
     if (!rdram || !context) return;
     const char *labels[] = {"ONLINE", "BIG GAME CO-OP"};
+    float sx = 1, sy = 1, pulse = 1;
+    rr64::engine::read_float(rdram, 0x800B07D0u, sx);
+    rr64::engine::read_float(rdram, 0x800B07D4u, sy);
+    rr64::engine::read_float(rdram, 0x8009E1DCu, pulse);
+    pulse = std::isfinite(pulse) ? std::clamp(pulse, 0.f, 1.f) : 1.f;
     for (unsigned row = 0; row < 2; ++row) {
-        recomp_context draw = *static_cast<recomp_context *>(context);
-        draw.r29 -= 128;
-        for (unsigned i = 0;; ++i) {
-            MEM_B(64 + i, draw.r29) = labels[row][i];
-            if (!labels[row][i]) break;
-        }
         const bool selected = MEM_W(0, 0xFFFFFFFF8009E128ULL) == row + 4;
-        float sx = 1, sy = 1;
-        rr64::engine::read_float(rdram, 0x800B07D0u, sx);
-        rr64::engine::read_float(rdram, 0x800B07D4u, sy);
-        draw.r4 = draw.r29 + 64;
-        draw.r5 = std::bit_cast<unsigned>(124.f * sx);
-        draw.r6 = std::bit_cast<unsigned>((186.f + row * 24.f) * sy);
-        draw.r7 = selected ? 220 : 0;
-        MEM_W(16, draw.r29) = selected ? 210 : 0;
-        MEM_W(20, draw.r29) = selected ? 130 : 0;
-        MEM_W(24, draw.r29) = 255;
-        MEM_W(28, draw.r29) = 45;
-        MEM_W(32, draw.r29) = 36;
-        MEM_W(36, draw.r29) = 12;
-        MEM_W(40, draw.r29) = selected ? 190 : 0;
-        MEM_W(44, draw.r29) = 3;
-        MEM_W(48, draw.r29) = 0;
-        MEM_W(52, draw.r29) = 1;
-        MEM_W(56, draw.r29) = 0x3F800000;
-        func_800795AC(rdram, &draw);
+        // Keep black lettering underneath the fading selection, like the artwork.
+        for (unsigned pass = 0; pass <= unsigned(selected); ++pass) {
+            recomp_context draw = *static_cast<recomp_context *>(context);
+            draw.r29 -= 128;
+            for (unsigned i = 0;; ++i) {
+                MEM_B(64 + i, draw.r29) = labels[row][i];
+                if (!labels[row][i]) break;
+            }
+            draw.r4 = draw.r29 + 64;
+            draw.r5 = std::bit_cast<unsigned>(124.f * sx);
+            draw.r6 = std::bit_cast<unsigned>((186.f + row * 24.f) * sy);
+            draw.r7 = pass ? 220 : 0;
+            MEM_W(16, draw.r29) = pass ? 210 : 0;
+            MEM_W(20, draw.r29) = pass ? 130 : 0;
+            MEM_W(24, draw.r29) = pass ? unsigned(255.f * pulse) : 255;
+            MEM_W(28, draw.r29) = 45;
+            MEM_W(32, draw.r29) = 36;
+            MEM_W(36, draw.r29) = 12;
+            MEM_W(40, draw.r29) = pass ? unsigned(255.f * pulse) : 0;
+            MEM_W(44, draw.r29) = 3; // Native condensed menu font.
+            MEM_W(48, draw.r29) = pass; // Native text-width selection rectangle.
+            MEM_W(52, draw.r29) = 0; // No HUD drop shadow on menu lettering.
+            MEM_W(56, draw.r29) = 0x3F800000;
+            func_800795AC(rdram, &draw);
+        }
     }
 }

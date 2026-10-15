@@ -23,7 +23,7 @@ constexpr unsigned kTraffic = 0x8009EAC4u;
 constexpr unsigned kCops = 0x8009EAC8u;
 constexpr unsigned kPedestrians = 0x8009EACCu;
 constexpr unsigned kRecordBytes = 36;
-constexpr unsigned kRecordCount = 12;
+constexpr unsigned kRecordCount = 14;
 
 std::atomic<bool> thrash_active{false};
 bool menu_active = false;
@@ -69,34 +69,35 @@ bool make_table(unsigned char *rdram) {
     // Use the game's own colors/font/animation and keep its first three rows.
     for (unsigned i = 0; i < 8 * kRecordBytes; i += 4)
         write(rdram, table_address + i, read(rdram, kStockTable + i));
-    for (unsigned row : {8u, 9u, 10u})
+    for (unsigned row : {8u, 9u, 10u, 11u, 12u})
         for (unsigned i = 0; i < kRecordBytes; i += 4)
             write(rdram, table_address + row * kRecordBytes + i,
                   read(rdram, kStockTable + 7 * kRecordBytes + i));
     for (unsigned i = 0; i < kRecordBytes; i += 4)
-        write(rdram, table_address + 11 * kRecordBytes + i, 0);
+        write(rdram, table_address + 13 * kRecordBytes + i, 0);
 
     // A non-null pointer to an empty label keeps the native loop alive while
-    // our stack text supplies the entire row. Row 11 remains its null sentinel.
-    const unsigned empty_label = table_address + 11 * kRecordBytes + 4;
-    for (unsigned row : {4u, 8u, 9u, 10u})
+    // our stack text supplies the entire row. Row 13 remains its null sentinel.
+    const unsigned empty_label = table_address + 13 * kRecordBytes + 4;
+    for (unsigned row : {4u, 8u, 9u, 10u, 11u, 12u})
         write(rdram, table_address + row * kRecordBytes, empty_label);
-    if (!(options() & 512u))
-        write(rdram, table_address + 10 * kRecordBytes, 0);
+
 
     // Fit all options above the native footer. Positive Y starts a group;
     // negative Y advances relative to the previous row.
-    write(rdram, table_address + 8, 0x42600000u); // 56.0f
+    write(rdram, table_address + 8, 0x42480000u); // 50.0f
     for (unsigned row = 0; row <= 2; ++row) {
         write(rdram, table_address + row * kRecordBytes + 0x1C, 0x3F400000u);
         if (row)
-            write(rdram, table_address + row * kRecordBytes + 8, 0xC1A00000u);
+            write(rdram, table_address + row * kRecordBytes + 8, 0xC1800000u);
     }
-    for (unsigned row = 3; row <= 10; ++row) {
+    for (unsigned row = 3; row <= 12; ++row) {
         write(rdram, table_address + row * kRecordBytes + 8,
-              row == 3 ? 0xC1A00000u : 0xC1400000u); // -20 / -12
-        write(rdram, table_address + row * kRecordBytes + 0x1C, 0x3F200000u);
+              row == 3 ? 0xC1900000u : 0xC1400000u); // -18 / -12
+        write(rdram, table_address + row * kRecordBytes + 0x1C, 0x3F000000u);
     }
+    if (!(options() & 512u))
+        write(rdram, table_address + 10 * kRecordBytes + 8, 0); // Hidden row adds no vertical spacing.
     return true;
 }
 
@@ -158,9 +159,11 @@ extern "C" int rr64_thrash_options_input(unsigned char *rdram) {
     const unsigned row = read(rdram, menu::menu_cursor);
     const unsigned buttons = read(rdram, menu::menu_buttons) & 0x60u;
     unsigned bits = options();
-    if (buttons && row >= 3 && row <= 10) {
+    if (buttons && row >= 3 && row <= 12) {
         const bool increase = (buttons & 0x40u) != 0;
-        if (row == 3 || row == 5 || row == 6 || row == 7) {
+        if (row == 11 || row == 12) {
+            shared::cycle_cpu_weapon(row == 12, increase);
+        } else if (row == 3 || row == 5 || row == 6 || row == 7) {
             const unsigned field = row == 3 ? kDifficulty : row == 5 ? kCops
                                                       : row == 6 ? kTraffic : kPedestrians;
             const unsigned maximum = row == 3 ? 4u : 3u;
@@ -172,24 +175,24 @@ extern "C" int rr64_thrash_options_input(unsigned char *rdram) {
             const unsigned value = advance((bits >> shift) & mask, maximum, increase);
             bits = (bits & ~(mask << shift)) | (value << shift);
             shared::set_thrash_options(bits);
-            // The only optional row is last; a null label terminates native
-            // drawing in the same frame that Custom Cop is switched off.
+            // Keep later weapon rows reachable when Custom Cop is switched off.
             write(rdram, table_address + 10 * kRecordBytes,
-                  bits & 512u ? table_address + 11 * kRecordBytes + 4 : 0);
+                  table_address + 13 * kRecordBytes + 4);
         }
+        write(rdram, table_address + 10 * kRecordBytes + 8, bits & 512u ? 0xC1400000u : 0u);
         write(rdram, menu::menu_dirty, 1);
     }
     // Skip stock input for option rows, including the obsolete density pairs
     // that used to lower cops when raising opponents (and peds vs traffic).
     // Native normalization, resource scales and route selection still run.
-    return row >= 3 && row <= 10;
+    return row >= 3 && row <= 12;
 }
 
 extern "C" int rr64_thrash_options_navigation(unsigned char *rdram) {
     if (!menu_active)
         return -1;
-    unsigned row = std::min(read(rdram, menu::menu_cursor), 10u);
-    const unsigned mask = options() & 512u ? 0x7FFu : 0x3FFu;
+    unsigned row = std::min(read(rdram, menu::menu_cursor), 12u);
+    const unsigned mask = options() & 512u ? 0x1FFFu : 0x1BFFu;
     if (row == 10 && !(mask & (1u << 10)))
         row = 9;
     const unsigned buttons = read(rdram, menu::menu_buttons);
@@ -209,7 +212,10 @@ extern "C" void rr64_thrash_options_text(unsigned char *rdram, unsigned row,
         return;
     const unsigned bits = options();
     char label[24];
-    if (row == 4) {
+    if (row == 11 || row == 12) {
+        std::snprintf(label, sizeof(label), "%s Wpn: %s", row == 12 ? "Cop" : "Racer", shared::cpu_weapon_name(row == 12));
+        copy_text(rdram, buffer, label);
+    } else if (row == 4) {
         std::snprintf(label, sizeof(label), "AI Racers: %u",
                       std::min(bits & 15u, shared::max_ai(1)));
         copy_text(rdram, buffer, label);
@@ -227,7 +233,7 @@ extern "C" void rr64_thrash_options_text(unsigned char *rdram, unsigned row,
     } else if (row == 9) {
         copy_text(rdram, buffer, bits & 512u ? "Custom Cop Mode: On" : "Custom Cop Mode: Off");
     } else if (row == 10) {
-        copy_text(rdram, buffer, bits & 1024u ? "AI Cops: On" : "AI Cops: Off");
+        copy_text(rdram, buffer, !(bits & 512u) ? "" : bits & 1024u ? "AI Cops: On" : "AI Cops: Off");
     }
 }
 

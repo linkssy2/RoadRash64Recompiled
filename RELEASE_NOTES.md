@@ -1,15 +1,10 @@
-# Road Rash 64 Recompiled 1.4.6
+# Road Rash 64 Recompiled 1.4.7
 
-- **Big Game Co-op:** share the campaign locally with a second rider, separate bike selection and partner spectating. This new mode is experimental.
-- **Split-screen options:** choose traffic, pedestrians and AI cops independently; busted players spectate the remaining racers.
-- **Multiplayer presentation:** improved three/four-player widescreen layouts, optional full HUD and speedometer placement.
-- **More race variety:** randomize CPU appearances using the original riders and installed More Characters skins. Online, this is a local cosmetic preference.
-- **Audio controls:** adjust rival engine volume by bike family to balance choppers and sport bikes.
-- **New offline cheats:** All Tracks Available, all-racer 4x/100x combat, airborne Moon Gravity and Stay Crashed Until A.
-- **Menu polish:** integrated Big Game Co-op/Online entries, tighter race options, and A/Start intro-page skipping after the N64 logo.
+- **CPU rider variety:** choose original riders, More Characters skins, or both, and set the percentage of CPU racers to randomize. Online appearances remain a local cosmetic preference.
+- **Opponent weapons:** separate racer and cop starting-weapon selectors in offline race settings.
+- **Police and traffic:** restored local multiplayer police encounters, with four police and traffic density choices, including solo play against CPU racers.
+- **Menu polish:** clearer race-option spacing and matching selection effects for Online and Big Game Co-op.
 
-Thanks to **heyitsjames** for the track unlock, multiplayer HUD/layout and intro-skipping contributions (PRs #19, #21, #23, #25 and #27).
+Windows and experimental Linux downloads are provided. More Characters and the texture mod are separate optional downloads. Big Game Co-op, online and MK64 tracks/items remain experimental.
 
-Windows and experimental Linux downloads are provided. The texture mod and More Characters are separate optional downloads. MK64 tracks and items remain experimental.
-
-This release retains the terrain, frame-pacing and audio improvements from 1.4.5. Performance still depends on hardware, scene complexity and draw distance; start at 50–60% when needed.
+Supply your own supported Road Rash 64 ROM. Importing MK64 tracks also requires your own supported Mario Kart 64 ROM.

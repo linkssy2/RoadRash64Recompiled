@@ -131,7 +131,7 @@ extern "C" void rr64_rider_skin_spawn(unsigned char *m, unsigned canonical) {
                                         : 0);
 }
 extern "C" unsigned rr64_rider_skin_actor_selection(unsigned char *m, unsigned node) {
-    if (!m || !rider_skins::enabled() || (node & 3u) || !engine::valid_guest_range(node, 0x44) || word(m, node) != 2)
+    if (!m || (!rider_skins::enabled() && !rider_skins::cpu_skins_active()) || (node & 3u) || !engine::valid_guest_range(node, 0x44) || word(m, node) != 2)
         return 0;
     const unsigned entity = word(m, node + 4);
     if ((entity & 3u) || !engine::valid_guest_range(entity, engine::rider::stride))
@@ -177,7 +177,21 @@ extern "C" unsigned rr64_rider_skin_actor_selection(unsigned char *m, unsigned n
     if (cpu) {
         const unsigned gender = half(m, 0x800a1574 + native * 8);
         if (gender > 1) return 0;
-        return rider_skins::random_cpu_selection(canonical, gender ? 0 : 10);
+        unsigned mask = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            const unsigned other = actors + i * actor_stride;
+            if (word(m, other + 0x1c) >= 40 || word(m, other + 0x20) == 7) continue;
+            bool human = !half(m, other + 0x26);
+            if (rules.active) {
+                human = false;
+                for (unsigned h = 0; h < 14; ++h)
+                    if ((rules.authority_humans & (1u << h)) &&
+                        (rules.is_host ? h : online_flow::mapped_slot(h, rules.local_slot,
+                            rules.replicated_riders)) == i) human = true;
+            }
+            if (!human) mask |= 1u << i;
+        }
+        return rider_skins::random_cpu_selection(canonical, gender ? 0 : 10, mask);
     }
     unsigned actual_rider = 0;
     const unsigned appearance = rider_skins::race_selection(canonical);

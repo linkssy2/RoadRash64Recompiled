@@ -228,7 +228,7 @@ hook = [
     { func = "func_8006A638", before_vram = 0x8006AF28, text = "rr64_hud_countdown_end(rdram);" },
     { func = "func_8002E5CC", text = "rr64_online_pause_owner(rdram);" },
     # Human police reuse roadside placement and stock sound paths, not AI input.
-    { func = "func_8006CF60", before_vram = 0x8006D890, text = "rr64_custom_cop_post(rdram, ctx, ctx->r21); rr64_rider_skin_spawn(rdram, (unsigned)ctx->r21);" },
+    { func = "func_8006CF60", before_vram = 0x8006D890, text = "rr64_custom_cop_post(rdram, ctx, ctx->r21); rr64_rider_skin_spawn(rdram, (unsigned)ctx->r21); rr64_cpu_starting_weapon(rdram, (unsigned)ctx->r21);" },
     { func = "func_800576D4", text = "if (rr64_custom_cop_siren(rdram, ctx->r4) == 0) return;" },
     { func = "func_800576D4", before_vram = 0x80057720, text = "if (rr64_custom_cop_siren(rdram, ctx->r16) == 1) ctx->r4 = 1;" },
     { func = "func_80057860", text = "if (rr64_custom_cop_pursuit(rdram, ctx->r4) >= 0) return;" },

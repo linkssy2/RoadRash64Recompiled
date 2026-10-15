@@ -8,6 +8,8 @@
 #include <cstring>
 #include <filesystem>
 #include <chrono>
+#include <fstream>
+#include <iterator>
 
 namespace skin=rr64::rider_skins;
 namespace prefs=rr64::rider_skin_preferences;
@@ -43,7 +45,13 @@ extern "C" int rr64_custom_cop_enabled(){return cop;}
 extern "C" unsigned rr64_custom_cop_bike_entry(unsigned char*,unsigned,unsigned){return cop?0x800a684c:0;}
 extern "C" int rr64_custom_cop_can_start(unsigned char*){return !cop;}
 extern "C" void func_800796F8(unsigned char*,recomp_context*){++labels;}
-int main(){
+int main(int argc, char** argv){
+    if(argc>1) {
+        std::ifstream in(argv[1],std::ios::binary);
+        std::vector<std::uint8_t> rom((std::istreambuf_iterator<char>(in)),{});
+        check(skin::load_stock(rom),"all forty native rider textures load from supported ROM");
+        check(!skin::load_stock({}),"invalid ROM rejected");
+    }
     const auto directory=std::filesystem::temp_directory_path()/("rr64-skin-menu-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     prefs::initialize(directory);
     std::vector<skin::Appearance> catalog;
@@ -120,6 +128,19 @@ int main(){
     }
     // Exercise the real owner gate and verify cosmetics write no native state.
     skin::set_random_cpu(true);
+    for(unsigned i=0;i<40;++i) skin::install_stock(i, skin_fixture("stock", "Stock", i%2?0:10));
+    for(unsigned pool=0;pool<3;++pool) for(unsigned percent : {0u,50u,100u}) {
+        skin::set_cpu_pool(pool); skin::set_cpu_percent(percent); skin::clear_race();
+        unsigned chosen=0;
+        for(unsigned i=0;i<10;++i) {
+            const auto pick=skin::random_cpu_selection(i,i%2?0:10,1023);
+            chosen+=pick!=0;
+            check(!pick || pool!=1 || pick>32,"default pool contains only original riders");
+            check(!pick || pool!=2 || pick<=32,"mod pool contains only added riders");
+        }
+        check(chosen==percent/10,"exact CPU percentage across complete roster");
+    }
+    skin::set_cpu_pool(0); skin::set_cpu_percent(100);
     unsigned customs=0,stock=0;
     for(unsigned race=0;race<64;++race){
         rr64_rider_skin_race_begin(m);mode(0x12);
@@ -132,7 +153,7 @@ int main(){
             const unsigned choice=rr64_rider_skin_actor_selection(m,node);
             check(memory==before,"CPU appearance never alters native physics or RNG");
             check(!choice || skin::native_donor(choice)==donor,"CPU skin fits original gender geometry");
-            customs+=choice!=0;stock+=choice==0;
+            customs+=choice>0&&choice<=32;stock+=choice>32;
             skin::set_random_cpu(false);
             check(rr64_rider_skin_actor_selection(m,node)==choice,"mid-race toggle changes wait for next race");
             skin::set_random_cpu(true);
