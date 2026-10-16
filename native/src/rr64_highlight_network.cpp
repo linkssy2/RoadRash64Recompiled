@@ -204,7 +204,9 @@ template <class IO> void frame(IO &io, highlights::Frame &f) {
         pose(io, r.rider_pose);
         weapon(io, r.held_weapon);
     }
-    for (auto &t : f.traffic) {
+    // Offline replays have extra slots; the existing online format remains 20.
+    for (unsigned i = 0; i < world_sync::capacity; ++i) {
+        auto &t = f.traffic[i];
         io.value(t.active);
         if (!t.active)
             continue;
@@ -285,6 +287,9 @@ bool encode(std::span<const highlights::Clip> clips, Blob &out) noexcept {
         for (const auto &c : clips) {
             if (!valid_clip(c))
                 return false;
+            for (const auto &f : c.frames)
+                for (unsigned i = world_sync::capacity; i < f.traffic.size(); ++i)
+                    if (f.traffic[i].active) return false;
             reserve += 64 + c.frames.size() * sizeof(highlights::Frame);
         }
         if (reserve > maximum_raw_bytes)

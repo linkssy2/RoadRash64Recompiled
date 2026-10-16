@@ -30,6 +30,7 @@
 #include "recompinput/input_state.h"
 
 #include "rr64_engine_layout.hpp"
+#include "rr64_ground_contact.hpp"
 #include "rr64_local_eject.hpp"
 #include "rr64_traffic_distance.hpp"
 #include "rr64_presentation_options.hpp"
@@ -38,6 +39,27 @@
 
 extern "C" void func_8007C524(uint8_t *rdram, recomp_context *ctx);
 extern "C" void func_8003F0E8(uint8_t *rdram, recomp_context *ctx);
+
+extern "C" void rr64_ground_contact_timing(unsigned char* rdram, void* opaque) {
+    if (!rdram || !opaque) return;
+    auto& ctx = *static_cast<recomp_context*>(opaque);
+    float delta;
+    const uint32_t bits = MEM_W(0, (int32_t)0x8009CBA8u);
+    std::memcpy(&delta, &bits, sizeof(delta));
+    // 45958: adjust only the completed downward wheel-support force.
+    ctx.f0.fl = rr64::ground_contact::support_force(ctx.f0.fl, delta);
+}
+extern "C" void rr64_ground_alignment_timing(unsigned char* rdram, void* opaque) {
+    if (!rdram || !opaque) return;
+    auto& ctx = *static_cast<recomp_context*>(opaque);
+    float delta;
+    const uint32_t bits = MEM_W(0, (int32_t)0x8009CBA8u);
+    std::memcpy(&delta, &bits, sizeof(delta));
+    const float scale = rr64::ground_contact::downward_scale(delta);
+    // 3A844: body penetration is already handled; only wheel alignment remains.
+    ctx.f20.fl = rr64::ground_contact::wheel_gap(ctx.f20.fl, scale);
+    ctx.f22.fl = rr64::ground_contact::wheel_gap(ctx.f22.fl, scale);
+}
 extern "C" void rr64_record_guest_cadence(unsigned int frames, double seconds, double update_hz,
                                           float physics_delta, float update_ticks, float wait_ticks,
                                           float total_ticks, unsigned int mode,
@@ -621,7 +643,7 @@ extern "C" int rr64_is_maximum_view_distance_enabled() {
 }
 
 // The original spawn guard uses route end minus its authored margin. Change
-// only the proposed distance; road validation and the 20-car allocator follow.
+// only the proposed distance; road validation and the bounded allocator follow.
 extern "C" unsigned int rr64_traffic_spawn_distance(unsigned char *rdram, unsigned int bits) {
     using namespace rr64::engine;
     if (!maximum_view_distance_terrain_active())

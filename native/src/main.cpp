@@ -1,4 +1,4 @@
-#include "rr64_controller_mappings.hpp"
+#include "rr64_controller_mappings.hpp"
 #include "rr64_custom_cop.hpp"
 #include "recompui/startup_diagnostics.h"
 #include "rr64_popup_input.hpp"
@@ -140,7 +140,7 @@
 #include "rr64_experimental_course.hpp"
 #endif
 
-constexpr const char* kVersion = "1.4.7";
+constexpr const char* kVersion = "1.4.8";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";
@@ -192,7 +192,7 @@ std::vector<recomp::GameEntry> supported_games = {
             rr64::experimental_course::initialize();
 #endif
             rr64::world::terrain_reset_session(); rr64::world::objects_reset_session();
-            rr64::highlights::reset_traffic_session();
+            rr64::highlights::reset_traffic_session();            
         },
     },
 };

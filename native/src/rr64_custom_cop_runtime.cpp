@@ -14,6 +14,7 @@
 #include <cstring>
 
 extern "C" void func_8006B740(unsigned char *, recomp_context *);
+extern "C" void func_8006B9E8(unsigned char *, recomp_context *);
 namespace {
 using namespace rr64::engine;
 using Post = rr64::prediction::CopPostState;
@@ -54,6 +55,35 @@ int slot_for(unsigned char *m, unsigned bike) {
     return -1;
 }
 } // namespace
+extern "C" int rr64_police_waiting(unsigned char *rdram, unsigned actor) {
+    if (!rdram || !valid_guest_range(actor, 0x118) || word(rdram, actor + 0x20) != 7)
+        return 0;
+    const unsigned slot = word(rdram, actor);
+    const unsigned bike = word(rdram, actor + 0xE0);
+    std::uint16_t parked = 0;
+    if (slot >= 14 || !valid_guest_range(bike, 0x81E) ||
+        !read_u16(rdram, bike + 0x81C, parked) || !parked)
+        return 0;
+    // Native roadside waiting is intentional; never count it as a stuck racer.
+    write_u16(rdram, 0x800D4920 + slot * 2, 0);
+    return 1;
+}
+extern "C" int rr64_police_spawn_allowed(unsigned char *rdram, void *context) {
+    if (!rdram || !context)
+        return 0;
+    auto call = *static_cast<recomp_context *>(context);
+    const unsigned stack = unsigned(call.r29);
+    if (!valid_guest_range(stack - 0x200, 0x200))
+        return 0;
+    // 6B740 resets the rider before rejecting roads. 6B9E8 makes the same
+    // road/bridge checks using scratch route state, leaving failed spawns intact.
+    call.f12.u32l = unsigned(call.r5);
+    call.r29 -= 0x20;
+    call.r5 = call.r29 + 0x10;
+    call.r6 = call.r29 + 0x14;
+    func_8006B9E8(rdram, &call);
+    return call.r2 != 0;
+}
 bool rr64::prediction::capture_cop_posts(CopPostsState &out) {
     if (active())
         return false;

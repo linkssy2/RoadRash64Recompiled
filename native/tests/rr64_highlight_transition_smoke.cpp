@@ -215,7 +215,7 @@ void reset_weapon_scratch() noexcept {}
 // Resource ownership and historical traffic rendering have their own native
 // fixture. This dispatcher regression deliberately exercises their refusal path.
 bool prepare_traffic(unsigned char *) noexcept { return false; }
-bool draw_traffic(unsigned char *, const std::array<world_sync::Traffic, world_sync::capacity> &, std::uint64_t) noexcept { return false; }
+bool draw_traffic(unsigned char *, const std::array<world_sync::Traffic, rr64::traffic::capacity> &, std::uint64_t) noexcept { return false; }
 }
 namespace {
 void dispatch(Scene &s, unsigned mode = 0x1e, bool press = false) {

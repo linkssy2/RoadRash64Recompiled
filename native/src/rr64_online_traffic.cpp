@@ -1,3 +1,4 @@
+#include "rr64_traffic_roster.hpp"
 #include "rr64_prediction_replay.hpp"
 #include "recomp.h"
 #include "rr64_netplay.hpp"
@@ -23,7 +24,7 @@ bool client_session() {
     const auto s=netplay::get_status();
     return s.active && s.connected && !s.is_host && s.phase==netplay::Phase::Race;
 }
-unsigned entity_at(unsigned char *m,unsigned index) {return word(m,0x800d76e0+index*4);}
+unsigned entity_at(unsigned char *m,unsigned index) {return rr64::traffic::entity(m, index);}
 void apply_motion(unsigned char *m,unsigned entity,const world_sync::Traffic &v) {
     if(!v.motion_valid || !world_sync::valid(v) || !engine::valid_guest_range(entity,0x360)) return;
     for(unsigned i=0;i<v.motion.size();++i) engine::write_float(m,entity+0xa8+i*4,v.motion[i]);

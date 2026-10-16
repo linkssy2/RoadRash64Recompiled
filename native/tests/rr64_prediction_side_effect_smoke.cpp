@@ -22,6 +22,7 @@ bool authority_get_outcome(unsigned slot,authority::Outcome &out,bool &mode){
 }
 extern "C" void rr64_custom_cop_equipment(unsigned char*,unsigned){}
 extern "C" void func_8006B740(unsigned char*,recomp_context*){std::abort();}
+extern "C" void func_8006B9E8(unsigned char*,recomp_context*){std::abort();}
 void check(bool b,std::source_location where=std::source_location::current()){if(!b){std::fprintf(stderr,"prediction side-effect check failed line %u\n",where.line());std::exit(1);}}
 int main(){
  using namespace rr64;

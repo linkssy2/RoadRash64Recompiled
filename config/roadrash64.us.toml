@@ -48,6 +48,10 @@ renamed = []
 # by the native helper, allowing a black-screen run to identify the exact guest
 # initialization call that did not return.
 hook = [
+    # Keep downward wheel-support force from increasing with update frequency.
+    { func = "func_800458F0", before_vram = 0x80045958, text = "rr64_ground_contact_timing(rdram, ctx);" },
+    # Downward alignment must use the same timing basis as wheel support.
+    { func = "func_8003A758", before_vram = 0x8003A844, text = "rr64_ground_alignment_timing(rdram, ctx);" },
     # Offline campaign co-op retains native construction and a single prize.
     { func = "func_80073728", before_vram = 0x8007384C, text = "rr64_coop_roster(rdram);" },
     { func = "func_80073728", before_vram = 0x800738E4, text = "rr64_coop_riders(rdram);" },
@@ -395,7 +399,9 @@ hook = [
     { func = "func_8006AFFC", before_vram = 0x8006B224, text = "rr64_authority_actor_route(ctx,2);" },
     { func = "func_8006AFFC", before_vram = 0x8006B43C, text = "rr64_online_traffic_prepare(rdram);" },
     { func = "func_8006AFFC", before_vram = 0x8006B5A4, text = "rr64_online_traffic_finish(rdram,ctx);" },
-    { func = "func_80076290", text = "if (rr64_online_traffic_owned()) return;" },
+    { func = "func_80076290", text = "unsigned rr64_target_before_road = 0; if (rr64_online_traffic_owned()) return;" },
+    { func = "func_80076290", before_vram = 0x80076AEC, text = "rr64_target_before_road = MEM_W(0x328, ctx->r19);" },
+    { func = "func_80076290", before_vram = 0x80076BB0, text = "rr64_trace_traffic_target(rdram, (unsigned)ctx->r19, rr64_target_before_road);" },
     { func = "func_80047668", before_vram = 0x80047760, text = "rr64_online_traffic_model(ctx);" },
     { func = "func_8006AFFC", before_vram = 0x8006B6B4, text = "rr64_engine_capture_race_update_boundary(rdram, 1);" },
     { func = "func_8006AFFC", before_vram = 0x8006B6FC, text = "rr64_engine_capture_race_update_boundary(rdram, 2); rr64_highlights_capture(rdram);" },
@@ -489,6 +495,9 @@ hook = [
     { func = "func_8005EF74", before_vram = 0x8005F020, text = "c1cs = rr64_traffic_within_draw_distance(rdram, ctx->r16, ctx->f0.u32l, ctx->f20.u32l, c1cs);" },
     # User-authorized farther traffic placement; stock allocation, random
     # selection, speed and collision paths remain in control.
+    { func = "func_8004F398", text = "if (rr64_police_waiting(rdram, (unsigned)ctx->r4)) { ctx->r2 = 0; return; }" },
+    { func = "func_8006B740", text = "if (!rr64_police_spawn_allowed(rdram, ctx)) { ctx->r2 = 0; return; } rr64_trace_population(rdram, 1);" },
+    { func = "func_8006B740", before_vram = 0x8006B9B4, text = "rr64_trace_population(rdram, 2);" },
     { func = "func_8006BFF4", text = "if (rr64_online_traffic_owned()) return; ctx->f12.u32l = rr64_traffic_spawn_distance(rdram, ctx->f12.u32l);" },
     { func = "func_8005F070", before_vram = 0x8005F13C, text = "rr64_world_observe_roots(rdram, 5);" },
     { func = "func_8000A550", before_vram = 0x8000A7AC, text = "ctx->r3 = S32(rr64_combined_video_callback(rdram, ctx->r3));" },
@@ -551,6 +560,17 @@ hook = [
     { func = "func_80045960", before_vram = 0x800459E0, text = "ctx->f2.fl = rr64_offline_gravity(rdram, (unsigned)ctx->r19, 0, ctx->f2.fl);" },
     { func = "func_80045960", before_vram = 0x80045A20, text = "ctx->f4.fl = rr64_offline_gravity(rdram, (unsigned)ctx->r19, 0, ctx->f4.fl);" },
     { func = "func_80045960", before_vram = 0x80045A44, text = "ctx->f2.fl = rr64_offline_gravity(rdram, (unsigned)ctx->r19, 0, ctx->f2.fl);" },
+    # Bounded opt-in crash evidence uses literal call sites: translated r31 can be stale.
+    { func = "func_8004EB6C", before_vram = 0x8004EC64, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r17, 0x8004EC64);" },
+    { func = "func_8003AD84", before_vram = 0x8003C688, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r18, 0x8003C688);" },
+    { func = "func_8003AD84", before_vram = 0x8003CE9C, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r18, 0x8003CE9C);" },
+    { func = "func_8003AD84", before_vram = 0x8003D24C, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r18, 0x8003D24C);" },
+    { func = "func_8003F4D4", before_vram = 0x8003F5A4, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r17, 0x8003F5A4);" },
+    { func = "func_8003F4D4", before_vram = 0x8003F950, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r17, 0x8003F950);" },
+    { func = "func_8003F4D4", before_vram = 0x8003F9E4, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r17, 0x8003F9E4);" },
+    { func = "func_8003FE48", before_vram = 0x8003FFB8, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r16, 0x8003FFB8);" },
+    { func = "func_80041F9C", before_vram = 0x800426E4, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r19, 0x800426E4);" },
+    { func = "func_80041F9C", before_vram = 0x80042AB4, text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r19, 0x80042AB4);" },
     # Rider lifecycle boundaries. ID 26 captures the complete per-rider update;
     # ID 27 isolates the one-update mounted-to-detached transition. Both are
     # local-player-only and remain dormant without RR64_NATIVE_DYNAMICS_LOG.
@@ -577,7 +597,7 @@ hook = [
     { func = "func_80036B78", before_vram = 0x80037120, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_walls_begin(rdram,ctx,3);\n#endif\n" },
     { func = "func_80036B78", before_vram = 0x80037128, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_walls_end(rdram,ctx,3);\n#endif\n" },
     { func = "func_80036B78", before_vram = 0x800373CC, text = "rr64_engine_capture_dynamics_boundary(rdram, 26, 1, 0);" },
-    { func = "func_80037554", text = "rr64_engine_capture_dynamics_boundary(rdram, 27, 0, ctx->r5);" },
+    { func = "func_80037554", text = "rr64_trace_police_crash(rdram, (unsigned)ctx->r4, 0x80036CB8); rr64_engine_capture_dynamics_boundary(rdram, 27, 0, ctx->r5);" },
     { func = "func_80037554", before_vram = 0x800377EC, text = "rr64_engine_capture_dynamics_boundary(rdram, 27, 1, 0);" },
 
     # Achievement events use the game's local notification dispatcher.

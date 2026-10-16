@@ -1,3 +1,4 @@
+#include "rr64_traffic_roster.hpp"
 #include "rr64_highlights.hpp"
 #include "rr64_diagnostic_options.hpp"
 #include "rr64_highlight_audio.hpp"
@@ -786,7 +787,7 @@ extern "C" void rr64_highlights_capture(unsigned char *m) {
                 s.preceding_speed[canonical] = std::sqrt(speed);
         }
     }
-    world_sync::Snapshot traffic;
+    world_sync::TrafficSnapshot<rr64::traffic::capacity> traffic;
     if (world_sync::capture_traffic(m, 1, frame.tick, traffic))
         frame.traffic = traffic.traffic;
 #ifdef RR64_EXPERIMENTAL_COURSE
@@ -851,9 +852,9 @@ extern "C" void rr64_highlights_draw_begin(unsigned char *m) {
         s.writes.vector(l.rider + 0x164, r.rider_rotation);
     }
     // Match retained traffic by race-scoped identity, never by allocation slot.
-    const unsigned cars = std::min(word(m, 0x800A6528), world_sync::capacity);
+    const unsigned cars = std::min(word(m, 0x800A6528), rr64::traffic::capacity);
     for (unsigned i = 0; i < cars; ++i) {
-        const unsigned entity = word(m, 0x800D76E0 + i * 4);
+        const unsigned entity = rr64::traffic::entity(m, i);
         if (!valid_guest_range(entity, 0x360))
             continue;
         const unsigned id = word(m, entity + 4);

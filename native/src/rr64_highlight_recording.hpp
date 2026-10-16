@@ -1,3 +1,4 @@
+#include "rr64_traffic_roster.hpp"
 #pragma once
 
 #include "rr64_course_hazard_state.hpp"
@@ -62,7 +63,7 @@ struct Frame {
     std::uint64_t time_us = 0, tick = 0;
     // Array position is the canonical racer slot. Never store native pointers.
     std::array<Racer, maximum_racers> racers{};
-    std::array<world_sync::Traffic, world_sync::capacity> traffic{};
+    std::array<world_sync::Traffic, rr64::traffic::capacity> traffic{};
     netplay::CourseHazardState hazards{};
     mk64_items::Snapshot items{};
     bool operator==(const Frame &) const = default;

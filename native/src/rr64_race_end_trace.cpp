@@ -1,3 +1,4 @@
+#include "rr64_traffic_roster.hpp"
 #include "rr64_race_end_trace.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_prediction_replay.hpp"
@@ -43,7 +44,7 @@ struct Course {
 // Reason bits are diagnostic observations, not rules that award a lap.
 enum Reason : unsigned { Start = 1, Segment = 2, Lap = 4, Status = 8,
                          Recovery = 16, Identity = 32, MarkerCrossing = 64,
-                         CoursePhysics = 128 };
+                         CoursePhysics = 128, Population = 256 };
 struct WallContext {
     bool valid = false;
     unsigned actor = 0, kind = 0, course = 0, epoch = 0, frame = 0, native_frame = 0, elapsed = 0;
@@ -78,6 +79,9 @@ struct Snapshot {
     std::array<Actor, engine::kMaximumRacers> previous{};
     std::array<Physics, engine::kMaximumRacers> physics{};
     unsigned physics_sample = 0;
+    unsigned traffic = 0, traffic_density = 0, traffic_interval = 0;
+    unsigned event_entity = 0, event_detail = 0;
+    std::array<std::array<unsigned, 17>, rr64::traffic::capacity> cars{};
 };
 
 // One guest-thread producer and one UI-thread consumer. Release/acquire pairs
@@ -85,6 +89,10 @@ struct Snapshot {
 std::array<Snapshot, capacity> entries{};
 std::atomic<unsigned> write_position{0}, read_position{0}, dropped{0};
 std::atomic<bool> enabled{false};
+std::atomic<bool> population_enabled{false};
+unsigned population_samples = 0, population_frames = 0;
+std::array<unsigned, engine::kMaximumRacers> police_states{};
+std::array<std::array<unsigned, 2>, rr64::traffic::capacity> traffic_targets{};
 std::atomic<bool> course_enabled{false}, course_limit_notice{false};
 constexpr unsigned course_period_frames = 30, course_sample_limit = 1200;
 unsigned course_frames = 0, course_samples = 0; // Process/session cap, not reset each race.
@@ -335,6 +343,23 @@ void print_physics(const Snapshot& sample) {
 }
 
 void print(const Snapshot& sample) {
+    if (sample.reasons == Population) {
+        std::fprintf(stderr, "[RR64-POPULATION] sequence=%u phase=%u cars=%u density=%.9g interval=%.9g\n",
+            sample.sequence, sample.target, sample.traffic, floating(sample.traffic_density), floating(sample.traffic_interval));
+        for (const auto& car : sample.cars) {
+            if (!car[0]) continue;
+            std::fprintf(stderr, "[RR64-TRAFFIC-CAR] sequence=%u entity=%08X type=%u segment=%u route=%.9g direction=%.9g speed=%.9g target=%.9g active=%u x=%.9g y=%.9g\n",
+                sample.sequence, car[0], car[1], car[2], floating(car[3]), floating(car[4]),
+                floating(car[5]), floating(car[6]), car[7], floating(car[8]), floating(car[9]));
+            std::fprintf(stderr, "[RR64-TRAFFIC-ROAD] sequence=%u entity=%08X kind=%u next_kind=%u flags=%04X lane=%.9g state=%u index=%u width=%.9g\n",
+                sample.sequence, car[0], car[10], car[11], car[12], floating(car[13]), car[14], car[15], floating(car[16]));
+        }
+        if (sample.event_entity)
+            std::fprintf(stderr, "[RR64-POPULATION-CAUSE] sequence=%u phase=%u entity=%08X site=%08X before_road_bits=%08X route_records=%u\n",
+                sample.sequence, sample.target, sample.event_entity, sample.caller, sample.event_detail, sample.course.count);
+        print_physics(sample);
+        return;
+    }
     if (sample.reasons == CoursePhysics) { print_physics(sample); return; }
     std::fprintf(stderr,
         "[%s] sequence=%u source=%u source_hex=%02X pending=%u target=%u target_hex=%02X "
@@ -391,7 +416,8 @@ void print(const Snapshot& sample) {
 } // namespace
 
 static void enqueue(unsigned char* memory, unsigned target_mode, unsigned return_address,
-                    unsigned reasons = 0, unsigned actor_mask = 0, const unsigned* slot_reasons = nullptr) {
+                    unsigned reasons = 0, unsigned actor_mask = 0, const unsigned* slot_reasons = nullptr,
+                    unsigned event_entity = 0, unsigned event_detail = 0) {
     const unsigned source = word(memory, engine::globals::main_mode);
     const unsigned pending = word(memory, engine::globals::pending_mode);
     const unsigned write = write_position.load(std::memory_order_relaxed);
@@ -407,7 +433,7 @@ static void enqueue(unsigned char* memory, unsigned target_mode, unsigned return
     sample.epoch = race_epoch;
     sample.reasons = reasons;
     sample.actor_mask = actor_mask;
-    if (reasons && reasons != CoursePhysics) {
+    if (reasons && reasons != CoursePhysics && reasons != Population) {
         sample.previous = previous_actors;
         for (unsigned slot = 0; slot < engine::kMaximumRacers; ++slot)
             sample.actor_reasons[slot] = slot_reasons[slot];
@@ -416,6 +442,8 @@ static void enqueue(unsigned char* memory, unsigned target_mode, unsigned return
     sample.pending = pending;
     sample.target = target_mode;
     sample.caller = return_address;
+    sample.event_entity = event_entity;
+    sample.event_detail = event_detail;
     sample.ticks = word(memory, engine::globals::total_ticks);
     sample.race_elapsed = word(memory, 0x800D7670);
     sample.race_type = word(memory, 0x800D8524);
@@ -427,13 +455,106 @@ static void enqueue(unsigned char* memory, unsigned target_mode, unsigned return
         sample.counters[index] = word(memory, counter_addresses[index]);
     for (unsigned slot = 0; slot < sample.count; ++slot)
         sample.actors[slot] = capture_actor(memory, slot);
-    if (reasons == CoursePhysics) {
+    if (reasons == Population) {
+        sample.traffic = word(memory, 0x800A6528);
+        sample.traffic_density = word(memory, 0x800D8560);
+        sample.traffic_interval = word(memory, 0x800D84E8 + 0x14);
+        for (unsigned i = 0; i < std::min(sample.traffic, rr64::traffic::storage(memory)); ++i) {
+            const unsigned car = rr64::traffic::entity(memory, i);
+            if (!valid_pointer(car, 0x338)) continue;
+            sample.cars[i] = {car, word(memory, car), word(memory, car + 0x14),
+                word(memory, car + 0x24), word(memory, car + 0xC), word(memory, car + 0xC0),
+                word(memory, car + 0x328), half(memory, car + 0x334),
+                word(memory, car + 0xA8), word(memory, car + 0xAC)};
+            auto& row = sample.cars[i];
+            row[10] = row[11] = row[12] = ~0u;
+            const unsigned segment = row[2], route = sample.course.pointer;
+            if (segment < sample.course.count && sample.course.count - segment > 2 &&
+                sample.course.count <= 65536 && valid_pointer(route, sample.course.count * 16)) {
+                std::uint8_t kind = 0, next = 0;
+                engine::read_u8(memory, route + segment * 16, kind);
+                engine::read_u8(memory, route + segment * 16 + 32, next);
+                row[10] = kind; row[11] = next;
+                row[12] = half(memory, route + segment * 16 + 18);
+            }
+            row[13] = word(memory, car + 8);
+            row[14] = word(memory, car + 0x3C);
+            row[15] = word(memory, car + 0x28);
+            row[16] = word(memory, car + 0x34);
+        }
+    }
+    if (reasons == CoursePhysics || reasons == Population) {
         sample.physics_sample = course_samples;
         for (unsigned slot = 0; slot < sample.count; ++slot)
             if (actor_mask & (1u << slot))
                 sample.physics[slot] = capture_physics(memory, slot, sample.actors[slot]);
     }
     write_position.store(write + 1, std::memory_order_release);
+}
+
+extern "C" void rr64_trace_population(unsigned char* memory, unsigned phase) {
+    if (!population_enabled.load(std::memory_order_relaxed) || !memory ||
+        prediction::active() || population_samples >= 1200) return;
+    if (!engine::is_live_race_mode(word(memory, engine::globals::main_mode))) {
+        police_states = {}; traffic_targets = {}; population_frames = 0;
+        return;
+    }
+    if (half(memory, engine::globals::gameplay_pause_state)) return;
+    unsigned mask = 0;
+    bool changed = phase != 0;
+    const unsigned count = std::min(word(memory, 0x800A656C), engine::kMaximumRacers);
+    for (unsigned slot = 0; slot < count; ++slot) {
+        const unsigned actor = actor_base + slot * actor_stride;
+        if (word(memory, actor + 0x20) != 7) continue;
+        mask |= 1u << slot;
+        const unsigned bike = word(memory, actor + 0xE0);
+        unsigned state = half(memory, actor + 0x24);
+        if (valid_pointer(bike, engine::bike::stride))
+            state |= unsigned(half(memory, bike + 0x7F8)) << 8 |
+                     unsigned(half(memory, bike + 0x7F6)) << 16;
+        changed |= state != police_states[slot];
+        police_states[slot] = state;
+    }
+    // State edges plus one sample per 120 observations; UI drains the fixed queue.
+    if (phase == 0 && ++population_frames < 120 && !changed) return;
+    population_frames = 0;
+    ++population_samples;
+    enqueue(memory, phase, 0, Population, mask);
+}
+
+extern "C" void rr64_trace_police_crash(unsigned char* memory, unsigned bike, unsigned site) {
+    if (!population_enabled.load(std::memory_order_relaxed) || !memory ||
+        prediction::active() || population_samples >= 1200 ||
+        !engine::is_live_race_transition(word(memory, engine::globals::main_mode),
+                                        word(memory, engine::globals::pending_mode))) return;
+    const unsigned count = std::min(word(memory, 0x800A656C), engine::kMaximumRacers);
+    for (unsigned slot = 0; slot < count; ++slot) {
+        const unsigned actor = actor_base + slot * actor_stride;
+        if (word(memory, actor + 0x20) != 7 || word(memory, actor + 0xE0) != bike ||
+            !valid_pointer(bike, engine::bike::stride)) continue;
+        ++population_samples;
+        // Include other riders: a crash edge alone cannot identify a nearby attacker.
+        enqueue(memory, 3, site, Population, (1u << count) - 1, nullptr, bike);
+        return;
+    }
+}
+
+extern "C" void rr64_trace_traffic_target(unsigned char* memory, unsigned car, unsigned before_road) {
+    if (!population_enabled.load(std::memory_order_relaxed) || !memory ||
+        prediction::active() || population_samples >= 1200 || !valid_pointer(car, 0x338) ||
+        !engine::is_live_race_transition(word(memory, engine::globals::main_mode),
+                                        word(memory, engine::globals::pending_mode))) return;
+    const unsigned index = word(memory, car + 0x28);
+    if (index >= traffic_targets.size() || rr64::traffic::entity(memory, index) != car) return;
+    const unsigned target = word(memory, car + 0x328);
+    auto& prior = traffic_targets[index];
+    const bool stop = (target & 0x7FFFFFFFu) == 0;
+    const bool changed = prior[0] != car ? stop : target != prior[1] &&
+        (stop || (prior[1] & 0x7FFFFFFFu) == 0);
+    prior = {car, target};
+    if (!changed) return;
+    ++population_samples;
+    enqueue(memory, 4, 0x80076BB0, Population, 0, nullptr, car, before_road);
 }
 
 extern "C" void rr64_trace_race_end(unsigned char* memory, unsigned target_mode,
@@ -547,6 +668,7 @@ extern "C" void rr64_trace_race_recovery(unsigned char* memory, unsigned actor) 
 }
 
 extern "C" void rr64_trace_lap_frame(unsigned char* memory) {
+    rr64_trace_population(memory, 0);
     const bool lap_enabled = enabled.load(std::memory_order_relaxed);
     const bool physics_enabled = course_enabled.load(std::memory_order_relaxed);
     if ((!lap_enabled && !physics_enabled) || !memory || prediction::active()) return;
@@ -652,7 +774,12 @@ void rr64::race_end_trace::drain() {
         return value && value[0] == '1' && value[1] == '\0';
     }();
     course_enabled.store(physics_enabled, std::memory_order_relaxed);
-    if (!trace_enabled && !physics_enabled) return;
+    static const bool populations = [] {
+        const char* value = std::getenv("RR64_POPULATION_TRACE");
+        return value && value[0] == '1' && value[1] == '\0';
+    }();
+    population_enabled.store(populations, std::memory_order_relaxed);
+    if (!trace_enabled && !physics_enabled && !populations) return;
     unsigned read = read_position.load(std::memory_order_relaxed);
     const unsigned write = write_position.load(std::memory_order_acquire);
     const unsigned count = std::min(write - read, drain_limit);

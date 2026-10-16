@@ -1,3 +1,4 @@
+#include "rr64_traffic_roster.hpp"
 #include "rr64_highlight_traffic.hpp"
 #include "rr64_world_objects.hpp"
 #include "rr64_world_camera.hpp"
@@ -15,8 +16,8 @@ namespace {
 using namespace engine;
 constexpr unsigned command_bytes = 2048, frame_bytes = 4096;
 constexpr unsigned identity_base = 0x52540000u, group_flags = 0x02011555u;
-static_assert(20u * 56u + 200u <= command_bytes);
-static_assert(command_bytes + 20u * 64u <= frame_bytes);
+static_assert(rr64::traffic::capacity * 56u + 200u <= command_bytes);
+static_assert(command_bytes + rr64::traffic::capacity * 64u <= frame_bytes);
 struct Frame {
     unsigned char *allocation = nullptr;
     unsigned base = 0, commands = 0, matrices = 0, epoch = 0;
@@ -125,7 +126,7 @@ bool prepare_traffic(unsigned char *m) noexcept {
     } catch (...) { return false; }
 }
 bool draw_traffic(unsigned char *m,
-                  const std::array<world_sync::Traffic,world_sync::capacity> &cars,
+                  const std::array<world_sync::Traffic,rr64::traffic::capacity> &cars,
                   std::uint64_t recording_time_us) noexcept {
     auto &c=cache(); std::lock_guard lock(c.mutex);
     // No compilation or allocation is allowed in this callback.
@@ -135,8 +136,8 @@ bool draw_traffic(unsigned char *m,
     if (!context(m,ctx)) return reject();
     auto &f=c.frames[ctx.gfx];
     if (f.issued && f.epoch==ctx.epoch) return reject();
-    std::array<world::ObjectMatrix,world_sync::capacity> matrices{};
-    std::array<unsigned,world_sync::capacity> models{},tags{},new_ids{};
+    std::array<world::ObjectMatrix,rr64::traffic::capacity> matrices{};
+    std::array<unsigned,rr64::traffic::capacity> models{},tags{},new_ids{};
     unsigned count=0,new_count=0;
     // Validate the complete recording before touching a submitted list or
     // suppressing native traffic. Unavailable models preserve the old path.
