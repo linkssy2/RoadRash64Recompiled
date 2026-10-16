@@ -30,6 +30,18 @@ void prepare_session() noexcept;
 void begin_session() noexcept;
 bool can_change() noexcept;
 bool enabled() noexcept;
+inline constexpr const char *random_cpu_option = "rr64_random_cpu_skins";
+void set_random_cpu(bool enabled) noexcept;
+inline constexpr unsigned stock_characters = 40;
+inline constexpr unsigned render_characters = maximum_characters + stock_characters;
+inline constexpr const char *cpu_percent_option = "rr64_cpu_skin_percent";
+inline constexpr const char *cpu_pool_option = "rr64_cpu_skin_pool";
+void set_cpu_percent(double value) noexcept;
+void set_cpu_pool(unsigned value) noexcept;
+bool cpu_skins_active() noexcept;
+void install_stock(unsigned native, Appearance appearance);
+bool load_stock(std::span<const std::uint8_t> rom);
+unsigned random_cpu_selection(unsigned racer, unsigned donor, unsigned mask = 0x3fff) noexcept;
 unsigned count() noexcept;
 // Zero means an unmodified original rider; custom indices are never guest IDs.
 const Appearance *appearance(unsigned one_based) noexcept;

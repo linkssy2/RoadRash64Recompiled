@@ -177,6 +177,10 @@ extern "C" void func_80057860(unsigned char*,recomp_context*){}
 #include "rr64_rival_engine_init_cases.hpp"
 
 int main(int argc,char**argv){
+    using rr64::rival_engine::BikeGroup;
+    check(rr64::rival_engine::get_group_volume(BikeGroup::Chopper)==75,"quieter chopper default");
+    for(auto group:{BikeGroup::Sport,BikeGroup::Chopper,BikeGroup::Scooter,BikeGroup::Insanity})
+        rr64::rival_engine::set_group_volume(group,100);
     check(argc==2,"private ROM argument");std::ifstream input(argv[1],std::ios::binary);
     std::vector<unsigned char> rom((std::istreambuf_iterator<char>(input)),{});
     check(rom.size()>0x1E18380&&rom[0]==0x80&&rom[1]==0x37,"supported big endian ROM");
@@ -344,6 +348,14 @@ int main(int argc,char**argv){
         check(active()==0,"each authored effect index is checked before native playback");
     }
 
+    reset();rr64::rival_engine::set_volume_percent(100);put(bike(1),12);position(1,8,0);frames(60);
+    const auto full_chopper=half(row_for(word(cache(1)))+0x9E);
+    rr64::rival_engine::set_group_volume(BikeGroup::Chopper,75);frames(60);
+    const auto quiet_chopper=half(row_for(word(cache(1)))+0x9E);
+    check(quiet_chopper < full_chopper && std::abs(float(quiet_chopper)-full_chopper*.75f)<=1.f,"chopper balance scales native gain");
+    rr64::rival_engine::set_group_volume(BikeGroup::Chopper,0);frames(60);
+    check(active()==0,"muted chopper fades and releases its voice");
+    rr64::rival_engine::set_group_volume(BikeGroup::Chopper,100);
     // Use actual RPM branches: values below 1000 only exercise idle. At 100%
     // and close distance the native per-model gain must equal a local engine.
     // Still positions make the optional Doppler contribution exactly zero.

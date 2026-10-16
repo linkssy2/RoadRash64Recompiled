@@ -82,3 +82,9 @@ War (their original teams and rights holders), Doom (id Software), The Legend of
 Zelda (Nintendo), Riddick (its creators and rights holders), and Vin Diesel for
 his likeness. These are unofficial fan interpretations; no endorsement or rights
 to the underlying characters, names or likenesses are claimed.
+
+## 1.4.6 contributions
+
+[heyitsjames](https://github.com/heyitsjames) contributed All Tracks Available,
+three/four-player widescreen and full-HUD improvements, speedometer placement,
+and A/Start intro-page skipping in PRs #19, #21, #23, #25 and #27.

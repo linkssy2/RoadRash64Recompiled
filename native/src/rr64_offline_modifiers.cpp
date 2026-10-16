@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cmath>
 
 namespace rr64::offline_modifiers {
 namespace {
@@ -20,7 +21,7 @@ std::uint64_t applied_menu_epoch = 1;
 unsigned char *live_memory = nullptr;
 std::array<std::uint64_t, engine::kMaximumRacers> granted{};
 constexpr unsigned actors = 0x800D8570u, actor_stride = 0x118u;
-constexpr unsigned known_flags = 63;
+constexpr unsigned known_flags = 1023;
 // Native race-level availability written by 5F420: levels 0-7 and reversed
 // copies at 8-14. Nonzero means selectable.
 constexpr unsigned race_levels = 0x800A5334u, race_level_count = 15;
@@ -195,7 +196,74 @@ extern "C" int rr64_offline_rider_protected(unsigned char *memory, unsigned ride
     using namespace rr64::offline_modifiers;
     return rider_damage_protected(memory, rider, enabled(Flag::RiderHealth) && live_race(memory));
 }
+extern "C" int rr64_offline_hold_recovery(unsigned char *memory, unsigned actor) {
+    using namespace rr64::offline_modifiers;
+    using namespace rr64::engine;
+    if (!enabled(Flag::ManualRecovery) || !live_race(memory) || actor_slot(actor) >= kMaximumRacers)
+        return 0;
+    const auto word = [memory](unsigned address) { unsigned value = 0; read_u32(memory, address, value); return value; };
+    const auto half = [memory](unsigned address) { std::uint16_t value = 0; read_u16(memory, address, value); return value; };
+    const unsigned player = word(actor + 8), bike_address = word(actor + 0xE0);
+    const unsigned rider_address = word(actor + 0xE4), route = word(actor + 0xE8);
+    if (!half(actor + 0x24) || half(actor + 0x26) || player >= 4 ||
+        ((bike_address | rider_address | route) & 3u) ||
+        !valid_guest_range(bike_address, bike::stride) || !valid_guest_range(rider_address, rider::stride) ||
+        !valid_guest_range(route, 0x64) || word(bike_address + 4) != actor || word(rider_address + 4) != actor ||
+        word(bike_address + bike::rider_pointer) != rider_address ||
+        word(rider_address + rider::bike_pointer) != bike_address)
+        return 0;
+    for (unsigned offset : {0x4Cu, 0x4Eu, 0x50u, 0x52u})
+        if (half(route + offset)) return 0;
+    if (half(rider_address + rider::bike_attached) && !half(rider_address + rider::ejected) &&
+        !half(bike_address + 0x7F6))
+        return 0;
+    // Gate only the native recovery call; sliding, impacts and elimination keep running.
+    // Press edges prevent an accelerator held before a crash from accepting recovery.
+    return (half(globals::controller_pressed_buttons + player * 2) & 0x8000u) == 0;
+}
+extern "C" float rr64_offline_gravity(unsigned char *memory, unsigned body, int is_rider, float native_gravity) {
+    using namespace rr64::offline_modifiers;
+    using namespace rr64::engine;
+    if (!enabled(Flag::MoonGravity) || !live_race(memory) || (body & 3u) ||
+        !valid_guest_range(body, is_rider ? rider::stride : bike::stride))
+        return native_gravity;
+    if (is_rider) {
+        std::uint16_t attached = 0;
+        if (!read_u16(memory, body + rider::bike_attached, attached)) return native_gravity;
+        if (!attached) {
+            float front = 0, rear = 0;
+            // Detached-body contact uses signed penetration: negative at both ends means airborne.
+            return read_float(memory, body + rider::front_contact_gap, front) &&
+                   read_float(memory, body + rider::rear_contact_gap, rear) &&
+                   std::isfinite(front) && std::isfinite(rear) && front < 0 && rear < 0
+                       ? native_gravity / 6.0f : native_gravity;
+        }
+        if (!read_u32(memory, body + rider::bike_pointer, body) || (body & 3u) ||
+            !valid_guest_range(body, bike::stride)) return native_gravity;
+    }
+    unsigned state = 0;
+    // 3C44C..3C4E8 selects state 8 only when all five bike contact probes clear the ground.
+    // Wheelies and grounded crash/drive states retain full weight and traction.
+    return read_u32(memory, body + 0x100, state) && state == 8
+               ? native_gravity / 6.0f : native_gravity;
+}
 extern "C" int rr64_offline_bike_protected(unsigned char *memory, unsigned bike) {
     using namespace rr64::offline_modifiers;
     return bike_damage_protected(memory, bike, enabled(Flag::BikeDurability) && live_race(memory));
+}
+extern "C" unsigned rr64_offline_combat_multiplier(unsigned char *memory, unsigned rider) {
+    using namespace rr64::offline_modifiers;
+    using namespace rr64::engine;
+    const unsigned flags = requested.load(std::memory_order_acquire);
+    const unsigned scale = (flags & static_cast<unsigned>(Flag::Combat100x)) ? 100u :
+                           (flags & static_cast<unsigned>(Flag::Combat4x)) ? 4u : 0u;
+    if (!scale || !live_race(memory) || !valid_guest_range(rider, 0x600))
+        return 0;
+    unsigned actor = 0, reciprocal = 0;
+    std::uint16_t active = 0;
+    if (!read_u32(memory, rider + 4, actor) || actor_slot(actor) >= kMaximumRacers ||
+        !read_u16(memory, actor + 0x24, active) || !active ||
+        !read_u32(memory, actor + 0xE4, reciprocal) || reciprocal != rider)
+        return 0;
+    return scale;
 }

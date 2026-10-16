@@ -128,7 +128,8 @@ for function, address, register in [('8004090C', 0x80040F08, 4), ('800645E4', 0x
 main_path = Path(__file__).resolve().parents[1] / 'src/main.cpp'
 main = main_path.read_text(encoding='utf-8')
 local = main[main.index('bool get_local_input_with_road_rumble('):main.index('\nvoid set_gameplay_rumble(')]
-callback = main[main.index('bool get_input_with_trace('):main.index('\nvoid configure_right_stick_c_buttons(')]
+callback_start = main.index('bool get_input_with_trace(')
+callback = main[callback_start:main.index('\n}\n', callback_start) + 3]
 assert local.index('get_n64_input(') < local.index('physical_buttons =') < local.index('filter_cycle_input(') < local.rindex('return got_response;')
 assert callback.count('rr64::netplay::set_local_input(') == 4
 input_text = '// Complete production local-input and input-publication callbacks.\n' + local + '\n' + callback

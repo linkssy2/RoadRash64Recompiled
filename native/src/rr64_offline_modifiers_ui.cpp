@@ -14,7 +14,7 @@ struct Option {
     const char *label;
     const char *description;
 };
-constexpr std::array<Option, 6> options{{
+constexpr std::array<Option, 10> options{{
     {Flag::RiderHealth, "infinite_rider_health", "Infinite Rider Health",
      "Prevents rider stamina damage for local players. Physical crashes, ejects and busts still happen."},
     {Flag::BikeDurability, "indestructible_bikes", "Indestructible Bikes",
@@ -27,6 +27,14 @@ constexpr std::array<Option, 6> options{{
      "Gives local racers every weapon at maximum starting quantity. Also grants once when switched on during a race. Use and theft remain normal; cops keep their police equipment."},
     {Flag::FreezeOpponents, "freeze_opponents", "Prevent Opponents from Moving",
      "Holds computer-controlled racers in place while riding. Local players can still race; crashes and recovery continue normally. Switch off to let opponents race again."},
+    {Flag::MoonGravity, "moon_gravity", "Moon Gravity",
+     "Normal driving and traction on the ground; one-sixth gravity while bikes or ejected riders are airborne. Crashes and recovery still happen."},
+    {Flag::ManualRecovery, "manual_crash_recovery", "Stay Crashed Until A",
+     "Keeps local players crashed until they press their mapped A button once recovery is ready. Sliding and impacts continue. AI racers, busts and wrecked bikes keep normal behavior. Switch off to restore automatic recovery."},
+    {Flag::Combat4x, "all_racers_combat_4x", "All Racers: 4x Damage and Force",
+     "Sets melee attack damage and knockback to 4x for every human and CPU racer. Replaces pickup multipliers; 100x takes priority if both are enabled."},
+    {Flag::Combat100x, "all_racers_combat_100x", "All Racers: 100x Damage and Force",
+     "Sets melee attack damage and knockback to 100x for every human and CPU racer. Extreme impacts can throw riders far from the road. Replaces 4x and pickup multipliers."},
 }};
 bool initialized = false;
 int previous_online = -1;

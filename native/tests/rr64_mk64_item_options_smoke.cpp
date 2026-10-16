@@ -13,6 +13,7 @@
 #include <source_location>
 #include <string>
 #include <vector>
+extern "C" int rr64_highlights_presenting() { return 0; }
 
 namespace {
 unsigned checks = 0;
@@ -61,6 +62,8 @@ namespace rr64::offline_modifiers { bool enabled(Flag) { return false; } }
 extern "C" int rr64_offline_bikes_active(unsigned char *, unsigned) { return 0; }
 extern "C" unsigned rr64_offline_bikes_entry(unsigned char *, unsigned, unsigned original) { return original; }
 extern "C" int rr64_custom_cop_active() { return 0; }
+extern "C" int rr64_custom_cop_finished(unsigned char *) { return 0; }
+extern "C" void func_800740A0(unsigned char *, recomp_context *);
 extern "C" void rr64_custom_cop_reset() {}
 extern "C" void rr64_custom_cop_begin(unsigned char *, int) {}
 extern "C" void rr64_course_progress_log(const char *, ...) {}
@@ -77,6 +80,16 @@ int main(int argc, char **argv) {
     std::filesystem::create_directories(directory);
     option::initialize(directory);
     if (argc == 3) {
+        if (std::string(argv[2]) == "environment") {
+            std::vector<unsigned char> memory(kRdramSize);
+            rr64::local_players::active.store(true);
+            rr64_local_options_menu_begin(memory.data());
+            unsigned traffic = 99;
+            read_u32(memory.data(), 0x8009EAD8, traffic);
+            check(traffic == 0);
+            std::puts("Local traffic preference survives restart");
+            return 0;
+        }
         check(option::mk64_items_enabled() == (std::string(argv[2]) == "1"));
         std::printf("MK64 item preference restart: %u checks passed\n", checks);
         return 0;
@@ -156,21 +169,24 @@ int main(int argc, char **argv) {
         input(multiplayer, 0x40);
         check(option::mk64_items_enabled());
         check(text() == "Traffic: Unavailable");
-        if (multiplayer) check(rr64_local_options_visible(6, 0) == 0);
+        if (multiplayer) check(rr64_local_options_visible(6, 0) == 1);
         selected.reset();
         input(multiplayer, 0);
         if (multiplayer) {
             put(0x8009EAD8, 1);
-            input(true, 0x40);
-            check(get(0x8009EAD8) == 2);
-            check(rr64_local_options_visible(6, 0) == 0);
+            // Light -> Some -> Heavy -> None; the native flag remains boolean.
+            for (unsigned enabled : {1u, 1u, 0u}) {
+                input(true, 0x40);
+                check(get(0x8009EAD8) == enabled);
+            }
+            check(rr64_local_options_visible(6, 0) == 1);
         } else {
             put(0x8009EAC4, 1);
             input(false, 0x40);
             check(get(0x8009EAC4) == 2);
         }
         rr64_race_pack_menu_end(rdram);
-        check(rr64_local_options_visible(6, 0) == 0);
+        check(rr64_local_options_visible(6, 0) == unsigned(multiplayer));
     }
     // Host choice includes bit 27 without changing the existing packed options.
     session.active = session.connected = session.is_host = true;
@@ -210,5 +226,32 @@ int main(int argc, char **argv) {
     check(contents(directory / "local-race-options.cfg") == local_before);
     check(contents(directory / "thrash-race-options.cfg") == solo_before);
     check(contents(directory / "mk64-item-options.cfg") == "1 0\n");
-    std::printf("MK64 native item options: %u checks passed\n", checks);
+    // Execute the original finish evaluator: a busted human decrements the
+    // human count, but surviving humans still keep ordinary races running.
+    put(0x800D8524, 1); put(menu::humans, 4);
+    put(0x800D764C, 7);
+    recomp_context finish{};
+    for (unsigned remaining = 1; remaining <= 4; ++remaining) {
+        put(0x800D7648, remaining);
+        func_800740A0(rdram, &finish);
+        check(finish.r2 == 0);
+    }
+    put(0x800D7648, 0);
+    func_800740A0(rdram, &finish);
+    check(finish.r2 == 1);
+    // Original native input must not undo the independent population choices.
+    selected.reset(); enter(true);
+    put(0x8009EAD8, 1); put(menu::pedestrian_choice, 2);
+    put(menu::menu_cursor, 7); put(menu::menu_buttons, 0x40);
+    recomp_context input_context{}; input_context.r29 = guest_address(0x80600000);
+    item_options_native_multiplayer(rdram, &input_context);
+    check(get(0x8009EAD8) == 1);
+    const unsigned pedestrians = get(menu::pedestrian_choice);
+    put(menu::menu_cursor, 6);
+    for (unsigned enabled : {1u, 1u, 1u, 0u}) {
+        item_options_native_multiplayer(rdram, &input_context);
+        check(get(0x8009EAD8) == enabled && get(menu::pedestrian_choice) == pedestrians);
+    }
+    option::flush();
+    std::printf("MK64 native item options and local race completion: %u checks passed\n", checks);
 }

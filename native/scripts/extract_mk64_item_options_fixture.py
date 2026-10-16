@@ -25,6 +25,10 @@ for name, start, end, multiplayer in [
                  + prefix + body + "\n" + "\n".join(label + ":" for label in exits)
                  + "\nreturn;\n}\n")
 output.parent.mkdir(parents=True, exist_ok=True)
+finish_source = (source / "funcs_19.c").read_text()
+begin = finish_source.index("RECOMP_FUNC void func_800740A0(")
+end = finish_source.index("RECOMP_FUNC void ", begin + 1)
+parts.append('#include "rr64_custom_cop.hpp"\n' + finish_source[begin:end])
 output.write_text("\n".join(parts))
 output.with_suffix(".json").write_text(json.dumps({
     "source": str(source / "funcs_7.c"),

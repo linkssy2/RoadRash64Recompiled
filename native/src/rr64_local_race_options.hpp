@@ -8,6 +8,9 @@ namespace rr64::local_race_options {
 // UI-thread persistence; guest hooks never perform disk I/O.
 void initialize(const std::filesystem::path &directory);
 void flush();
+unsigned cpu_weapon(bool cop);
+void cycle_cpu_weapon(bool cop, bool increase);
+const char *cpu_weapon_name(bool cop);
 // Session-only online preferences never overwrite this machine's local preset.
 void reset_online();
 unsigned online_options();
@@ -58,8 +61,8 @@ constexpr unsigned roster(unsigned ai, unsigned humans, unsigned stock) {
                                       : stock;
 }
 constexpr unsigned next_row(unsigned row, int direction, unsigned mask) {
-    for (unsigned attempts = 0; attempts < 11; ++attempts) {
-        row = (row + (direction < 0 ? 10u : 1u)) % 11u;
+    for (unsigned attempts = 0; attempts < 13; ++attempts) {
+        row = (row + (direction < 0 ? 12u : 1u)) % 13u;
         if (mask & (1u << row))
             return row;
     }
@@ -68,10 +71,13 @@ constexpr unsigned next_row(unsigned row, int direction, unsigned mask) {
 }
 
 extern "C" {
+void rr64_cpu_starting_weapon(unsigned char *memory, unsigned slot);
 void rr64_custom_cop_ai_pool(unsigned char *memory, void *context);
 int rr64_local_player_roaming(unsigned char *memory, unsigned actor);
 void rr64_local_options_menu_begin(unsigned char *memory);
 void rr64_local_options_reset_race();
+unsigned rr64_local_spectator_begin(unsigned char *memory, unsigned view);
+void rr64_local_spectator_end(unsigned char *memory, unsigned view, unsigned saved);
 void rr64_local_bike_profiles_reset();
 int rr64_local_options_input(unsigned char *memory);
 int rr64_local_options_navigation(unsigned char *memory);

@@ -1,14 +1,14 @@
-# 1.4.4 compatibility
+# 1.4.7 compatibility
 
 Use matching protocol 68 builds. Imported racer guidance is owned by the host.
 
-# Multiplayer and course ownership in 1.4.4
+# Multiplayer and course ownership in 1.4.7
 
 Online remains experimental. Preserve original local multiplayer behavior unless
 a change explicitly requires altering it. The active implementation is the
 host-authoritative runtime in `native/src/rr64_netplay.cpp` and its authoritative
 step/prediction helpers. Earlier relay/lobby prototypes are not foundations for
-new work. 1.4.4 uses protocol **68**; all participants must use the same release.
+new work. 1.4.7 uses protocol **68**; all participants must use the same release.
 Public 1.4.2 protocol 65 sessions are incompatible.
 
 - The host owns shared settings, race state and pause. Each participant selects
@@ -41,3 +41,11 @@ See `RELEASE_CANDIDATE_EDITING_GUIDE.md`, `mk64-items.md`, and `rider-skins.md` 
 implementation ownership. Offline tests and a solo Tag test do not establish WAN
 smoothness, live online parity or the full larger-player-count matrix. Keep
 packet/session evidence private and separate from source exports.
+
+## Local additions in 1.4.7
+
+Local Big Game Co-op uses two players and one campaign owner. See
+`big-game-coop.md`. Split-screen traffic, pedestrians and AI cops are separate
+options; eliminated players spectate survivors (`local-world-options.md`).
+CPU skin randomization is a local cosmetic choice, including online, and mixes
+stock riders with enabled More Characters skins. Cheats remain offline only.

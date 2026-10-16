@@ -2,6 +2,19 @@
 
 #ifdef __cplusplus
 namespace rr64::rival_engine {
+enum class BikeGroup : unsigned { Sport, Chopper, Scooter, Insanity, Count };
+constexpr BikeGroup bike_group(unsigned model) noexcept {
+    if (model == 23) return BikeGroup::Scooter;
+    if (model == 25 || model == 26) return BikeGroup::Insanity;
+    // Cop variants 29/30 reuse the chopper engine profiles.
+    if ((model >= 12 && model <= 21) || model == 29 || model == 30) return BikeGroup::Chopper;
+    return BikeGroup::Sport;
+}
+constexpr double default_group_volume(BikeGroup group) noexcept {
+    return group == BikeGroup::Chopper ? 75.0 : 100.0;
+}
+void set_group_volume(BikeGroup group, double percent) noexcept;
+double get_group_volume(BikeGroup group) noexcept;
 void set_enabled(bool value) noexcept;
 bool get_enabled() noexcept;
 void set_volume_percent(double value) noexcept;

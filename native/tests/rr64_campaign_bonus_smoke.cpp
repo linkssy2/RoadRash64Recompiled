@@ -489,6 +489,41 @@ int main(int argc,char** argv) {
         postrace_context(c); bonus_native_postrace(m,&c);
         check(mode==0x2F && completed==0 && advanced==0,"incomplete original campaign triggered ending");
     }
+    // Exercise the production co-op hooks inside native construction and award
+    // routines, including a busted owner whose partner qualifies the campaign.
+    for(unsigned level=0;level<6;++level) {
+        rr64::campaign_coop::enabled.store(true);
+        set_results(level,0);
+        write_u32(m,0x800A6680,0); write_u32(m,0x800A6684,~0u);
+        c=context(); bonus_native_route(m,&c);
+        write_u32(m,profile+0x14,level==5?25:12);
+        write_u32(m,profile+0x18,7); write_u32(m,profile+0x38,60545);
+        write_u32(m,0x800A1810,0x2F);
+        check(rr64_coop_mode(m,0x16)==0x23,"native campaign enters co-op preparation");
+        write_u32(m,0x800A1810,0x23);
+        write_u32(m,0x8009F5DC,level==5?26:1); write_u32(m,0x8009F404,9);
+        check(rr64_coop_mode(m,0x1B)==0x16,"native campaign resumes after confirmation");
+        c=context(); func_80073728(m,&c);
+        check(word(m,0x800A6578)==2,"native constructor keeps two humans");
+        check(word(m,actor+0x18)==(level==5?25:12) && word(m,actor+0x118+0x18)==(level==5?26:1),"native constructor keeps separate bike models");
+        check(word(m,0x800A656C)<=14,"native constructor bounds total roster");
+        write_u32(m,actor+0xE8,0x80620000); write_u32(m,actor+0x118+0xE8,0x80620100);
+        write_u16(m,0x8062004C,1); write_u16(m,0x80620050,0);
+        write_u16(m,0x8062014C,0); write_u16(m,0x8062014E,0); write_u16(m,0x80620150,1);
+        write_u32(m,0x80620044,0); write_u32(m,0x80620144,1);
+        write_u32(m,actor+0x118+0x28,17);
+        auto expected=memory;
+        write_u32(expected.data(),actor+0xE8,0x80620100);
+        write_u32(expected.data(),actor+0x28,17);
+        // The existing bonus hooks also apply in the reference single-player
+        // award; only the co-op actor redirection is disabled for this control.
+        rr64::campaign_coop::enabled.store(false);
+        auto stock=context(); func_80072E74(expected.data(),&stock);
+        rr64::campaign_coop::enabled.store(true);
+        c=context(); func_80072E74(m,&c);
+        check(bytes(m,profile,0xF8)==bytes(expected.data(),profile,0xF8),"team award must equal exactly one native payout and qualification");
+        rr64_coop_mode(m,0x20);
+    }
     check(bytes(m,0x800A68C8,0x740C-0x68C8)==original_tables,"shared campaign route tables mutated");
     std::printf("{\"passed\":true,\"checks\":%u,\"nativeDonors\":%u,\"nativeAiCases\":%u,\"ordinaryAiCases\":%u,\"restrictedStockPools\":%u,\"nativePrizeCases\":%u,\"nativeEndingCases\":%u,\"gameLaunched\":false}\n",checks,donors,ai_cases,ordinary_ai_cases,restricted_stock_pools,prize_cases,ending_cases);
 }

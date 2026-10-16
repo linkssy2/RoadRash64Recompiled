@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iterator>
 #include <vector>
+extern "C" int rr64_highlights_presenting() { return 0; }
 
 extern "C" void func_800728B8(unsigned char*, recomp_context*);
 extern "C" void func_80073658(unsigned char*, recomp_context*);

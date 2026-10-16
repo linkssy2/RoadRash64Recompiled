@@ -163,6 +163,15 @@ its existing lifecycle; this feature does not replay recorded engine audio.
 
 ## Code and verification
 
+The Audio tab's Rival Bike Balance section saves independent sport, chopper,
+scooter and Insanity gains in `sound.json`. Choppers default to 75%; the other
+groups default to 100%. These multiply Rival Engine Volume and use the existing
+voice fades, including fade-out/release at zero. They affect managed rival
+engines, not the local player's native engine. Groups follow model/sound
+profiles, avoiding the reversed Level 1 shop naming. No voices or assets are
+added. Offline Windows checks are recorded in root
+`analysis/rival-balance-20261013/`; listening validation remains required.
+
 - `native/src/rr64_rival_engine.cpp/.hpp`: source/listener selection, scoped
   native hooks, voice admission, ownership and lifecycle.
 - `native/src/rr64_rival_engine_config.cpp/.hpp`: saved Audio option.

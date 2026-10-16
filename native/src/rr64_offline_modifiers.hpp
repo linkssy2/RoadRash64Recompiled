@@ -9,6 +9,10 @@ enum class Flag : unsigned {
     AllBikes = 8,
     FreezeOpponents = 16,
     AllTracks = 32,
+    Combat4x = 64,
+    Combat100x = 128,
+    MoonGravity = 256,
+    ManualRecovery = 512,
 };
 
 // UI publishes preferences only. Guest mutations remain on the game thread.
@@ -31,6 +35,10 @@ void rr64_offline_modifiers_equipment(unsigned char *memory, unsigned actor);
 int rr64_offline_modifiers_freeze_actor(unsigned char *memory, unsigned actor);
 int rr64_offline_rider_protected(unsigned char *memory, unsigned rider);
 int rr64_offline_bike_protected(unsigned char *memory, unsigned bike);
+// Zero preserves the native multiplier; nonzero replaces it without stacking.
+unsigned rr64_offline_combat_multiplier(unsigned char *memory, unsigned rider);
+float rr64_offline_gravity(unsigned char *memory, unsigned body, int is_rider, float native_gravity);
+int rr64_offline_hold_recovery(unsigned char *memory, unsigned actor);
 int rr64_player_session_started();
 #ifdef __cplusplus
 }

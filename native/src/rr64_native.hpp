@@ -1,4 +1,5 @@
 #pragma once
+#include "rr64_campaign_coop.hpp"
 #include "rr64_ai_bike_selection.hpp"
 #include "rr64_rider_skin_menu.hpp"
 #include "rr64_rider_skin_render.hpp"
@@ -260,6 +261,7 @@ void rr64_trace_guest_input(unsigned int mode, unsigned int active_mask, unsigne
                             unsigned int error_0, unsigned int error_1, unsigned int error_2,
                             unsigned int error_3);
 void rr64_autotest_input(unsigned char *rdram, unsigned int mode);
+void rr64_intro_skip(unsigned char *rdram);
 void rr64_combat_impact_rumble(unsigned char *rdram, unsigned int first_bike,
                                unsigned int second_bike, unsigned int strength_percent);
 enum {

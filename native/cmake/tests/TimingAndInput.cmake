@@ -85,7 +85,7 @@ target_include_directories(RR64ControllerSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_link_directories(RR64ControllerSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
 target_link_libraries(RR64ControllerSmoke PRIVATE ${RR64_SDL2_TARGET})
 include(tests/rr64_controller_remap_fixture.cmake)
-add_executable(RR64LocalRaceOptionsSmoke EXCLUDE_FROM_ALL tests/rr64_local_race_options_smoke.cpp src/rr64_local_race_options.cpp src/rr64_thrash_options.cpp src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp)
+add_executable(RR64LocalRaceOptionsSmoke EXCLUDE_FROM_ALL tests/rr64_local_race_options_smoke.cpp src/rr64_campaign_coop.cpp src/rr64_local_race_options.cpp src/rr64_thrash_options.cpp src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp)
 include(tests/rr64_mk64_item_options_fixture.cmake)
 target_compile_features(RR64LocalRaceOptionsSmoke PRIVATE cxx_std_20)
 target_include_directories(RR64LocalRaceOptionsSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -95,3 +95,24 @@ target_include_directories(RR64LocalRaceOptionsSmoke PRIVATE "${CMAKE_CURRENT_SO
 target_compile_features(RR64LocalPlayersSmoke PRIVATE cxx_std_17)
 target_include_directories(RR64LocalPlayersSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/RecompFrontend/recompinput/include")
+
+add_executable(RR64CampaignCoopSmoke EXCLUDE_FROM_ALL tests/rr64_campaign_coop_smoke.cpp src/rr64_campaign_coop.cpp)
+target_compile_features(RR64CampaignCoopSmoke PRIVATE cxx_std_20)
+target_include_directories(RR64CampaignCoopSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
+    "${N64MODERN_RUNTIME_ROOT}/ultramodern/include"
+    "${N64MODERN_RUNTIME_ROOT}/librecomp/include")
+
+# Native boot-card and title input; graphics calls are stubbed in this fixture.
+set(_rr64_intro_fixture "${CMAKE_CURRENT_BINARY_DIR}/rr64_boot_intro_fixture.cpp")
+add_custom_command(OUTPUT "${_rr64_intro_fixture}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract_boot_intro_fixture.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs" "${_rr64_intro_fixture}"
+    DEPENDS scripts/extract_boot_intro_fixture.py
+        src/rr64_runtime_shims.cpp
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_6.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/RecompiledFuncs/funcs_18.c"
+    VERBATIM)
+add_executable(RR64BootIntroSmoke EXCLUDE_FROM_ALL tests/rr64_boot_intro_smoke.cpp "${_rr64_intro_fixture}")
+target_include_directories(RR64BootIntroSmoke PRIVATE "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include" "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_features(RR64BootIntroSmoke PRIVATE cxx_std_20)
