@@ -16,10 +16,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "rr64_msvc_crt_compat.hpp"
 
@@ -35,9 +38,11 @@
 #include "rr64_presentation_options.hpp"
 #include "rr64_terrain_residency.hpp"
 #include "rr64_terrain_snapshot.hpp"
+#include "hle/rt64_rr64_authored_cadence.h"
 
 extern "C" void func_8007C524(uint8_t *rdram, recomp_context *ctx);
 extern "C" void func_8003F0E8(uint8_t *rdram, recomp_context *ctx);
+extern "C" void yield_self_1ms(uint8_t *rdram);
 extern "C" void rr64_record_guest_cadence(unsigned int frames, double seconds, double update_hz,
                                           float physics_delta, float update_ticks, float wait_ticks,
                                           float total_ticks, unsigned int mode,
@@ -585,7 +590,106 @@ void handling_probe_frame(unsigned char *rdram, float step) {
                      static_cast<unsigned>(buttons), static_cast<int>(stick_x));
         std::fflush(probe);
     }
+    // RR64_HANDLING_DUMP=<path> appends the race time, then the raw words of
+    // the local bike (0x868 bytes) and the first rider (0x118 bytes), per update.
+    static FILE *const dump = [] {
+        const std::string path = environment_text("RR64_HANDLING_DUMP");
+        return path.empty() ? nullptr : std::fopen(path.c_str(), "wb");
+    }();
+    if (dump != nullptr) {
+        const double time = handling_clock.race_time;
+        std::fwrite(&time, sizeof(time), 1, dump);
+        for (std::uint32_t offset = 0; offset < 0x868u; offset += 4u) {
+            std::uint32_t word = 0;
+            rr64::engine::read_u32(rdram, bike + offset, word);
+            std::fwrite(&word, sizeof(word), 1, dump);
+        }
+        for (std::uint32_t offset = 0; offset < 0x118u; offset += 4u) {
+            std::uint32_t word = 0;
+            rr64::engine::read_u32(rdram, 0x800D8570u + offset, word);
+            std::fwrite(&word, sizeof(word), 1, dump);
+        }
+        std::fflush(dump);
+    }
     handling_clock.race_time += step;
+}
+
+// RR64_HANDLING_CONVERT=<Hz> converts the bike's per-update rules, written for
+// steps of 1/<Hz> s, to the actual step: handling_ratio = step * Hz. Tire
+// friction impulses scale by the ratio (rr64_handling_friction) and per-update
+// decay factors k become k^ratio, so both act the same per second as at <Hz>.
+float handling_ratio = 1.0f;
+
+// RR64_HANDLING_FROM=<seconds> leaves the handling stock until that race time,
+// so a corrected run can share its state with an uncorrected one up to there.
+bool handling_corrections_live() {
+    static const double from = [] {
+        const std::string text = environment_text("RR64_HANDLING_FROM");
+        return text.empty() ? 0.0 : std::strtod(text.c_str(), nullptr);
+    }();
+    return from <= 0.0 || (handling_clock.active && handling_clock.race_time >= from - 1e-4);
+}
+
+void write_guest_float(unsigned char *rdram, std::uint32_t address, float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    rr64::engine::write_u32(rdram, address, bits);
+}
+
+void handling_convert_frame(unsigned char *rdram, float step) {
+    static const float reference = [] {
+        const std::string text = environment_text("RR64_HANDLING_CONVERT");
+        const float parsed = text.empty() ? 0.0f : std::strtof(text.c_str(), nullptr);
+        return std::isfinite(parsed) && parsed >= 16.0f && parsed <= 240.0f ? parsed : 0.0f;
+    }();
+    if (reference == 0.0f) {
+        return;
+    }
+    // Read-only constants, one reader each: func_8003F4D4's velocity and
+    // angular damping (0.98, 0.999) and the 0.9 spin limit decay in
+    // func_80038640 and func_800348D8.
+    static constexpr std::array<std::uint32_t, 8> decay_constants = {
+        0x80004880u, 0x80004884u, 0x8000488Cu, 0x80004890u,
+        0x80004894u, 0x80004898u, 0x800044ACu, 0x80004290u};
+    static std::array<float, decay_constants.size()> originals{};
+    static bool captured = false;
+    if (!captured) {
+        for (std::size_t i = 0; i < decay_constants.size(); ++i) {
+            rr64::engine::read_float(rdram, decay_constants[i], originals[i]);
+        }
+        captured = true;
+    }
+    const float ratio = handling_corrections_live() ? step * reference : 1.0f;
+    if (ratio == handling_ratio) {
+        return;
+    }
+    handling_ratio = ratio;
+    for (std::size_t i = 0; i < decay_constants.size(); ++i) {
+        write_guest_float(rdram, decay_constants[i], std::pow(originals[i], ratio));
+    }
+    // func_8004090C smooths throttle as t = 0.75 t + 0.25 input each update.
+    write_guest_float(rdram, 0x8000494Cu, std::pow(0.75f, ratio));
+    write_guest_float(rdram, 0x80004948u, 1.0f - std::pow(0.75f, ratio));
+}
+
+// func_8004090C moves the steering state 15% of the way to its target each
+// update. Called with the step about to be added; returns it rescaled so the
+// approach takes the same game time as at the reference rate.
+extern "C" float rr64_handling_steering_step(float step) {
+    if (handling_ratio == 1.0f) {
+        return step;
+    }
+    return step * (1.0f - std::pow(0.85f, handling_ratio)) / 0.15f;
+}
+
+// Physics Rate option: offline races run on a fixed 1/rate s step paced to
+// real time (10-60, default 17, near the original console's race rate). Menus keep the
+// measured step, and online sessions ignore the option so every peer shares
+// one clock.
+std::atomic<unsigned> physics_rate_option{17u};
+
+extern "C" void rr64_set_physics_rate(unsigned int hz) {
+    physics_rate_option.store(std::clamp(hz, 10u, 60u), std::memory_order_relaxed);
 }
 
 // Runs after func_8004E830 derives the frame's step and before the update
@@ -599,7 +703,15 @@ extern "C" void rr64_fixed_step_frame(unsigned char *rdram) {
     if (rdram == nullptr) {
         return;
     }
-    if (!fixed && !stats) {
+    std::uint32_t mode = 0;
+    rr64::engine::read_u32(rdram, rr64::engine::globals::main_mode, mode);
+    const bool option_step = !fixed && rr64::engine::is_live_race_mode(mode) &&
+                             !rr64::netplay::get_status().active;
+    const unsigned option_rate = physics_rate_option.load(std::memory_order_relaxed);
+    if (!fixed && !option_step) {
+        RT64::RR64FramePacing::pacedSourceRate.store(0u, std::memory_order_relaxed);
+    }
+    if (!fixed && !stats && !option_step) {
         std::uint32_t delta_bits = 0;
         rr64::engine::read_u32(rdram, rr64::engine::globals::physics_delta, delta_bits);
         handling_probe_frame(rdram, float_from_bits(delta_bits));
@@ -636,13 +748,13 @@ extern "C" void rr64_fixed_step_frame(unsigned char *rdram) {
         }
     }
 
-    if (!fixed) {
+    if (!fixed && !option_step) {
         std::uint32_t delta_bits = 0;
         rr64::engine::read_u32(rdram, rr64::engine::globals::physics_delta, delta_bits);
         handling_probe_frame(rdram, float_from_bits(delta_bits));
         return;
     }
-    static const float rate = [] {
+    static const float env_rate = [] {
         const std::string text = environment_text("RR64_FIXED_STEP_HZ");
         const float parsed = text.empty() ? 60.0f : std::strtof(text.c_str(), nullptr);
         return std::isfinite(parsed) && parsed >= 16.0f && parsed <= 240.0f ? parsed : 60.0f;
@@ -652,7 +764,63 @@ extern "C" void rr64_fixed_step_frame(unsigned char *rdram) {
         std::memcpy(&bits, &value, sizeof(bits));
         rr64::engine::write_u32(rdram, address, bits);
     };
-    const float step = 1.0f / rate;
+    // RR64_STEP_SWITCH=<seconds>:<Hz> changes to <Hz> once the race time
+    // reaches <seconds>, so two runs can share a state up to that moment.
+    static const std::pair<double, float> step_switch = [] {
+        const std::string text = environment_text("RR64_STEP_SWITCH");
+        const auto colon = text.find(':');
+        if (colon == std::string::npos) {
+            return std::pair<double, float>{-1.0, 0.0f};
+        }
+        const double at = std::strtod(text.c_str(), nullptr);
+        const float hz = std::strtof(text.c_str() + colon + 1, nullptr);
+        return std::isfinite(hz) && hz >= 16.0f && hz <= 240.0f
+                   ? std::pair<double, float>{at, hz}
+                   : std::pair<double, float>{-1.0, 0.0f};
+    }();
+    const bool switched = step_switch.first >= 0.0 && handling_clock.active &&
+                          handling_clock.race_time >= step_switch.first - 1e-4;
+    const float rate = fixed ? env_rate : static_cast<float>(option_rate);
+    const float step = 1.0f / (switched ? step_switch.second : rate);
+    // RR64_FIXED_STEP_PACE holds the update to real time: update n starts no
+    // earlier than t0 + n * step, so a 24 Hz step authors 24 frames a second
+    // and the renderer interpolates presentation between them. The schedule is
+    // a count of whole steps, not accumulated float time, so it cannot drift.
+    static const bool env_pace = environment_flag_enabled("RR64_FIXED_STEP_PACE");
+    const bool pace = env_pace || option_step;
+    // The renderer interpolates a paced step below the console rate; telling
+    // it the exact rate spares it from inferring one from arrival times.
+    const unsigned paced_rate = static_cast<unsigned>(std::lround(1.0f / step));
+    RT64::RR64FramePacing::pacedSourceRate.store(pace && paced_rate < 60u ? paced_rate : 0u,
+                                                 std::memory_order_relaxed);
+    if (pace) {
+        using clock = std::chrono::steady_clock;
+        static clock::time_point origin = clock::now();
+        static std::uint64_t ticks = 0;
+        static float paced_step = step;
+        if (step != paced_step) {
+            origin = clock::now();
+            ticks = 0;
+            paced_step = step;
+        }
+        const auto due = origin + std::chrono::duration_cast<clock::duration>(
+                                      std::chrono::duration<double>(ticks * double(step)));
+        const auto now = clock::now();
+        if (due > now) {
+            // Guest threads run one at a time, so a host sleep here would hold
+            // off the audio and scheduler threads. Wait through the guest
+            // scheduler, delivering retrace and audio messages as they arrive.
+            while (clock::now() < due) {
+                yield_self_1ms(rdram);
+            }
+        } else if (now - due > std::chrono::milliseconds(250)) {
+            // A stall (loading, a breakpoint) restarts the schedule instead of
+            // running a burst of catch-up updates.
+            origin = now;
+            ticks = 0;
+        }
+        ++ticks;
+    }
     write_float(rr64::engine::globals::physics_delta, step);
     write_float(0x8009CBACu, step * step);
     write_float(0x8009CBB0u, step * 60.0f);
@@ -660,7 +828,145 @@ extern "C" void rr64_fixed_step_frame(unsigned char *rdram) {
     write_float(0x8009CD78u, step); // func_8000B1DC moving-average state
     // Frame time in the game's 1e-4 s units; func_8005D9A4 adapts above 350.
     write_float(rr64::engine::globals::total_ticks, 10000.0f * step);
+    handling_convert_frame(rdram, step);
     handling_probe_frame(rdram, step);
+}
+
+// RR64_HANDLING_HOLD=<Hz> recomputes the torque and force that func_8004090C's
+// lean and heading springs add to the bike body only once per 1/<Hz> s and
+// holds them for the updates in between, as the original applied them over a
+// whole step. Their damping then acts on an angular velocity that is up to a
+// step old, as it did at <Hz>.
+namespace {
+struct SpringHold {
+    std::uint32_t bike = 0;
+    double remaining = 0.0;
+    float before[6]{};
+    float held[6]{};
+};
+std::array<SpringHold, 8> spring_holds{};
+// Body torque accumulator (bike+0x26C) and force accumulator (bike+0x1FC).
+constexpr std::array<std::uint32_t, 6> spring_hold_offsets = {0x26Cu, 0x270u, 0x274u,
+                                                             0x1FCu, 0x200u, 0x204u};
+
+float spring_hold_rate() {
+    static const float rate = [] {
+        const std::string text = environment_text("RR64_HANDLING_HOLD");
+        const float parsed = text.empty() ? 0.0f : std::strtof(text.c_str(), nullptr);
+        return std::isfinite(parsed) && parsed >= 16.0f && parsed <= 240.0f ? parsed : 0.0f;
+    }();
+    return rate;
+}
+
+SpringHold *spring_hold_for(std::uint32_t bike) {
+    for (auto &hold : spring_holds) {
+        if (hold.bike == bike) {
+            return &hold;
+        }
+    }
+    for (auto &hold : spring_holds) {
+        if (hold.bike == 0) {
+            hold = {};
+            hold.bike = bike;
+            return &hold;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+// RR64_HANDLING_LAG=<Hz> recreates the heading lag of a 1/<Hz> s step. Each
+// update the body turns by yaw rate * step before contact pulls the velocity
+// into line, so travel trails heading by one step of rotation. Before the
+// update, turn the velocity back about the body's up axis by the rotation of
+// the step difference, so it trails by 1/<Hz> s of rotation instead.
+void heading_lag_frame(unsigned char *rdram, std::uint32_t bike) {
+    static const float rate = [] {
+        const std::string text = environment_text("RR64_HANDLING_LAG");
+        const float parsed = text.empty() ? 0.0f : std::strtof(text.c_str(), nullptr);
+        return std::isfinite(parsed) && parsed >= 16.0f && parsed <= 240.0f ? parsed : 0.0f;
+    }();
+    std::uint32_t step_bits = 0;
+    if (rate == 0.0f ||
+        !rr64::engine::read_u32(rdram, rr64::engine::globals::physics_delta, step_bits)) {
+        return;
+    }
+    const float extra = 1.0f / rate - float_from_bits(step_bits);
+    if (extra <= 0.0f) {
+        return;
+    }
+    float v[3]{}, up[3]{}, w[3]{};
+    for (int i = 0; i < 3; ++i) {
+        rr64::engine::read_float(rdram, bike + 0x178u + 4u * i, v[i]);
+        rr64::engine::read_float(rdram, bike + 0x238u + 4u * i, up[i]);
+        rr64::engine::read_float(rdram, bike + 0x254u + 4u * i, w[i]);
+    }
+    const float yaw_rate = w[0] * up[0] + w[1] * up[1] + w[2] * up[2];
+    const float angle = -yaw_rate * extra;
+    const float c = std::cos(angle), s = std::sin(angle);
+    const float along = v[0] * up[0] + v[1] * up[1] + v[2] * up[2];
+    const float cross[3] = {up[1] * v[2] - up[2] * v[1], up[2] * v[0] - up[0] * v[2],
+                            up[0] * v[1] - up[1] * v[0]};
+    for (int i = 0; i < 3; ++i) {
+        write_guest_float(rdram, bike + 0x178u + 4u * i,
+                          v[i] * c + cross[i] * s + up[i] * along * (1.0f - c));
+    }
+}
+
+extern "C" void rr64_handling_hold_begin(unsigned char *rdram, unsigned int bike) {
+    if (rdram == nullptr || !handling_corrections_live() ||
+        !rr64::engine::valid_guest_range(bike, rr64::engine::bike::stride)) {
+        return;
+    }
+    heading_lag_frame(rdram, bike);
+    if (spring_hold_rate() == 0.0f) {
+        return;
+    }
+    if (SpringHold *hold = spring_hold_for(bike)) {
+        for (std::size_t i = 0; i < spring_hold_offsets.size(); ++i) {
+            rr64::engine::read_float(rdram, bike + spring_hold_offsets[i], hold->before[i]);
+        }
+    }
+}
+
+extern "C" void rr64_handling_hold_end(unsigned char *rdram, unsigned int bike) {
+    const float rate = spring_hold_rate();
+    if (rdram == nullptr || rate == 0.0f || !handling_corrections_live() ||
+        !rr64::engine::valid_guest_range(bike, rr64::engine::bike::stride)) {
+        return;
+    }
+    SpringHold *hold = spring_hold_for(bike);
+    std::uint32_t step_bits = 0;
+    if (hold == nullptr ||
+        !rr64::engine::read_u32(rdram, rr64::engine::globals::physics_delta, step_bits)) {
+        return;
+    }
+    if (hold->remaining <= 1e-5) {
+        for (std::size_t i = 0; i < spring_hold_offsets.size(); ++i) {
+            float after = 0.0f;
+            rr64::engine::read_float(rdram, bike + spring_hold_offsets[i], after);
+            hold->held[i] = after - hold->before[i];
+        }
+        hold->remaining += 1.0 / rate;
+    } else {
+        for (std::size_t i = 0; i < spring_hold_offsets.size(); ++i) {
+            write_guest_float(rdram, bike + spring_hold_offsets[i],
+                              hold->before[i] + hold->held[i]);
+        }
+    }
+    hold->remaining -= float_from_bits(step_bits);
+}
+
+extern "C" void rr64_handling_friction(unsigned char *rdram, unsigned int stack_pointer) {
+    if (rdram == nullptr || handling_ratio == 1.0f) {
+        return;
+    }
+    for (std::uint32_t offset = 0x40u; offset <= 0x48u; offset += 4u) {
+        float value = 0.0f;
+        if (rr64::engine::read_float(rdram, stack_pointer + offset, value)) {
+            write_guest_float(rdram, stack_pointer + offset, value * handling_ratio);
+        }
+    }
 }
 
 extern "C" int rr64_is_live_race_mode(unsigned int mode) {
@@ -1217,6 +1523,156 @@ extern "C" void rr64_trace_guest_input(unsigned int mode, unsigned int active_ma
     std::fflush(stderr);
 }
 
+// Race input recording and replay for handling comparisons. Samples are keyed
+// by race time (the summed update deltas since the race mode began), so one
+// recording replays at the same game times under any step rate.
+// RR64_INPUT_RECORD=<path> writes "time buttons stick_x stick_y" whenever the
+// race input changes. RR64_INPUT_REPLAY=<path> replaces race input with the
+// latest recorded sample at or before the current race time.
+struct RaceInputSample {
+    double time = 0.0;
+    std::uint16_t buttons = 0;
+    std::int8_t x = 0, y = 0;
+};
+
+// Returns true when the replay owns this frame's input.
+bool race_input_record_replay(unsigned char *rdram) {
+    static FILE *const record = [] {
+        const std::string path = environment_text("RR64_INPUT_RECORD");
+        return path.empty() ? nullptr : std::fopen(path.c_str(), "w");
+    }();
+    static const std::vector<RaceInputSample> replay = [] {
+        std::vector<RaceInputSample> samples;
+        const std::string path = environment_text("RR64_INPUT_REPLAY");
+        if (path.empty()) {
+            return samples;
+        }
+        std::ifstream file(path);
+        RaceInputSample sample;
+        unsigned buttons = 0;
+        int x = 0, y = 0;
+        while (file >> sample.time >> std::hex >> buttons >> std::dec >> x >> y) {
+            sample.buttons = static_cast<std::uint16_t>(buttons);
+            sample.x = static_cast<std::int8_t>(x);
+            sample.y = static_cast<std::int8_t>(y);
+            samples.push_back(sample);
+        }
+        return samples;
+    }();
+    static RaceInputSample last_recorded{-1.0, 0xFFFF, 127, 127};
+    static std::uint16_t replay_previous = 0;
+    if (!race_mode_active.load(std::memory_order_relaxed) || !handling_clock.active) {
+        last_recorded = {-1.0, 0xFFFF, 127, 127};
+        replay_previous = 0;
+        return false;
+    }
+    const double now = handling_clock.race_time;
+    if (!replay.empty()) {
+        // Recorded times are rounded to microseconds, so allow for a sample
+        // printed slightly after the race time it was captured at.
+        const auto next = std::upper_bound(
+            replay.begin(), replay.end(), now + 1e-4,
+            [](double time, const RaceInputSample &sample) { return time < sample.time; });
+        const RaceInputSample sample = next == replay.begin() ? RaceInputSample{} : *(next - 1);
+        const auto changed = static_cast<std::uint16_t>(replay_previous ^ sample.buttons);
+        rr64::engine::write_u16(rdram, rr64::engine::globals::controller_buttons, sample.buttons);
+        rr64::engine::write_u16(rdram, rr64::engine::globals::controller_changed_buttons, changed);
+        rr64::engine::write_u16(rdram, rr64::engine::globals::controller_pressed_buttons,
+                                changed & sample.buttons);
+        rr64::engine::write_s8(rdram, rr64::engine::globals::controller_stick_x, sample.x);
+        rr64::engine::write_s8(rdram, rr64::engine::globals::controller_stick_y, sample.y);
+        replay_previous = sample.buttons;
+        return true;
+    }
+    if (record != nullptr) {
+        RaceInputSample sample{now};
+        rr64::engine::read_u16(rdram, rr64::engine::globals::controller_buttons, sample.buttons);
+        rr64::engine::read_s8(rdram, rr64::engine::globals::controller_stick_x, sample.x);
+        rr64::engine::read_s8(rdram, rr64::engine::globals::controller_stick_y, sample.y);
+        if (sample.buttons != last_recorded.buttons || sample.x != last_recorded.x ||
+            sample.y != last_recorded.y) {
+            std::fprintf(record, "%.6f %04X %d %d\n", now, static_cast<unsigned>(sample.buttons),
+                         static_cast<int>(sample.x), static_cast<int>(sample.y));
+            std::fflush(record);
+            last_recorded = sample;
+        }
+    }
+    return false;
+}
+
+// RR64_AUTOTEST_MENU=solo drives the menus into a one-player multiplayer race:
+// Start at the title, Up and A on the main menu, A through game type, track
+// and bike, then Start on the rumble prompt, with traffic switched off.
+// Returns true while it owns input.
+bool autotest_solo_menu(unsigned char *rdram, unsigned int mode) {
+    static const bool solo = environment_text("RR64_AUTOTEST_MENU") == "solo";
+    static std::uint32_t current = ~0u, frames = 0;
+    if (!solo) {
+        return false;
+    }
+    if (mode != current) {
+        current = mode;
+        frames = 0;
+    }
+    ++frames;
+    // Multiplayer traffic off, so replays have no traffic RNG. Pedestrians
+    // (0x8009EAE0) already default to off.
+    rr64::engine::write_u32(rdram, 0x8009EAD8u, 0u);
+    std::uint16_t press = 0;
+    switch (mode) {
+    case 0x01: // title
+    case 0x1B: // rumble prompt
+        press = frames % 90u == 45u ? 0x1000u : 0u;
+        break;
+    case 0x20: // main menu: Multiplayer sits one above the default Big Game
+        press = frames == 45u ? 0x0800u : frames == 75u ? 0x8000u : 0u;
+        break;
+    case 0x23: // game type, track, bike
+        press = frames % 90u == 45u ? 0x8000u : 0u;
+        break;
+    default:
+        break;
+    }
+    if (press != 0) {
+        for (const std::uint32_t address :
+             {rr64::engine::globals::controller_buttons,
+              rr64::engine::globals::controller_changed_buttons,
+              rr64::engine::globals::controller_pressed_buttons}) {
+            std::uint16_t value = 0;
+            rr64::engine::read_u16(rdram, address, value);
+            rr64::engine::write_u16(rdram, address, static_cast<std::uint16_t>(value | press));
+        }
+    }
+    return true;
+}
+
+// RR64_RAM_SNAPSHOT=<dir> writes the guest RDRAM to <dir>/snapNN.bin on each
+// L press, so menu settings can be located by diffing snapshots.
+void ram_snapshot_on_l(unsigned char *rdram) {
+    static const std::string dir = environment_text("RR64_RAM_SNAPSHOT");
+    static unsigned count = 0;
+    static bool held_before = false;
+    if (dir.empty()) {
+        return;
+    }
+    // The pressed-edge global is not refreshed on every screen, so detect the
+    // edge from the held buttons instead.
+    std::uint16_t buttons = 0;
+    rr64::engine::read_u16(rdram, rr64::engine::globals::controller_buttons, buttons);
+    const bool held = (buttons & 0x0020u) != 0;
+    const bool pressed = held && !held_before;
+    held_before = held;
+    if (!pressed) {
+        return;
+    }
+    char name[32]{};
+    std::snprintf(name, sizeof(name), "/snap%02u.bin", count++);
+    if (FILE *file = std::fopen((dir + name).c_str(), "wb")) {
+        std::fwrite(rdram, 1, 0x800000, file);
+        std::fclose(file);
+    }
+}
+
 #include "rr64_autotest_control.hpp"
 extern "C" void rr64_prediction_request_verification_restart();
 extern "C" void rr64_autotest_input(unsigned char *rdram, unsigned int mode) {
@@ -1224,11 +1680,28 @@ extern "C" void rr64_autotest_input(unsigned char *rdram, unsigned int mode) {
     static const bool drive_enabled = environment_flag_enabled("RR64_AUTOTEST_DRIVE");
     static const std::string requested_scenario = environment_text("RR64_AUTOTEST_SCENARIO");
 
-    if (!enabled || rdram == nullptr) {
+    if (rdram == nullptr) {
+        return;
+    }
+    ram_snapshot_on_l(rdram);
+    if (race_input_record_replay(rdram)) {
+        return;
+    }
+    if (!race_mode_active.load(std::memory_order_relaxed) && autotest_solo_menu(rdram, mode)) {
+        return;
+    }
+    if (!enabled) {
         return;
     }
 
     static rr64::autotest::ControlFile control_file;
+    static std::uint32_t traced_mode = ~0u;
+    if (mode != traced_mode) {
+        traced_mode = mode;
+        char line[64]{};
+        std::snprintf(line, sizeof(line), "[RR64-AUTOTEST] mode=0x%02X\n", mode);
+        append_autotest_trace(line);
+    }
     if(control_file.enabled()){
         static std::uint16_t previous=0;
         static std::uint64_t last_action_serial=0;

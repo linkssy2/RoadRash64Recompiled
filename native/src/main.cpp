@@ -148,6 +148,7 @@ constexpr const char* kExtendedHorizonHazeOption = "rr64_extended_horizon_haze";
 constexpr const char* kAchievementsEnabledOption = "rr64_achievements_enabled";
 constexpr const char* kFullQuadrantHudOption = "rr64_full_quadrant_hud";
 constexpr const char* kControllerRumbleEnabledOption = "rr64_controller_rumble_enabled";
+constexpr const char* kPhysicsRateOption = "rr64_physics_rate";
 constexpr const char* kProximityVoiceEnabledOption = "rr64_proximity_voice_enabled";
 const std::u8string kProgramId = u8"RoadRash64Recompiled";
 
@@ -2019,6 +2020,13 @@ void init_recompui_config() {
             rr64_log("[RR64-ACH] Achievement system enabled=%d.\n", enabled ? 1 : 0);
         }
     );
+    general_config.add_number_option(kPhysicsRateOption, "Physics Rate",
+        "How many times per second offline races are simulated. 17 approximates the original console's handling, with more slide and looser braking; higher rates steer and brake more precisely. The picture stays smooth at any rate. Online races always use their own shared timing.",
+        10, 60, 1, 0, false, 17);
+    general_config.add_option_change_callback(kPhysicsRateOption,
+        [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
+            rr64_set_physics_rate(static_cast<unsigned>(std::lround(std::get<double>(value))));
+        });
     rr64::achievements::initialize();
     rr64::achievements::register_config_tab();
     rr64_log("[RR64-CONFIG] Creating Graphics tab.\n");
@@ -2162,6 +2170,7 @@ void init_recompui_config() {
     rr64_dynamic_ultrawide.store(aspect==A::Manual);
             rr64::view_width.store(aspect==A::Manual?7.0/4.0:(aspect==A::Original||aspect==A::Stretch?1.0:4.0/3.0));}
     apply_draw_distance(std::get<double>(recompui::config::get_graphics_config().get_option_value("rr64_draw_distance")));
+    rr64_set_physics_rate(static_cast<unsigned>(std::lround(std::get<double>(recompui::config::get_general_config().get_option_value(kPhysicsRateOption)))));
     g_master_volume_gain.store(rr64::audio::volume_gain(recompui::config::sound::get_main_volume()));
     rr64::netplay::configure({});
     // Controls owns loaded bindings; never rewrite a user's layout at startup.

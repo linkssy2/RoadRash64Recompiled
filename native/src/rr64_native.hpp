@@ -174,6 +174,10 @@ void rr64_trace_race_frame(unsigned char *rdram, void *context, unsigned int mod
                            unsigned int physics_delta_bits, unsigned int update_ticks_bits,
                            unsigned int wait_ticks_bits, unsigned int total_ticks_bits);
 void rr64_fixed_step_frame(unsigned char *rdram);
+void rr64_handling_friction(unsigned char *rdram, unsigned int stack_pointer);
+float rr64_handling_steering_step(float step);
+void rr64_handling_hold_begin(unsigned char *rdram, unsigned int bike);
+void rr64_handling_hold_end(unsigned char *rdram, unsigned int bike);
 int rr64_is_live_race_mode(unsigned int mode);
 int rr64_is_race_mode_active();
 // Published race scene includes the results/highlight handoff, unlike live simulation.
@@ -182,6 +186,7 @@ int rr64_is_gameplay_feedback_active();
 int rr64_are_gameplay_shortcuts_active();
 int rr64_is_road_rumble_allowed();
 void rr64_set_rumble_enabled(int enabled);
+void rr64_set_physics_rate(unsigned int hz);
 int rr64_is_rumble_enabled();
 void rr64_request_rider_eject(unsigned int slot);
 int rr64_traffic_within_draw_distance(unsigned char*, unsigned int, unsigned int, unsigned int, int);

@@ -21,8 +21,32 @@ int main(int argc, char **argv) {
     using namespace RT64::RR64FramePacing;
     const bool oldNativeLimit = argc == 2 && std::string_view(argv[1]) == "--old-native-limit";
     const auto nativeLimit = [&](bool eligible, bool targetKnown, uint32_t target) {
-        return !oldNativeLimit && renderRaceAtNativeLimit(eligible, targetKnown, target);
+        return !oldNativeLimit && renderRaceAtNativeLimit(eligible, targetKnown, target, 30u);
     };
+    require(!renderRaceAtNativeLimit(true, true, 60u, 24u),
+        "the paced 24 Hz original step still matches at the console-rate cap");
+    require(!renderRaceAtNativeLimit(true, true, 60u, 20u),
+        "the paced 20 Hz original step still matches at the console-rate cap");
+    {
+        AuthoredCadenceTracker slow;
+        uint64_t at = 0;
+        AuthoredCadenceObservation seen{};
+        for (unsigned i = 0; i < 5; ++i) seen = slow.observe(at += 50'000'000u, 2u, true);
+        require(seen.sourceRate == 20u && seen.reason == 5u, "a steady 50 ms cadence is observed as 20 Hz");
+    }
+    // A game-reported paced rate wins over the nearest stock cadence, from the
+    // slowest option (10 Hz, beyond the old stall limit) to the fastest below 60.
+    for (const uint32_t rate : {10u, 17u, 30u, 45u, 59u}) {
+        pacedSourceRate.store(rate);
+        AuthoredCadenceTracker paced;
+        uint64_t at = 0;
+        AuthoredCadenceObservation seen{};
+        for (unsigned i = 0; i < 5; ++i) seen = paced.observe(at += 1'000'000'000u / rate, 2u, true);
+        require(seen.sourceRate == rate && seen.reason == 6u, "a paced step is observed at its reported rate");
+        require(!renderRaceAtNativeLimit(true, true, 60u, rate), "a paced step keeps fractional pictures at the cap");
+    }
+    pacedSourceRate.store(0u);
+    require(renderRaceAtNativeLimit(true, true, 60u, 30u), "stock 30 Hz still renders natively at the cap without a paced rate");
     // Reproduce the measured camera-turn cadence; do not turn its source30
     // observation into source60 just to avoid expensive correspondence work.
     AuthoredCadenceTracker tracker;
@@ -72,7 +96,7 @@ int main(int argc, char **argv) {
     std::string queue((std::istreambuf_iterator<char>(file)), {});
     queue = std::regex_replace(queue, std::regex(R"(//[^\r\n]*|/\*[\s\S]*?\*/)"), "");
     queue = std::regex_replace(queue, std::regex(R"(\s+)"), "");
-    require(queue.find("constboolrenderNativeAtLimit=RR64FramePacing::renderRaceAtNativeLimit(canRetainWorkload,!interpolationTargetKey.isEmpty(),workloadConfig.targetRate);") != std::string::npos &&
+    require(queue.find("constboolrenderNativeAtLimit=RR64FramePacing::renderRaceAtNativeLimit(canRetainWorkload,!interpolationTargetKey.isEmpty(),workloadConfig.targetRate,workload.viOriginalRate);") != std::string::npos &&
         queue.find("if(!renderNativeAtLimit&&!renderNativeUnderPressure){") < queue.find("curFrame.match("),
         "real matching uses the tested native-cap decision after retention eligibility");
     require(queue.find("uint32_tdisplayFrames=1;if(generateInterpolatedFrames){") != std::string::npos &&

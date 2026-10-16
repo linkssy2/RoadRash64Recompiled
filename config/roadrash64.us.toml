@@ -135,6 +135,19 @@ hook = [
     { func = "func_8003AD84", before_vram = 0x8003B744, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_missing_floor(rdram, ctx, 9);\n#endif\n" },
     { func = "func_8003AD84", before_vram = 0x8003B574, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_missing_floor(rdram, ctx, 3);\n#endif\n" },
     { func = "func_8003AD84", before_vram = 0x8003B6B8, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_missing_floor(rdram, ctx, 4);\n#endif\n" },
+    # Each contact's tire friction impulse, at sp+0x40, just before it is added to the
+    # bike's impulse accumulator. RR64_HANDLING_CONVERT rescales it per second.
+    { func = "func_8003AD84", before_vram = 0x8003BC70, text = "rr64_handling_friction(rdram, (unsigned)ctx->r29);" },
+    { func = "func_8003AD84", before_vram = 0x8003BFF4, text = "rr64_handling_friction(rdram, (unsigned)ctx->r29);" },
+    { func = "func_8003AD84", before_vram = 0x8003C370, text = "rr64_handling_friction(rdram, (unsigned)ctx->r29);" },
+    { func = "func_8003AD84", before_vram = 0x8003CD90, text = "rr64_handling_friction(rdram, (unsigned)ctx->r29);" },
+    { func = "func_8003AD84", before_vram = 0x8003D140, text = "rr64_handling_friction(rdram, (unsigned)ctx->r29);" },
+    # Steering state approach step ((target - state) * 0.15, in f2) before func_8004090C adds it.
+    { func = "func_8004090C", before_vram = 0x80040A28, text = "ctx->f2.fl = rr64_handling_steering_step(ctx->f2.fl);" },
+    # Spring torque hold: body accumulators once the bike pointer (s2) is loaded, before any spring adds to them...
+    { func = "func_8004090C", before_vram = 0x80040978, text = "rr64_handling_hold_begin(rdram, (unsigned)ctx->r18);" },
+    # ...and at the shared exit, where every path has added its spring torque.
+    { func = "func_8004090C", before_vram = 0x80040F8C, text = "rr64_handling_hold_end(rdram, (unsigned)ctx->r18);" },
     { func = "func_8003AD84", before_vram = 0x8003B888, text = "rr64_engine_capture_dynamics_auxiliary_boundary(rdram, 15, 0, ctx->r18, MEM_W(0x18, ctx->r29), MEM_W(0x1C, ctx->r29), MEM_W(0x20, ctx->r29), MEM_W(0x40C, ctx->r18), ctx->r22);\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_missing_floor(rdram, ctx, 5);\n#endif\n" },
     { func = "func_80035380", before_vram = 0x8003548C, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_missing_floor(rdram, ctx, 1);\n#endif\n" },
     { func = "func_80035380", before_vram = 0x80035570, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_experimental_course_missing_floor(rdram, ctx, 2);\n#endif\n" },
