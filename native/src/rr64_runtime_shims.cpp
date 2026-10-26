@@ -704,11 +704,12 @@ extern "C" float rr64_handling_steering_step(float step) {
     return step * (1.0f - std::pow(0.85f, handling_ratio)) / 0.15f;
 }
 
-// Physics Rate option: offline races run on a fixed 1/rate s step paced to
-// real time (10-60, default 17, near the original console's race rate). Menus keep the
-// measured step, and online sessions ignore the option so every peer shares
-// one clock.
-std::atomic<unsigned> physics_rate_option{17u};
+// Physics Rate option: below 60, offline races run on a fixed 1/rate s step
+// paced to real time (about 17 matches the original console's race rate). At
+// 60, the default, every update keeps the measured step as before. Menus keep
+// the measured step, and online sessions ignore the option so every peer
+// shares one clock.
+std::atomic<unsigned> physics_rate_option{60u};
 
 extern "C" void rr64_set_physics_rate(unsigned int hz) {
     physics_rate_option.store(std::clamp(hz, 10u, 60u), std::memory_order_relaxed);
@@ -727,9 +728,10 @@ extern "C" void rr64_fixed_step_frame(unsigned char *rdram) {
     }
     std::uint32_t mode = 0;
     rr64::engine::read_u32(rdram, rr64::engine::globals::main_mode, mode);
-    const bool option_step = !fixed && rr64::engine::is_live_race_mode(mode) &&
-                             !rr64::netplay::get_status().active;
     const unsigned option_rate = physics_rate_option.load(std::memory_order_relaxed);
+    const bool option_step = !fixed && option_rate < 60u &&
+                             rr64::engine::is_live_race_mode(mode) &&
+                             !rr64::netplay::get_status().active;
     if (!fixed && !option_step) {
         RT64::RR64FramePacing::pacedSourceRate.store(0u, std::memory_order_relaxed);
     }

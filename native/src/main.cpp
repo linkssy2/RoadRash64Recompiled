@@ -2039,8 +2039,8 @@ void init_recompui_config() {
         rr64::rider_skins::set_cpu_pool(std::get<std::uint32_t>(value));
     });
     general_config.add_number_option(kPhysicsRateOption, "Physics Rate",
-        "How many times per second offline races are simulated. 17 approximates the original console's handling, with more slide and looser braking; higher rates steer and brake more precisely. The picture stays smooth at any rate. Online races always use their own shared timing.",
-        10, 60, 1, 0, false, 17);
+        "How many times per second offline races are simulated. 60 keeps the current handling. Around 17 approximates the original console's handling, with more slide and looser braking. The picture stays smooth at any rate. Online races always use their own shared timing.",
+        10, 60, 1, 0, false, 60);
     general_config.add_option_change_callback(kPhysicsRateOption,
         [](recomp::config::ConfigValueVariant value, recomp::config::ConfigValueVariant, recomp::config::OptionChangeContext) {
             rr64_set_physics_rate(static_cast<unsigned>(std::lround(std::get<double>(value))));
