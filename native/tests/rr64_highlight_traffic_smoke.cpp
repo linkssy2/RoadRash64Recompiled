@@ -161,7 +161,7 @@ void driver(unsigned char*m,const TrafficAssets&assets) {
     check(extended_blocks.size()==2,"two independent native graphics-slot uploads");
     if(extended_blocks.size()!=2)return;
     auto preserved=[&](unsigned slot){const auto [p,n]=extended_blocks[slot];return std::vector<unsigned char>(m+p,m+p+n);};
-    std::array<rr64::world_sync::Traffic,20> cars{};
+    std::array<rr64::world_sync::Traffic,rr64::traffic::capacity> cars{};
     for(unsigned i=0;i<2;++i){auto &v=cars[i];v.active=v.motion_valid=1;v.id=0xabcd0001u+i*0x10000u;
         v.kind=1;v.model=0xd8;v.position={52.25f+float(i)*3,-18.5f,7};v.motion[54]=1;}
     frame(m,0,201);auto other=preserved(1);
@@ -220,6 +220,9 @@ void driver(unsigned char*m,const TrafficAssets&assets) {
         check(word(m,0x80000000+extended_blocks[0].first+r.word_offset)==
               0x80000000+extended_blocks[0].first+r.target_offset,
               "material clock rewind ignores advanced live epoch");
+    for(unsigned i=2;i<cars.size();++i){cars[i]=cars[0];cars[i].id=0xf0000000u+i;}
+    frame(m,1,222);check(draw_traffic(m,cars),"expanded forty-car historic roster renders");
+    check(traffic_statistics().cars==20,"last traffic slots are not dropped from highlights");
     const auto warm_start=std::chrono::steady_clock::now();for(unsigned i=0;i<1000;++i)check(prepare_traffic(m),"warm prepare remains ready");
     const auto warm=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-warm_start).count();
     check(extended_blocks.size()==2,"repeated replay/race preparation does not grow allocations");

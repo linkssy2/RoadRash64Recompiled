@@ -13,6 +13,8 @@ int rr64_custom_cop_is_player(unsigned char *, unsigned);
 int rr64_custom_cop_trick(unsigned char *, unsigned);
 float rr64_custom_cop_win_age(unsigned char *);
 void rr64_custom_cop_post(unsigned char *, void *, unsigned);
+int rr64_police_spawn_allowed(unsigned char *, void *);
+int rr64_police_waiting(unsigned char *, unsigned);
 int rr64_custom_cop_pursuit(unsigned char *, unsigned);
 void rr64_custom_cop_control(unsigned char *, void *);
 int rr64_custom_cop_siren(unsigned char *, unsigned);

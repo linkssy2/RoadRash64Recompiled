@@ -29,6 +29,7 @@ extern "C" void rr64_rival_engine_mode(unsigned char*, void*, unsigned) {}
 extern "C" void rr64_trace_race_end(unsigned char*, unsigned, unsigned) {}
 extern "C" void rr64_achievement_campaign_level_advanced(unsigned char*, unsigned) { ++promotions; }
 extern "C" void func_8006B740(unsigned char*, recomp_context* c) { c->r2 = 0; }
+extern "C" void func_8006B9E8(unsigned char*, recomp_context* c) { c->r2 = 0; }
 extern "C" void func_80056084(unsigned char*, recomp_context*) {}
 extern "C" void func_80047D68(unsigned char*, recomp_context* c) { c->r2=1; }
 extern "C" void func_8001BAF8(unsigned char*, recomp_context*) {}

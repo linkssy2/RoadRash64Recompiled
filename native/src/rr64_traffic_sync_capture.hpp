@@ -1,3 +1,4 @@
+#include "rr64_traffic_roster.hpp"
 #pragma once
 #include "rr64_engine_layout.hpp"
 #include "rr64_world_sync.hpp"
@@ -57,19 +58,19 @@ inline bool traffic_model_from_resource(unsigned char *m,unsigned resource,unsig
 }
 // Read one complete native roster at the simulation boundary. Reject a torn
 // or malformed list rather than publishing an accidental removal/partial car.
-inline bool capture_traffic(unsigned char *m,unsigned round,std::uint64_t tick,Snapshot &out,
+template<std::size_t N> inline bool capture_traffic(unsigned char *m,unsigned round,std::uint64_t tick,TrafficSnapshot<N> &out,
                             const char **failure=nullptr) {
     using namespace engine;
     const auto stage=[&](const char *reason){if(failure)*failure=reason;};
     stage("traffic-roster");
-    Snapshot s{};s.round=round;s.tick=tick;
+    TrafficSnapshot<N> s{};s.round=round;s.tick=tick;
     unsigned count=0;
-    if(!read_u32(m,0x800A6528,count) || count>capacity) return false;
-    std::array<unsigned,capacity> entities{};
+    if(!read_u32(m,0x800A6528,count) || count>N) return false;
+    std::array<unsigned,N> entities{};
     for(unsigned i=0;i<count;++i) {
         stage("traffic-entity");
         unsigned entity=0;std::uint16_t active=0;
-        if(!read_u32(m,0x800D76E0+i*4,entity) || !valid_guest_range(entity,0x360) ||
+        if(!rr64::traffic::read_entity(m,i,entity) || !valid_guest_range(entity,0x360) ||
             !read_u16(m,entity+0x334,active) || active>1) return false;
         entities[i]=entity;
         for(unsigned j=0;j<i;++j) if(entities[j]==entity) return false;
@@ -91,7 +92,7 @@ inline bool capture_traffic(unsigned char *m,unsigned round,std::uint64_t tick,S
     }
     stage("traffic-scene");
     unsigned node=0;if(!read_u32(m,globals::traffic_scene_head,node))return false;
-    // Native scene may contain inactive nodes as well as the twenty live cars.
+    // Native scene may contain inactive nodes as well as the live cars.
     unsigned visited=0;
     while(node && visited++<128) {
         unsigned kind=0,entity=0,next=0,model=0;

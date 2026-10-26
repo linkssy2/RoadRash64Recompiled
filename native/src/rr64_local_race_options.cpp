@@ -15,6 +15,8 @@
 #include <array>
 #include <cstdio>
 #include <cmath>
+#include <cstring>
+
 
 namespace {
 using namespace rr64::engine;
@@ -612,9 +614,15 @@ extern "C" void rr64_local_options_race(unsigned char *rdram) {
         // Allocation alone leaves multiplayer cops dormant. Native road events
         // also require Thrash's encounter density (80026124..80026154).
         constexpr float police_density[] = {0.f, .2f, .25f, 1.f};
-        constexpr float traffic_density[] = {0.f, .25f, .75f, 1.f};
+        // Match solo Thrash's native hardware profiles (80026268..800262C4).
+        unsigned short reduced_profile = 0;
+        read_u16(rdram, 0x800A4F28, reduced_profile);
+        constexpr float traffic_density[2][4] = {{0.f, 1.5f, 5.f, 9.f}, {0.f, 1.5f, 2.5f, 4.f}};
         write_float(rdram, 0x800D855C, police_density[police]);
-        write_float(rdram, 0x800D8560, traffic_density[local_traffic.load()]);
+        write_float(rdram, 0x800D8560, traffic_density[reduced_profile != 0][local_traffic.load()]);
+        // Pedestrians use the adjoining solo profile table (800261C0..8002621C).
+        constexpr float pedestrian_density[2][4] = {{0.f, 1.f, 2.5f, 3.f}, {0.f, 1.f, 1.5f, 2.25f}};
+        write_float(rdram, 0x800D8564, pedestrian_density[reduced_profile != 0][(bits >> 4) & 3u]);
     }
     race_bike_choice = (bits >> 6) & 7;
     restore_choices = true;

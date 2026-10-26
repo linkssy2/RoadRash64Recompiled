@@ -291,3 +291,6 @@ if(NOT WIN32)
     endforeach()
 endif()
 include(tests/rr64_mk64_item_material_call_fixture.cmake)
+add_executable(RR64GroundContactSmoke EXCLUDE_FROM_ALL tests/ground_contact_smoke.cpp)
+target_include_directories(RR64GroundContactSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+

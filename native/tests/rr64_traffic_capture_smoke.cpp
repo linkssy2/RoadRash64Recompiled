@@ -87,4 +87,19 @@ int main(){
  write_u32(m,n+0x3C,0);write_u32(m,0x800A6528,0);
  check(rr64::world_sync::capture_traffic(m,1,3,s));check(!s.traffic[0].active && s.tick==3);
  write_u32(m,0x800A6528,21);check(!rr64::world_sync::capture_traffic(m,1,4,s));check(s.tick==3);
+ memory=before;
+ write_u32(m,0x800A6528,20);
+ for(unsigned i=0;i<20;++i){
+  const unsigned entity=e+i*0x400,node=n+i*0x80;
+  write_u32(m,0x800D76E0u+i*4,entity);
+  write_u32(m,entity,1);write_u32(m,entity+4,100+i);write_u16(m,entity+0x334,1);
+  write_u32(m,node,4);write_u32(m,node+4,entity);write_u32(m,node+0x40,33);
+  write_u32(m,node+0x3c,i==19?0:node+0x80);
+ }
+ rr64::world_sync::TrafficSnapshot<rr64::traffic::capacity> expanded{};
+ check(rr64::world_sync::capture_traffic(m,1,5,expanded));
+ check(expanded.traffic[19].active && expanded.traffic[19].id==119);
+ check(rr64::world_sync::capture_traffic(m,1,5,s));
+ write_u32(m,0x800A6528,21);check(!rr64::world_sync::capture_traffic(m,1,6,expanded));
+ check(expanded.tick==5);
 }

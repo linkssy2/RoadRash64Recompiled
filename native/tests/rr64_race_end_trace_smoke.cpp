@@ -193,6 +193,8 @@ int main(int argc, char** argv) {
     using namespace rr64;
     const bool disabled = argc == 2 && std::strcmp(argv[1], "--disabled") == 0;
     const bool diagnostics = argc == 2 && std::strcmp(argv[1], "--diagnostics") == 0;
+    const bool population = argc == 2 && std::strcmp(argv[1], "--population") == 0;
+    environment("RR64_POPULATION_TRACE", population ? "1" : "0");
     environment("RR64_RUNTIME_TRACE", !disabled && !diagnostics ? "1" : "0");
     environment("RR64_DIAGNOSTICS", diagnostics ? "1" : "0");
     environment("RR64_COURSE_PHYSICS_TRACE", "0");
@@ -201,11 +203,90 @@ int main(int argc, char** argv) {
     const auto original = memory;
     Output output;
     race_end_trace::drain();
+    if (population) {
+        engine::write_u32(memory.data(), 0x800D8570 + 0x20, 7);
+        engine::write_float(memory.data(), 0x800D8560, 36.f);
+        const auto before = memory;
+        capturing = true;
+        rr64_trace_population(memory.data(), 1);
+        capturing = false;
+        require(output.read().empty(), "population producer performs no I/O");
+        race_end_trace::drain();
+        auto text = output.read();
+        require(text.find("phase=1 cars=0 density=36") != std::string::npos, "population settings captured");
+        require(text.find("actor_mask=0005") != std::string::npos, "only police physics selected");
+        {
+            prediction::ReplayScope replay;
+            rr64_trace_population(memory.data(), 2);
+        }
+        rr64_trace_population(nullptr, 2);
+        race_end_trace::drain();
+        require(output.read() == text, "prediction and null observations excluded");
+        require(memory == before, "population observation preserves guest state");
+        unsigned police_bike = 0;
+        engine::read_u32(memory.data(), 0x800D8570 + 0xE0, police_bike);
+        capturing = true;
+        rr64_trace_police_crash(memory.data(), police_bike, 0x8003F950);
+        capturing = false;
+        require(output.read() == text && memory == before, "crash producer preserves state and performs no I/O");
+        race_end_trace::drain();
+        text = output.read();
+        require(text.find("site=8003F950") != std::string::npos, "exact crash call site captured");
+        rr64_trace_police_crash(memory.data(), 0xFFFFFFFC, 0);
+        rr64_trace_police_crash(nullptr, police_bike, 0);
+        race_end_trace::drain();
+        require(output.read() == text, "invalid crash identities ignored");
+        engine::write_u32(memory.data(), 0x800A6528, 1);
+        engine::write_u32(memory.data(), 0x800D76E0, 0x80300000);
+        engine::write_float(memory.data(), 0x803000C0, 30.f);
+        engine::write_float(memory.data(), 0x80300328, 0.f);
+        engine::write_u16(memory.data(), 0x80300334, 1);
+        capturing = true;
+        rr64_trace_traffic_target(memory.data(), 0x80300000, 0x41F00000);
+        rr64_trace_traffic_target(memory.data(), 0x80300000, 0x41F00000);
+        capturing = false;
+        require(output.read() == text, "traffic decision producer performs no I/O");
+        race_end_trace::drain();
+        text = output.read();
+        require(occurrences(text, "phase=4 cars=") == 1, "unchanged stopped target does not flood trace");
+        require(text.find("before_road_bits=41F00000") != std::string::npos, "road braking distinguished from prior following brake");
+        engine::write_float(memory.data(), 0x80300328, 30.f);
+        rr64_trace_traffic_target(memory.data(), 0x80300000, 0x41F00000);
+        race_end_trace::drain();
+        text = output.read();
+        require(occurrences(text, "phase=4 cars=") == 2, "resumed traffic captured");
+        {
+            prediction::ReplayScope replay;
+            rr64_trace_police_crash(memory.data(), police_bike, 0);
+            rr64_trace_traffic_target(memory.data(), 0x80300000, 0);
+        }
+        rr64_trace_traffic_target(nullptr, 0x80300000, 0);
+        rr64_trace_traffic_target(memory.data(), 0xFFFFFFFC, 0);
+        race_end_trace::drain();
+        require(output.read() == text, "invalid and prediction decisions excluded");
+        engine::write_float(memory.data(), 0x80300328, 0.f);
+        const auto traffic_before = memory;
+        for (unsigned i = 4; i < 1200; ++i) {
+            rr64_trace_population(memory.data(), 2);
+            race_end_trace::drain();
+        }
+        text = output.read();
+        require(occurrences(text, "[RR64-POPULATION]") == 1200, "population capture bounded");
+        require(text.find("speed=30 target=0 active=1") != std::string::npos, "traffic braking captured separately from speed");
+        rr64_trace_population(memory.data(), 2);
+        race_end_trace::drain();
+        require(output.read() == text && memory == traffic_before, "cap stays silent and guest state unchanged");
+        require(producer_allocations.load() == 0, "population producer allocates nothing");
+        std::printf("RR64 population trace: %u checks passed.\n", checks);
+        return 0;
+    }
     capture(memory.data());
     require(output.read().empty(), "producer performs no output");
     race_end_trace::drain();
     std::string text = output.read();
     if (disabled) {
+        rr64_trace_police_crash(memory.data(), 0x80240000, 0);
+        rr64_trace_traffic_target(memory.data(), 0x80300000, 0);
         recover(memory.data(), 0x800D8570);
         observe(memory.data());
         race_end_trace::drain();

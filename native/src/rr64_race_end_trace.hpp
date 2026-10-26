@@ -45,6 +45,10 @@ void rr64_trace_race_end(unsigned char* memory, unsigned target_mode,
 // RR64_COURSE_PHYSICS_TRACE=1 additionally samples imported-course human
 // physics every 30 live observations, capped at 1200 attempts per process.
 void rr64_trace_lap_frame(unsigned char* memory);
+// Opt-in population trace: phase 0 observes frames, 1/2 bracket cop placement.
+void rr64_trace_population(unsigned char* memory, unsigned phase);
+void rr64_trace_police_crash(unsigned char* memory, unsigned bike, unsigned site);
+void rr64_trace_traffic_target(unsigned char* memory, unsigned car, unsigned before_road);
 // Mark recovery before its progress update. The next frame sample records the
 // coherent resulting state; this hook itself emits no rows or snapshots.
 void rr64_trace_race_recovery(unsigned char* memory, unsigned actor);

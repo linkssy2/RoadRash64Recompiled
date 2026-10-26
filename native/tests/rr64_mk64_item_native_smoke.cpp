@@ -253,6 +253,7 @@ void item_native_quantity(unsigned char*,recomp_context*);
 void rr64_online_audio_weapon_source(unsigned char*,void*,unsigned) {}
 void sprintf_recomp(unsigned char*,recomp_context *c) { fixture::quantity_text=unsigned(c->r6); }
 void rr64_engine_capture_dynamics_boundary(unsigned char*,unsigned,unsigned,unsigned) {}
+void rr64_trace_police_crash(unsigned char*,unsigned,unsigned) {}
 void rr64_prediction_verify_random(unsigned char*,unsigned) {}
 void rr64_highlights_crash(unsigned char*,unsigned) { ++fixture::crashes; }
 int rr64_highlights_presenting() { return fixture::presenting; }

@@ -1,8 +1,10 @@
+#include "rr64_traffic_roster.hpp"
 #include "rr64_local_race_options.hpp"
 #include "rr64_offline_modifiers.hpp"
 #include "rr64_custom_cop_rules.hpp"
 #include "rr64_custom_cop.hpp"
 #include "rr64_thrash_options.hpp"
+#include "rr64_campaign_coop.hpp"
 #include <cstdio>
 #include <fstream>
 #include <thread>
@@ -11,6 +13,7 @@
 #include "recomp.h"
 #include <vector>
 #include <utility>
+#include <cstring>
 #include "rr64_engine_layout.hpp"
 #include "rr64_local_players.hpp"
 #include "rr64_netplay.hpp"
@@ -28,6 +31,15 @@ namespace rr64::netplay { PhysicsRules get_physics_rules() { PhysicsRules result
 namespace rr64::netplay { bool authority_get_outcome(unsigned,authority::Outcome&,bool&){return false;} }
 namespace recomp { void* alloc(unsigned char* memory, size_t size) { static size_t next = 0x700000; const size_t offset = next; next += (size + 15) & ~size_t(15); return memory + offset; } }
 namespace { bool placement_ok=false; unsigned voices=0; }
+namespace { unsigned placement_checks = 0; }
+extern "C" void func_8006B9E8(unsigned char* rdram, recomp_context* ctx) {
+ ++placement_checks;
+ // Native query writes its two results and may clobber caller-saved registers.
+ MEM_W(0, ctx->r5) = 23;
+ MEM_W(0, ctx->r6) = ctx->f12.u32l;
+ ctx->r4 = 0;
+ ctx->r2 = placement_ok;
+}
 extern "C" void func_8006B740(unsigned char* rdram,recomp_context* ctx) {
  const auto state=MEM_W(0xE8,ctx->r4);
  MEM_W(0,state)=123; // failed stock placement may already modify routing
@@ -70,6 +82,47 @@ int main(int argc, char** argv) {
     auto* rdram = memory.data();
     const auto put = [&](unsigned a, unsigned v) { write_u32(rdram, a, v); };
     const auto get = [&](unsigned a) { unsigned v = 0; read_u32(rdram, a, v); return v; };
+    {
+        constexpr unsigned actor = 0x800D8570, bike = 0x80300000;
+        put(actor, 2); put(actor + 0x20, 7); put(actor + 0xE0, bike);
+        for (unsigned role : {0u, 7u}) for (unsigned parked : {0u, 1u}) {
+            put(actor + 0x20, role);
+            write_u16(rdram, bike + 0x81C, parked);
+            write_u16(rdram, 0x800D4924, 2);
+            const bool waiting = role == 7 && parked;
+            ok &= bool(rr64_police_waiting(rdram, actor)) == waiting;
+            std::uint16_t count = 0;
+            read_u16(rdram, 0x800D4924, count);
+            ok &= count == (waiting ? 0 : 2);
+        }
+        put(actor, 14);
+        ok &= !rr64_police_waiting(rdram, actor);
+        ok &= !rr64_police_waiting(nullptr, actor);
+        ok &= !rr64_police_waiting(rdram, 0);
+        put(actor, 0); put(actor + 0x20, 0); put(actor + 0xE0, 0);
+    }
+    {
+        recomp_context context{};
+        context.r29 = guest_address(0x807FF000);
+        context.r4 = guest_address(0x800D8570);
+        context.r5 = 0x43C80000; // 400 route units
+        const auto original = context;
+        put(0x800D8570, 0x12345678);
+        for (bool valid : {false, true}) {
+            placement_ok = valid;
+            ok &= bool(rr64_police_spawn_allowed(rdram, &context)) == valid;
+            ok &= std::memcmp(&context, &original, sizeof(context)) == 0;
+            ok &= get(0x800D8570) == 0x12345678;
+            ok &= get(0x807FEFF4) == 0x43C80000;
+        }
+        ok &= placement_checks == 2;
+        context.r29 = 0;
+        ok &= !rr64_police_spawn_allowed(rdram, &context);
+        ok &= !rr64_police_spawn_allowed(nullptr, &context);
+        ok &= !rr64_police_spawn_allowed(rdram, nullptr);
+        ok &= placement_checks == 2;
+        placement_ok = false;
+    }
     put(layout::humans, 4); put(layout::racers, 4); put(layout::ai_choice, 1);
     rr64_local_options_race(rdram); // Default local=false: do not touch another mode.
     ok &= get(layout::racers) == 4;
@@ -811,19 +864,46 @@ int main(int argc, char** argv) {
         }
         check_solo(seen == 15, "all four police densities reachable for every human count");
     }
-    unsigned traffic_seen = 0;
-    for (unsigned step = 0; step < 4; ++step) {
-        const auto peds = get(layout::pedestrian_choice);
-        put(layout::menu_cursor, 6); rr64_local_options_input(rdram); rr64_local_options_race(rdram);
-        float density = -1; read_float(rdram, 0x800D8560, density);
-        constexpr float expected[] = {0.f, .25f, .75f, 1.f};
-        for (unsigned i = 0; i < 4; ++i) if (density == expected[i]) traffic_seen |= 1u << i;
-        check_solo(get(layout::pedestrian_choice) == peds, "traffic edit preserves pedestrians");
-        const auto traffic = get(0x800D8560);
-        put(layout::menu_cursor, 7); rr64_local_options_input(rdram); rr64_local_options_race(rdram);
-        check_solo(get(0x800D8560) == traffic, "pedestrian edit preserves traffic density");
+    for (unsigned profile = 0; profile < 2; ++profile) {
+        write_u16(rdram, 0x800A4F28, profile);
+        for (unsigned humans = 1; humans <= 4; ++humans) {
+            put(layout::humans, humans); put(layout::menu_humans, humans);
+            unsigned traffic_seen = 0;
+            for (unsigned step = 0; step < 4; ++step) {
+                const auto peds = get(layout::pedestrian_choice);
+                put(layout::menu_buttons, 0x40);
+                put(layout::menu_cursor, 6); rr64_local_options_input(rdram); rr64_local_options_race(rdram);
+                float density = -1; read_float(rdram, 0x800D8560, density);
+                constexpr float expected[2][4] = {{0.f, 1.5f, 5.f, 9.f}, {0.f, 1.5f, 2.5f, 4.f}};
+                for (unsigned i = 0; i < 4; ++i) if (density == expected[profile][i]) traffic_seen |= 1u << i;
+                check_solo(get(layout::pedestrian_choice) == peds, "traffic edit preserves pedestrians");
+                const auto traffic = get(0x800D8560);
+                put(layout::menu_cursor, 7); rr64_local_options_input(rdram); rr64_local_options_race(rdram);
+                check_solo(get(0x800D8560) == traffic, "pedestrian edit preserves traffic density");
+                float pedestrian_density = -1; read_float(rdram, 0x800D8564, pedestrian_density);
+                constexpr float pedestrians[2][4] = {{0.f, 1.f, 2.5f, 3.f}, {0.f, 1.f, 1.5f, 2.25f}};
+                check_solo(pedestrian_density == pedestrians[profile][get(layout::pedestrian_choice)],
+                           "pedestrian density matches solo profile");
+            }
+            check_solo(traffic_seen == 15, "all solo-equivalent densities reachable for every player count/profile");
+        }
     }
-    check_solo(traffic_seen == 15, "all native traffic densities reachable");
+    write_u16(rdram, 0x800A4F28, 0);
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        online = mode == 2; online_connected = online;
+        rr64::local_players::active.store(mode == 2);
+        rr64_thrash_options_mode(mode == 1 ? 1 : 0);
+        write_float(rdram, 0x800D8560, 5.f);
+        rr64_local_options_race(rdram);
+        float density = 0; read_float(rdram, 0x800D8560, density);
+        check_solo(density == 5.f, "native campaign/solo/online density is not overwritten");
+    }
+    rr64_thrash_options_mode(0); online_connected = false;
+    online = false; rr64::campaign_coop::enabled.store(false);
+    put(0x800A6528, 0);
+    rr64_thrash_options_mode(0);
+    rr64::local_players::active.store(true);
+    put(layout::humans, 4);
     put(globals::main_mode, 0x1C); put(globals::pending_mode, 0x1C);
     put(0x800A656C, 7);
     for (unsigned i = 0; i < 4; ++i) {
@@ -897,6 +977,9 @@ int main(int argc, char** argv) {
     std::ifstream file(settings/"cpu-weapon-options.cfg"); unsigned version=0,racer_weapon=0,cop_weapon=0;
     check_solo(bool(file>>version>>racer_weapon>>cop_weapon)&&version==1&&racer_weapon==14&&cop_weapon==1,
                "independent weapon preferences persist with version and bounded native IDs");
+    put(0x800D76E0 + 19*4, 0x803A0000);
+    check_solo(rr64::traffic::entity(rdram,19)==0x803A0000 && rr64::traffic::entity(rdram,20)==0,
+               "stock twenty-car roster bounds restored");
     std::printf("Thrash regression checks: %u\n", solo_checks);
     std::puts(ok ? "PASS local roster/menu, solo Thrash and online replay roaming" : "FAIL local race options");
     return ok ? 0 : 1;

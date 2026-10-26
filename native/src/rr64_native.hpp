@@ -39,6 +39,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+void rr64_ground_contact_timing(unsigned char* rdram, void* context);
+void rr64_ground_alignment_timing(unsigned char* rdram, void* context);
 void rr64_course_audio_step(unsigned char *);
 void rr64_sky_queue_begin(unsigned char *);
 void rr64_sky_queue_end(unsigned char *);

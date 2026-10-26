@@ -22,11 +22,12 @@ struct Traffic {
     std::array<float,6> directions{}; // 310..324, no resource/scene pointers.
     bool operator==(const Traffic&) const = default;
 };
-struct Snapshot {
+template<std::size_t N> struct TrafficSnapshot {
     std::uint32_t round=0;
     std::uint64_t tick=0;
-    std::array<Traffic,capacity> traffic{};
+    std::array<Traffic,N> traffic{};
 };
+using Snapshot = TrafficSnapshot<capacity>;
 struct Batch {
     std::uint32_t round=0,index=0;
     std::uint64_t tick=0;
@@ -43,9 +44,9 @@ inline bool valid(const Traffic &v) {
         for(float f:a) if(!std::isfinite(f)) return false;
     return true;
 }
-inline bool valid(const Snapshot &s) {
+template<std::size_t N> inline bool valid(const TrafficSnapshot<N> &s) {
     if(!s.round || !s.tick) return false;
-    for(unsigned i=0;i<capacity;++i) {
+    for(unsigned i=0;i<N;++i) {
         if(!valid(s.traffic[i])) return false;
         if(s.traffic[i].active) for(unsigned j=0;j<i;++j)
             if(s.traffic[j].active && s.traffic[i].id==s.traffic[j].id) return false;

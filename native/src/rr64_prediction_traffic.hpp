@@ -1,3 +1,4 @@
+#include "rr64_traffic_roster.hpp"
 #pragma once
 #include "rr64_traffic_sync_capture.hpp"
 #include "rr64_traffic_reconcile.hpp"
@@ -16,7 +17,7 @@ inline TrafficAdmission correct_traffic_baseline(unsigned char *m,const world_sy
     if(plan.removes || plan.creates)return TrafficAdmission::TopologyPending;
     std::array<unsigned,world_sync::capacity> entities{};
     for(unsigned i=0;i<plan.updates;++i)
-        if(!engine::read_u32(m,0x800d76e0+4*plan.update[i].local,entities[i]) ||
+        if(!rr64::traffic::read_entity(m,plan.update[i].local,entities[i]) ||
            !engine::valid_guest_range(entities[i],0x360))return TrafficAdmission::Invalid;
     for(unsigned i=0;i<plan.updates;++i){
         const auto entity=entities[i];const auto &car=host.traffic[plan.update[i].remote];

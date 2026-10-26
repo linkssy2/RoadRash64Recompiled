@@ -1,9 +1,9 @@
-# Road Rash 64 Recompiled 1.4.7
+# Road Rash 64 Recompiled 1.4.8
 
-- **CPU rider variety:** choose original riders, More Characters skins, or both, and set the percentage of CPU racers to randomize. Online appearances remain a local cosmetic preference.
-- **Opponent weapons:** separate racer and cop starting-weapon selectors in offline race settings.
-- **Police and traffic:** restored local multiplayer police encounters, with four police and traffic density choices, including solo play against CPU racers.
-- **Menu polish:** clearer race-option spacing and matching selection effects for Online and Big Game Co-op.
+- **Hill jumps:** corrected ground-contact timing so bikes can launch naturally over crests, including hills that previously kept them grounded in one direction.
+- **Police encounters:** fixed roadside officers falling off their bikes before pursuit and rejected unsafe police spawn locations before they modify the rider.
+
+- **Race settings:** multiplayer traffic and pedestrian density now match solo Thrash at the same setting.
 
 Windows and experimental Linux downloads are provided. More Characters and the texture mod are separate optional downloads. Big Game Co-op, online and MK64 tracks/items remain experimental.
 

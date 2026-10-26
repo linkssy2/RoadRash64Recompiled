@@ -1,3 +1,4 @@
+#include "rr64_traffic_roster.hpp"
 #pragma once
 
 #include "rr64_world_object_assets.hpp"
@@ -24,7 +25,7 @@ bool prepare_traffic(unsigned char *memory) noexcept;
 // only then may the caller hide every native traffic node to prevent doubles.
 // False appends nothing and leaves the existing retained-car path available.
 bool draw_traffic(unsigned char *memory,
-                  const std::array<world_sync::Traffic, world_sync::capacity> &cars,
+                  const std::array<world_sync::Traffic, rr64::traffic::capacity> &cars,
                   std::uint64_t recording_time_us = 0) noexcept;
 // Only with the runtime's guest-heap/session reset, alongside objects_reset_session.
 // Replay/race completion must keep allocations alive for submitted graphics.
