@@ -27,6 +27,16 @@ The original allocator and driving rules remain in control, but the timing and
 arrangement of encounters may change. The user explicitly accepted that tradeoff.
 Do not raise the pool cap or change simulation rules as incidental rendering cleanup.
 
+Traffic axle queries (`75EA0`, offsets `0x238` and `0x2A4`) must retain native
+unloaded-cell failures. `77294` retires cars after those failures; `6AFFC` then
+unlinks and frees them once hidden, allowing `6BFF4` to reuse the 20-car pool.
+The immutable floor fallback is for persistent actors such as riders and bikes,
+not cars that depend on streaming for retirement. Authenticate axle ownership
+against the live traffic roster before excluding it from that fallback.
+`RR64StaticCollisionSmoke` covers all 20 slots, both axles, resident collision,
+unloaded retirement signals and retained rider support; long-race gameplay
+still needs a visual check.
+
 ## Diagnostics and verification
 
 The temporary traffic probes have been removed from the production hooks and target.

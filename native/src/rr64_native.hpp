@@ -44,6 +44,8 @@ void rr64_ground_alignment_timing(unsigned char* rdram, void* context);
 void rr64_course_audio_step(unsigned char *);
 void rr64_sky_queue_begin(unsigned char *);
 void rr64_sky_queue_end(unsigned char *);
+void rr64_hud_gauge_begin(unsigned char *);
+void rr64_hud_gauge_end(unsigned char *);
 void rr64_hud_widgets_begin(unsigned char *);
 void rr64_hud_widgets_end(unsigned char *);
 void rr64_hud_label_begin(unsigned char *, unsigned);

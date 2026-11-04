@@ -26,7 +26,7 @@ production = {'rr64_online_terrain_collision_begin',
               'rr64_online_terrain_collision_walls'}
 floor_hooks = {'rr64_online_terrain_query_begin', 'rr64_online_terrain_lookup'}
 todo = ['func_80062594', 'func_8001BD50', 'func_8001BDF8', 'func_80034370',
-        'func_80014604', 'func_80014DE4']
+        'func_80014604', 'func_80014DE4', 'func_80075EA0']
 seen = set()
 while todo:
     name = todo.pop()
@@ -46,6 +46,13 @@ negative = re.sub(r'^.*rr64_online_terrain_collision_.*\n', '', base, flags=re.M
 negative = negative.replace('func_80062594(', 'rr64_static_collision_legacy(', 1)
 parts.extend(functions[name] for name in sorted(seen))
 parts.append(negative)
+# Execute the original retirement decision after the real axle queries, without
+# invoking unrelated steering, audio and frame scheduling from the same tick.
+traffic = functions['func_80076290']
+start = traffic.index('    // 0x80077294:')
+end = traffic.index('L_800772D8:', start)
+parts.append('void rr64_traffic_retirement_decision(uint8_t* rdram, recomp_context* ctx) {\n' +
+             traffic[start:end] + 'L_800772D8:;\n}\n')
 a.output.parent.mkdir(parents=True, exist_ok=True)
 a.output.write_text('\n'.join(parts), encoding='utf-8')
 a.output.with_suffix('.json').write_text(json.dumps({

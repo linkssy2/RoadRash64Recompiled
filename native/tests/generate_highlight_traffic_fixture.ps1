@@ -10,7 +10,7 @@ foreach($file in Get-ChildItem -LiteralPath $GeneratedDirectory -Filter '*.c') {
 }
 $queue=[Collections.Generic.Queue[string]]::new()
 @('func_8001A69C','func_8001A994','func_80011988','func_8001B8F4','func_8007B254',
-  'func_8005EF74','func_8000F958','func_80015A90','guMtxF2L','func_800464B8',
+  'func_8005EF74','func_8000F958','func_80015A90','guMtxF2L','func_800464B8','func_80046488',
   'func_8006E3D4','func_8001BA88') | ForEach-Object { $queue.Enqueue($_) }
 # Instrumented allocator backing and forbidden ROM I/O only. Native graph
 # construction, list sharing, destruction and resource expiry execute exactly.

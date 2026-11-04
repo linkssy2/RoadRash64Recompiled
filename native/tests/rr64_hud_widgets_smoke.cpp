@@ -117,6 +117,46 @@ int main() {
     check(int16_t(uint32_t(word(0x80200010))>>16)==-160*4);
     check((word(0x8020002C)&65535)==240*4);
     rr64_hud_label_end(rdram);rr64_hud_widgets_clear(rdram);half(0x800A2192)=0;
+    // Single-player distance/message and speed labels anchor as complete widgets.
+    word(0x800A4F24)=0;word(0x800A6578)=1;word(0x800A76A0)=0;
+    rr64_hud_widgets_begin(rdram);
+    put(0x800D9690,20);put(0x800D9694,210);
+    put(0x800D9690+88,248);put(0x800D9694+88,210);
+    word(0x800A76A0)=2;rr64_hud_widgets_end(rdram);
+    for(unsigned i=0;i<2;++i) {
+        word(0x800AC650)=0x80200000;
+        rr64_hud_label_begin(rdram,0x800D9650+i*88);
+        check(word(0x800AC650)==0x80200030);
+        check((word(0x8020000C)&4095)==(i?1024:0));
+        check((word(0x8020002C)&65535)==240*4);
+        rr64_hud_label_end(rdram);
+    }
+    // Decode the dial's actual extended-GBI stream, including its viewport data.
+    word(0x800AC650)=0x80200000;
+    rr64_hud_gauge_begin(rdram);
+    check(word(0x800AC650)==0x80200060);
+    check(uint32_t(word(0x80200030))==0x64000015);
+    check(uint32_t(word(0x80200038))==0xDE010000);
+    check(uint32_t(word(0x8020003C))==0x200050);
+    check(half(0x80200040)==640 && half(0x80200042)==480);
+    check(half(0x80200048)+320*4==640 && half(0x8020004A)==480);
+    check(uint32_t(word(0x80200050))==0x64000004 && word(0x80200054)==1024);
+    check(uint32_t(word(0x8020005C))==0x200040);
+    rr64_hud_gauge_end(rdram);
+    check(uint32_t(word(0x80200060))==0x64000016);
+    check(uint32_t(word(0x80200078))==0x64000018);
+    check(word(0x800AC650)==0x80200080);
+    rr64_hud_gauge_end(rdram);check(word(0x800AC650)==0x80200080);
+    // Do not add a dial to split-screen, pause, invalid dimensions or full buffers.
+    for(unsigned mode=0;mode<4;++mode) {
+        word(0x800A4F24)=mode==0?1:0;word(0x800A6578)=mode==0?2:1;
+        half(0x800A2192)=mode==1;word(0x800B0808)=mode==2?0:320;
+        rr64_hud_widgets_begin(rdram);
+        const auto cursor=mode==3?0x80223100:0x80200000;
+        word(0x800AC650)=cursor;rr64_hud_gauge_begin(rdram);rr64_hud_gauge_end(rdram);
+        check(word(0x800AC650)==cursor);
+    }
+    rr64_hud_widgets_clear(rdram);
     std::printf("HUD widget scopes / native countdown queues: %u checks, %u failures\n",checks,failures);
     return failures?1:0;
 }

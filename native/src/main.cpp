@@ -140,7 +140,7 @@
 #include "rr64_experimental_course.hpp"
 #endif
 
-constexpr const char* kVersion = "1.4.8";
+constexpr const char* kVersion = "1.4.9";
 constexpr uint64_t kRoadRash64UsXxh3 = 0x517F53BCD9D13BF2ULL;
 constexpr const char* kProgramName = "ROAD RASH 64 RECOMPILED";
 constexpr const char* kRemoveDistanceFogOption = "rr64_remove_distance_fog";

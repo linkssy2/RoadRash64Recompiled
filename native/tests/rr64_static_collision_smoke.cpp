@@ -1,5 +1,6 @@
 #include "rr64_engine_layout.hpp"
 #include "rr64_online_terrain.hpp"
+#include "rr64_traffic_roster.hpp"
 #include "rr64_prediction_replay.hpp"
 #include "rr64_netplay.hpp"
 #include <algorithm>
@@ -22,6 +23,8 @@ extern "C" void func_8001BD50(unsigned char*, recomp_context*);
 extern "C" void func_80034370(unsigned char*, recomp_context*);
 extern "C" void func_80014604(unsigned char*, recomp_context*);
 extern "C" void func_80014DE4(unsigned char*, recomp_context*);
+extern "C" void func_80075EA0(unsigned char*, recomp_context*);
+extern "C" void rr64_traffic_retirement_decision(unsigned char*, recomp_context*);
 namespace {
 std::vector<unsigned char> rom, captured;
 unsigned failures = 0, responses = 0;
@@ -260,8 +263,7 @@ void results_collision(){
 }
 void results_floors(){
     struct Floor { unsigned hit,height,surface;bool operator==(const Floor&)const=default; };
-    const auto floor=[](std::vector<unsigned char>& m,Vec point){
-        constexpr unsigned query=0x80400000;
+    const auto floor=[](std::vector<unsigned char>& m,Vec point,unsigned query=0x80400000){
         std::memset(m.data()+query-kRdramBegin,0,0x6c);
         auto c=context();c.f_odd=&c.f0.u32h;c.r4=guest_address(query);
         func_80014604(m.data(),&c);
@@ -278,6 +280,75 @@ void results_floors(){
             auto resident=image(s,true);const auto expected=floor(resident,point);
             if(!expected.hit)continue;
             ++supported;
+            if (supported == 1) {
+                constexpr unsigned car = 0x80410000;
+                unsigned traffic_checks = 0;
+                for (unsigned mode : {0x9u, 0x12u, 0x17u, 0x1cu, 0x1du, 0x14u}) {
+                    auto traffic = image(s, false); prepare(traffic);
+                    write_u32(traffic.data(), globals::main_mode, mode);
+                    write_u32(traffic.data(), globals::pending_mode, mode);
+                    for (unsigned slot = 0; slot < rr64::traffic::capacity; ++slot) {
+                        write_u32(traffic.data(), car + 0x28, slot);
+                        write_u32(traffic.data(), rr64::traffic::table(traffic.data()) + slot * 4, car);
+                        for (unsigned offset : {0x238u, 0x2a4u}) {
+                            check(!floor(traffic, point, car + offset).hit,
+                                  "unloaded traffic axle retains native retirement signal in every slot");
+                            ++traffic_checks;
+                        }
+                        write_u32(traffic.data(), rr64::traffic::table(traffic.data()) + slot * 4, 0);
+                    }
+                    check(floor(traffic, point) == expected, "riders keep off-screen floor support");
+                    check(floor(traffic, point, car + 0x238) == expected,
+                          "unregistered axle-shaped address is not classified as traffic");
+                    write_u32(traffic.data(), car + 0x28, 20);
+                    write_u32(traffic.data(), rr64::traffic::table(traffic.data()) + 20 * 4, car);
+                    check(floor(traffic, point, car + 0x238) == expected,
+                          "traffic owner authentication rejects out-of-bounds roster index");
+                    write_u32(traffic.data(), car + 0x28, 0);
+                    write_u32(traffic.data(), rr64::traffic::table(traffic.data()), car);
+                    copy(traffic, terrain, s.source, s.bytes);
+                    write_u32(traffic.data(), grid + s.cell * 16, terrain);
+                    write_s8(traffic.data(), grid + s.cell * 16 + 12, 5);
+                    for (unsigned offset : {0x238u, 0x2a4u})
+                        check(floor(traffic, point, car + offset) == expected,
+                              "resident traffic axle keeps exact native floor height and surface");
+                    for (unsigned kind = 0; kind < 6; ++kind) {
+                        const unsigned original_car = word(captured, 0x800d76e0);
+                        check(valid_guest_range(original_car, 0x360), "captured native traffic template is valid");
+                        if (!valid_guest_range(original_car, 0x360)) continue;
+                        for (bool resident : {true, false}) {
+                            std::copy_n(captured.data() + original_car - kRdramBegin, 0x360,
+                                        traffic.data() + car - kRdramBegin);
+                            write_u32(traffic.data(), car, kind);
+                            write_u32(traffic.data(), car + 0x28, 0);
+                            write_u16(traffic.data(), car + 0x334, 1);
+                            write_u32(traffic.data(), 0x800a652c, 3);
+                            vector(traffic, car + 0xd0, point);
+                            write_s8(traffic.data(), grid + s.cell * 16 + 12, resident ? 5 : 1);
+                            for (unsigned offset : {0x238u, 0x2a4u}) {
+                                auto c = context(); c.f_odd = &c.f0.u32h; c.r4 = guest_address(car + offset);
+                                func_80014604(traffic.data(), &c);
+                            }
+                            auto c = context(); c.f_odd = &c.f0.u32h; c.r4 = guest_address(car);
+                            func_80075EA0(traffic.data(), &c);
+                            unsigned short retired = 0, active = 0;
+                            read_u16(traffic.data(), car + 0x336, retired);
+                            check(retired == !resident, "real native axle routine requests retirement only after terrain eviction");
+                            c.r19 = guest_address(car);
+                            rr64_traffic_retirement_decision(traffic.data(), &c);
+                            read_u16(traffic.data(), car + 0x334, active);
+                            check(active == resident, "native retirement decision deactivates departed traffic");
+                            check(word(traffic, 0x800a652c) == (kind == 4 && !resident ? 2u : 3u),
+                                  "native police-car capacity is released exactly once");
+                            rr64_traffic_retirement_decision(traffic.data(), &c);
+                            check(word(traffic, 0x800a652c) == (kind == 4 && !resident ? 2u : 3u),
+                                  "repeating retirement does not decrement police capacity again");
+                        }
+                    }
+                }
+                std::cout << "traffic_retirement axle_checks=" << traffic_checks
+                          << " modes=6 slots=20 native_ground_cases=72 vehicle_types=6\n";
+            }
             for(unsigned mode:{0xbu,0x14u,0x19u,0x1eu}){
                 auto fixed=image(s,false);prepare(fixed);
                 write_u32(fixed.data(),globals::main_mode,mode);write_u32(fixed.data(),globals::pending_mode,mode);

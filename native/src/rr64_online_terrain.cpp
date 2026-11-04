@@ -1,5 +1,6 @@
 #include "rr64_online_terrain.hpp"
 #include "rr64_engine_layout.hpp"
+#include "rr64_traffic_roster.hpp"
 #include "rr64_prediction_rules.hpp"
 #ifdef RR64_EXPERIMENTAL_COURSE
 #include "rr64_experimental_course.hpp"
@@ -357,6 +358,9 @@ extern "C" void rr64_online_terrain_lookup(unsigned char* m, void* opaque) {
     const auto b=current_bank();
     if (!b || !valid(*b,m)) return;
     const unsigned record=unsigned(c.r4),query=unsigned(c.r8);
+    // Cars retire through failed axle queries on unloaded cells (75EA0/77294).
+    // Supplying permanent floors here exhausts the twenty-car replacement pool.
+    if (rr64::traffic::owns_ground_query(m, query)) return;
     if (record<b->grid || (record-b->grid)%16 || (record-b->grid)/16>=cells ||
         !valid_guest_range(query,0x6c)) return;
     const unsigned index=(record-b->grid)/16;

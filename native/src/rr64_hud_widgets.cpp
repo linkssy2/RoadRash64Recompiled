@@ -32,7 +32,7 @@ struct Placement {
 struct Frame {
     unsigned char *owner = nullptr;
     uint32_t first = 0, end = 0, views = 1;
-    bool drawing = false;
+    bool drawing = false, gauge_drawing = false;
     bool paused = false;
     std::array<Placement, text_capacity> labels{};
 };
@@ -111,7 +111,7 @@ extern "C" void rr64_hud_widgets_begin(unsigned char *rdram) {
     frame.first = read(rdram, 0x800A76A0);
 }
 extern "C" void rr64_hud_widgets_end(unsigned char *rdram) {
-    if (frame.owner != rdram || frame.views < 2)
+    if (frame.owner != rdram)
         return;
     frame.end = read(rdram, 0x800A76A0);
     if (frame.first > frame.end || frame.end > text_capacity) {
@@ -123,7 +123,8 @@ extern "C" void rr64_hud_widgets_end(unsigned char *rdram) {
         frame.end = 0;
         return;
     }
-    const float vw = frame.views > 2 ? width / 2 : width, vh = height / 2;
+    const float vw = frame.views > 2 ? width / 2 : width;
+    const float vh = frame.views > 1 ? height / 2 : height;
     for (uint32_t i = frame.first; i < frame.end; ++i) {
         const float x = number(rdram, text_base + i * text_stride + 0x40);
         const float y = number(rdram, text_base + i * text_stride + 0x44);
@@ -152,6 +153,48 @@ extern "C" void rr64_hud_widgets_end(unsigned char *rdram) {
         p.clip_right_origin = frame.views > 2 && !col ? 512 : 1024;
         p.width = uint16_t(width);
     }
+}
+// The native dial (12668) is an orthographic model, not a font/sprite.
+// Its own viewport anchor moves every tick and needle together at any aspect.
+extern "C" void rr64_hud_gauge_begin(unsigned char *rdram) {
+    if (frame.owner != rdram || frame.views != 1 || frame.paused || frame.gauge_drawing)
+        return;
+    const auto width = read(rdram, 0x800B0808), height = read(rdram, 0x800B080C);
+    if (!width || !height || width > 4096 || height > 4096)
+        return;
+    Placement p;
+    p.origin = 1024;
+    p.width = p.right = uint16_t(width);
+    p.bottom = uint16_t(height);
+    if (!align(rdram, p, true))
+        return;
+    auto dl = read(rdram, 0x800AC650);
+    write(rdram, dl, 0x64000015); // Push the race viewport.
+    write(rdram, dl + 4, 0);
+    write(rdram, dl + 8, 0xDE010000); // Skip embedded, frame-owned viewport data.
+    write(rdram, dl + 12, (dl + 32) & 0x1FFFFFFF);
+    const auto vp = dl + 16;
+    const int16_t values[] = {int16_t(width * 2), int16_t(height * 2), 511, 0,
+                             int16_t(-int(width) * 2), int16_t(height * 2), 511, 0};
+    for (unsigned i = 0; i < 8; ++i)
+        MEM_H(0, guest(vp + i * 2)) = values[i];
+    // vtrans is relative to RIGHT; RSP adds width*4, preserving native coordinates.
+    write(rdram, dl + 32, 0x64000004);
+    write(rdram, dl + 36, 1024);
+    write(rdram, dl + 40, 0);
+    write(rdram, dl + 44, vp & 0x1FFFFFFF);
+    write(rdram, 0x800AC650, dl + 48);
+    frame.gauge_drawing = true;
+}
+extern "C" void rr64_hud_gauge_end(unsigned char *rdram) {
+    if (frame.owner != rdram || !frame.gauge_drawing)
+        return;
+    auto dl = read(rdram, 0x800AC650);
+    write(rdram, dl, 0x64000016); // Restore viewport before other HUD consumers.
+    write(rdram, dl + 4, 0);
+    write(rdram, 0x800AC650, dl + 8);
+    align(rdram, {}, false);
+    frame.gauge_drawing = false;
 }
 // A label queued after rr64_hud_widgets_end with a fixed place in a 3/4-player
 // view: anchor it to the view's left edge, as the stock rank labels above are,
@@ -185,7 +228,7 @@ extern "C" void rr64_hud_label_begin(unsigned char *rdram, unsigned record) {
     if (index >= text_capacity)
         return;
     Placement p;
-    if (frame.paused && frame.views > 1 && index < read(rdram, 0x800A76A0)) {
+    if (frame.paused && index < read(rdram, 0x800A76A0)) {
         // Pause is one fullscreen menu, not a lower player's top-left widget.
         // Give all its queued labels a neutral center origin so the automatic
         // race HUD classifier cannot independently move the Options label.

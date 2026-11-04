@@ -222,6 +222,9 @@ hook = [
     { func = "func_80030220", before_vram = 0x80032040, text = "ctx->r4 = (int64_t)(int32_t)rr64_online_hud_actor_pointer(rdram, ctx->r4, 0xE0);" },
     { func = "func_80030220", before_vram = 0x800324C8, text = "ctx->r2 = (int64_t)(int32_t)rr64_online_hud_actor_pointer(rdram, ctx->r2, 0xE4);" },
     { func = "func_80030220", before_vram = 0x800326CC, text = "ctx->r4 = (int64_t)(int32_t)rr64_online_hud_actor_pointer(rdram, ctx->r4, 0xE0);" },
+    # Scope the 3D dial independently of the queued digital readout.
+    { func = "func_80030220", before_vram = 0x80030488, text = "rr64_hud_gauge_begin(rdram);" },
+    { func = "func_80030220", before_vram = 0x80030490, text = "rr64_hud_gauge_end(rdram);" },
     { func = "func_80030220", before_vram = 0x800342C4, text = "\n#ifdef RR64_EXPERIMENTAL_COURSE\nrr64_course_items_hud_quadrants(rdram,ctx);\nrr64_course_items_hud_end();\n#endif\nrr64_hud_widgets_end(rdram); rr64_quadrant_hud_draw(rdram, ctx); rr64_online_hud_end(rdram); rr64_custom_cop_hud(rdram, ctx);" },
     # Scope an entire native label (backing and glyphs) to one HUD anchor.
     { func = "func_80079780", before_vram = 0x80079818, text = "rr64_hud_label_begin(rdram, (unsigned)ctx->r16);" },
