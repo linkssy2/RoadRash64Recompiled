@@ -3556,7 +3556,7 @@ index 8ea27d5..03620a2 100644
 \ No newline at end of file
 +};
 diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
-index 5a331aa..b72a3cc 100644
+index 5a331aa..517c29a 100644
 --- a/src/hle/rt64_workload_queue.cpp
 +++ b/src/hle/rt64_workload_queue.cpp
 @@ -5,8 +5,25 @@
@@ -3963,7 +3963,7 @@ index 5a331aa..b72a3cc 100644
                  {
                      std::scoped_lock<std::mutex> managerLock(ext.sharedResources->managerMutex);
                      FramebufferManager &fbManager = ext.sharedResources->framebufferManager;
-@@ -955,63 +1131,188 @@ namespace RT64 {
+@@ -955,63 +1131,189 @@ namespace RT64 {
                              colorSet.insert(colorImg.address);
                          }
  
@@ -4080,7 +4080,8 @@ index 5a331aa..b72a3cc 100644
 +                    canRetainWorkload = canRetainWorkload && !tile.tileCopyUsed;
 +                }
 +                const bool renderNativeAtLimit = RR64FramePacing::renderRaceAtNativeLimit(
-+                    canRetainWorkload, !interpolationTargetKey.isEmpty(), workloadConfig.targetRate);
++                    canRetainWorkload, !interpolationTargetKey.isEmpty(), workloadConfig.targetRate,
++                    workload.viOriginalRate);
 +                bool renderNativeUnderPressure = false;
 +                if (!renderNativeAtLimit && canRetainWorkload && displayRateAboveOriginal &&
 +                    !interpolationTargetKey.isEmpty()) {
@@ -4183,7 +4184,7 @@ index 5a331aa..b72a3cc 100644
                      assert((displayFrames > 0) && "At least one display frame must be generated.");
                  }
                  else if (workload.viOriginalRate > 0) {
-@@ -1019,6 +1320,29 @@ namespace RT64 {
+@@ -1019,6 +1321,29 @@ namespace RT64 {
                  }
  
                  ext.sharedResources->viOriginalRate = workload.viOriginalRate;
@@ -4213,7 +4214,7 @@ index 5a331aa..b72a3cc 100644
                  
                  // Get the current and previous set of frame counters. The other set can be in use by the present queue. Skip if no new present event has arrived before this workload event.
                  InterpolatedFrameCounters &prevFrameCounters = ext.sharedResources->interpolatedFrames[ext.sharedResources->interpolatedFramesIndex];
-@@ -1029,7 +1353,7 @@ namespace RT64 {
+@@ -1029,7 +1354,7 @@ namespace RT64 {
                  }
                  // If the same set of counters is used, we wait until the presentation of its targets is finished so the targets are available to use. Waiting is ignored
                  // if the frame counter has never presented anything yet, as it'll only be a valid value if the previous present event actually did something.
@@ -4222,7 +4223,7 @@ index 5a331aa..b72a3cc 100644
                      std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
                      ext.sharedResources->interpolatedCondition.wait(interpolatedLock, [&]() {
                          return (prevFrameCounters.presented == 0) || (prevFrameCounters.presented >= prevFrameCounters.available);
-@@ -1040,13 +1364,22 @@ namespace RT64 {
+@@ -1040,13 +1365,22 @@ namespace RT64 {
                  curFrameCounters.skipped = false;
                  curFrameCounters.presented = 0;
                  curFrameCounters.available = 0;
@@ -4247,7 +4248,7 @@ index 5a331aa..b72a3cc 100644
                  if ((requiredFrames > 0) && (interpolatedTargets.size() < requiredFrames)) {
                      uint32_t previousSize = uint32_t(interpolatedTargets.size());
                      interpolatedTargets.resize(requiredFrames);
-@@ -1055,37 +1388,26 @@ namespace RT64 {
+@@ -1055,37 +1389,26 @@ namespace RT64 {
                      }
                  }
                  
@@ -4296,7 +4297,7 @@ index 5a331aa..b72a3cc 100644
                              overrideTarget = interpolatedTargets[targetIndex].get();
                              overrideModifier = (targetIndex + 1);
  
-@@ -1093,7 +1415,6 @@ namespace RT64 {
+@@ -1093,7 +1416,6 @@ namespace RT64 {
                                  // Wait until the target has finished presenting if the alternate frame counter (used by the present queue) is making use of this target.
                                  std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
                                  ext.sharedResources->interpolatedCondition.wait(interpolatedLock, [&]() {
@@ -4304,7 +4305,7 @@ index 5a331aa..b72a3cc 100644
                                      return prevFrameCounters.presented > targetIndex;
                                  });
                              }
-@@ -1116,23 +1437,40 @@ namespace RT64 {
+@@ -1116,23 +1438,40 @@ namespace RT64 {
                          ext.workloadExtrasUploader->submit(ext.workloadGraphicsWorker, { extrasUpload });
                      }
  
@@ -4354,7 +4355,7 @@ index 5a331aa..b72a3cc 100644
                          }
  
                          {
-@@ -1143,7 +1481,8 @@ namespace RT64 {
+@@ -1143,7 +1482,8 @@ namespace RT64 {
  
                          // Add the amount of display ticks that correspond to the remaining frames.
                          if (skipWorkloadNow) {
@@ -4364,7 +4365,7 @@ index 5a331aa..b72a3cc 100644
                          }
  
                          ext.sharedResources->interpolatedCondition.notify_all();
-@@ -1152,16 +1491,27 @@ namespace RT64 {
+@@ -1152,16 +1492,27 @@ namespace RT64 {
                      framesRendered++;
                  }
  
@@ -4400,7 +4401,7 @@ index 5a331aa..b72a3cc 100644
                  threadConfigurationValidate();
  
                  if (!workload.paused) {
-@@ -1221,4 +1571,4 @@ namespace RT64 {
+@@ -1221,4 +1572,4 @@ namespace RT64 {
              }
          }
      }
