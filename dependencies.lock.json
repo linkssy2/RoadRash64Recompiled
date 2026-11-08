@@ -237,6 +237,14 @@
       {
         "path": "src/render/rt64_buffer_capacity.h",
         "sha256": "54a7b0736586055d8982e9a887d30c49d25f0ee770739a0f84e1b4d56de2a1ff"
+      },
+      {
+        "path": "src/imgui/imgui_impl_sdl3_custom.cpp",
+        "sha256": "63732c12817c55a0a416d4dca009a63c33207d98e8a90fc2b9584be2ece89988"
+      },
+      {
+        "path": "src/imgui/imgui_impl_sdl3_custom.h",
+        "sha256": "b23bf33833f9c8b86ef7a2f7b47e1a107d2d0cc963e5e7ae3bed1828c0e85c68"
       }
     ]
   },
@@ -397,7 +405,7 @@
     "extraFiles": [
       {
         "path": "recompinput/include/recompinput/rr64_n64_switch_mapping.h",
-        "sha256": "19e9f05bff024962b8baaa93939467f009dc2c10173b42c53ba773eca8010afc"
+        "sha256": "41c02aaf1d7ccae6cd23a8bf13bf75609bea3655bd8d517ad62d720feeec00de"
       },
       {
         "path": "recompinput/include/recompinput/rr64_player_assignment.h",
@@ -413,7 +421,7 @@
     "path": "native/lib/RecompFrontend/recompui/lib/RmlUi",
     "url": "https://github.com/mikke89/RmlUi",
     "commit": "7a06f27db04fe5d13a5dacc19b2b4544673a4eca",
-    "patch": null,
+    "patch": "dependency-patches/native_lib_RecompFrontend_recompui_lib_RmlUi.patch",
     "extraFiles": []
   },
   {
@@ -439,5 +447,12 @@
     "platforms": [
       "linux"
     ]
+  },
+  {
+    "path": "native/lib/SDL3",
+    "url": "https://github.com/libsdl-org/SDL.git",
+    "commit": "fa2c02bb6e21974a89ea9824bc53c9932abe5f9c",
+    "patch": null,
+    "extraFiles": []
   }
 ]

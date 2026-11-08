@@ -1,3 +1,25 @@
+diff --git a/recompinput/CMakeLists.txt b/recompinput/CMakeLists.txt
+index 899372b..2a16ced 100644
+--- a/recompinput/CMakeLists.txt
++++ b/recompinput/CMakeLists.txt
+@@ -40,10 +40,13 @@ target_include_directories(recompinput PRIVATE
+     "${CMAKE_CURRENT_SOURCE_DIR}/include/recompinput"
+ )
+ 
+-if (WIN32)
+-    target_include_directories(recompinput PRIVATE ${sdl2_SOURCE_DIR}/include)
+-elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux")
+-    target_include_directories(recompinput PRIVATE ${SDL2_INCLUDE_DIRS})
++# RR64-SDL3: the parent build provides SDL3 as SDL3_LIBRARIES (SDL3.dll on Windows); it
++# carries the SDL3 headers and SDL's system link requirements.
++if (SDL3_LIBRARIES)
++    target_link_libraries(recompinput PUBLIC ${SDL3_LIBRARIES})
++else()
++    find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
++    target_link_libraries(recompinput PUBLIC SDL3::SDL3)
+ endif()
+ 
+ target_compile_options(recompinput PRIVATE
 diff --git a/recompinput/include/recompinput/input_binding.h b/recompinput/include/recompinput/input_binding.h
 index f39ad89..403fd40 100644
 --- a/recompinput/include/recompinput/input_binding.h
@@ -10,8 +32,40 @@ index f39ad89..403fd40 100644
          bool is_controller_being_bound(SDL_JoystickID joystick_id);
          void set_scanned_input(recompinput::InputField value);
          recompinput::InputDevice get_scanning_device();
+diff --git a/recompinput/include/recompinput/input_mapping.h b/recompinput/include/recompinput/input_mapping.h
+index eed283d..e095b41 100644
+--- a/recompinput/include/recompinput/input_mapping.h
++++ b/recompinput/include/recompinput/input_mapping.h
+@@ -2,13 +2,11 @@
+ #define __RECOMP_INPUT_MAPPING_H__
+ 
+ #include "input_types.h"
+-#include "SDL.h"
++#include <SDL3/SDL.h>
+ 
+ namespace recompinput {
+-    constexpr SDL_GameControllerButton SDL_CONTROLLER_BUTTON_SOUTH = SDL_CONTROLLER_BUTTON_A;
+-    constexpr SDL_GameControllerButton SDL_CONTROLLER_BUTTON_EAST = SDL_CONTROLLER_BUTTON_B;
+-    constexpr SDL_GameControllerButton SDL_CONTROLLER_BUTTON_WEST = SDL_CONTROLLER_BUTTON_X;
+-    constexpr SDL_GameControllerButton SDL_CONTROLLER_BUTTON_NORTH = SDL_CONTROLLER_BUTTON_Y;
++    // RR64-SDL3: SDL3 names face buttons by position (SDL_GAMEPAD_BUTTON_SOUTH...),
++    // which is what the SDL2-era SDL_CONTROLLER_BUTTON_SOUTH aliases spelled out.
+     using default_game_input_device_mapping = std::unordered_map<GameInput, std::vector<InputField>>;
+ 
+     const std::vector<InputField>& get_default_mapping_for_input(recompinput::InputDevice device, const GameInput input);
+@@ -29,8 +27,8 @@ namespace recompinput {
+     set_default_mapping_for_controller(
+         GameInput::Z,
+         {
+-            InputField::controller_digital(SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_PADDLE1),
+-            InputField::controller_analog(SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTX),
++            InputField::controller_digital(SDL_GamepadButton::SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1),
++            InputField::controller_analog(SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTX),
+         }
+     ); 
+ ```
 diff --git a/recompinput/include/recompinput/input_state.h b/recompinput/include/recompinput/input_state.h
-index 1961e29..7796c1d 100644
+index 1961e29..b353391 100644
 --- a/recompinput/include/recompinput/input_state.h
 +++ b/recompinput/include/recompinput/input_state.h
 @@ -1,6 +1,7 @@
@@ -22,15 +76,18 @@ index 1961e29..7796c1d 100644
  
  // disable warning: '/*' within block comment [-Wcomment] for GamepadMotion.hpp
  #pragma GCC diagnostic push
-@@ -12,6 +13,7 @@
+@@ -12,14 +13,19 @@
  #include "recompinput/recompinput.h"
  
  namespace recompinput {
-+    std::vector<SDL_GameController*> connected_controllers();
++    std::vector<SDL_Gamepad*> connected_controllers();
      struct ControllerState {
-         SDL_GameController* controller;
+-        SDL_GameController* controller;
++        SDL_Gamepad* controller;
          std::array<float, 3> latest_accelerometer;
-@@ -20,6 +22,10 @@ namespace recompinput {
+         GamepadMotion motion;
+-        uint32_t prev_gyro_timestamp;
++        uint64_t prev_gyro_timestamp; // RR64-SDL3: event timestamps are Uint64 nanoseconds
          std::array<float, 2> rotation_delta{};
          std::array<float, 2> pending_rotation_delta{};
          bool rumble_failed;
@@ -55,21 +112,35 @@ index 1961e29..7796c1d 100644
      bool should_override_keystate(SDL_Scancode key, SDL_Keymod mod);
      float get_input_analog(int controller_num, const InputField& field);
      float get_input_analog(int controller_num, const std::span<const InputField> fields);
-@@ -42,6 +54,10 @@ namespace recompinput {
+@@ -42,9 +54,13 @@ namespace recompinput {
      void set_right_analog_suppressed(bool suppressed);
      bool game_input_disabled();
      bool all_input_disabled();
 +    void mark_keyboard_active();
 +    void mark_controller_active(SDL_JoystickID joystick_id);
 +    InputDevice get_active_input_device();
-+    SDL_GameControllerType get_active_controller_type();
++    SDL_GamepadType get_active_controller_type();
      ControllerState &get_controller_state(SDL_JoystickID joystick_id);
-     SDL_GameController *get_controller_from_joystick_id(SDL_JoystickID joystick_id);
-     void add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller);
+-    SDL_GameController *get_controller_from_joystick_id(SDL_JoystickID joystick_id);
+-    void add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller);
++    SDL_Gamepad *get_controller_from_joystick_id(SDL_JoystickID joystick_id);
++    void add_controller_state(SDL_JoystickID joystick_id, SDL_Gamepad* controller);
+     void remove_controller_state(SDL_JoystickID joystick_id);
+     void add_rotation_deltas(SDL_JoystickID joystick_id, float rot_x, float rot_y);
+     void add_mouse_deltas(float delta_x, float delta_y);
 diff --git a/recompinput/include/recompinput/input_types.h b/recompinput/include/recompinput/input_types.h
-index f5ed6c0..a4bc864 100644
+index f5ed6c0..942830e 100644
 --- a/recompinput/include/recompinput/input_types.h
 +++ b/recompinput/include/recompinput/input_types.h
+@@ -4,7 +4,7 @@
+ #include <string>
+ #include <array>
+ #include "json/json.hpp"
+-#include "SDL.h"
++#include <SDL3/SDL.h>
+ 
+ namespace recompinput {
+     #define DEFINE_N64_BUTTON_INPUTS() \
 @@ -37,10 +37,15 @@ namespace recompinput {
          DEFINE_INPUT(TAB_LEFT_MENU, 0, "Tab Left (Menu)") \
          DEFINE_INPUT(TAB_RIGHT_MENU, 0, "Tab Right (Menu)")
@@ -87,21 +158,53 @@ index f5ed6c0..a4bc864 100644
  
      #define DEFINE_INPUT(name, value, readable) name,
      // - Enum containing every recomp input.
+@@ -57,7 +62,7 @@ namespace recompinput {
+     };
+     #undef DEFINE_INPUT
+ 
+-    // What type of source an input comes from (SDL_Scancode, SDL_GameControllerButton, SDL_GameControllerAxis, SDL_BUTTON, etc.)
++    // What type of source an input comes from (SDL_Scancode, SDL_GamepadButton, SDL_GamepadAxis, SDL_BUTTON_MASK, etc.)
+     enum class InputType {
+         None = 0, // Using zero for None ensures that default initialized InputFields are unbound.
+         Keyboard,
+@@ -79,11 +84,11 @@ namespace recompinput {
+             return InputField{ InputType::Keyboard, static_cast<int32_t>(key) };
+         }
+ 
+-        static InputField controller_digital(SDL_GameControllerButton button) {
++        static InputField controller_digital(SDL_GamepadButton button) {
+             return InputField{ InputType::ControllerDigital, static_cast<int32_t>(button) };
+         }
+ 
+-        static InputField controller_analog(SDL_GameControllerAxis axis, bool positive = true) {
++        static InputField controller_analog(SDL_GamepadAxis axis, bool positive = true) {
+             return InputField{ InputType::ControllerAnalog, positive ? (static_cast<int32_t>(axis) + 1) : -(static_cast<int32_t>(axis) + 1) };
+         }
+ 
 diff --git a/recompinput/include/recompinput/players.h b/recompinput/include/recompinput/players.h
-index 6c59b61..5fc0536 100644
+index 6c59b61..e7a846b 100644
 --- a/recompinput/include/recompinput/players.h
 +++ b/recompinput/include/recompinput/players.h
+@@ -5,7 +5,7 @@
+ 
+ namespace recompinput {
+     struct Player {
+-        SDL_GameController* controller = nullptr;
++        SDL_Gamepad* controller = nullptr;
+         bool keyboard_enabled = false;
+         std::chrono::high_resolution_clock::duration last_button_press_timestamp = std::chrono::high_resolution_clock::duration::zero();
+ 
 @@ -25,6 +25,8 @@ namespace recompinput {
          const Player& get_player(int player_index, bool temp_player = false);
          bool get_player_is_assigned(int player_index, bool temp_player = false);
          bool has_enough_players_assigned();
 +        void refresh_connected_players(bool include_keyboard);
-+        bool select_player_device(int player_index, SDL_GameController* controller);
++        bool select_player_device(int player_index, SDL_Gamepad* controller);
          InputDevice get_player_input_device(int player_index, bool temp_player = false);
      }
  
 diff --git a/recompinput/include/recompinput/profiles.h b/recompinput/include/recompinput/profiles.h
-index 45bedd1..e7c8645 100644
+index 45bedd1..9ae6166 100644
 --- a/recompinput/include/recompinput/profiles.h
 +++ b/recompinput/include/recompinput/profiles.h
 @@ -9,7 +9,7 @@
@@ -113,7 +216,7 @@ index 45bedd1..e7c8645 100644
          std::string serial;
          int vendor{};
          int product{};
-@@ -46,7 +46,15 @@ namespace recompinput {
+@@ -46,21 +46,36 @@ namespace recompinput {
          int get_input_profile_count();
          const std::vector<int> get_indices_for_custom_profiles(InputDevice device);
          void set_input_profile_for_player(int player_index, int profile_index, InputDevice device);
@@ -125,11 +228,24 @@ index 45bedd1..e7c8645 100644
 +        // Unassigned SP keyboard/startup input retains its legacy layout.
 +        int get_game_input_profile_for_player(int player_index, InputDevice device);
 +        // Menu events use the emitting device's selected slot layout first.
-+        int get_controller_event_profile(SDL_GameController* controller);
++        int get_controller_event_profile(SDL_Gamepad* controller);
          int add_controller(ControllerGUID guid, int profile_index);
          const ControllerGUID &get_controller_guid(int controller_index);
          int get_controller_profile_index(int controller_index);
-@@ -60,7 +68,9 @@ namespace recompinput {
+         int get_controller_by_guid(ControllerGUID guid);
++        // RR64-SDL3: if no saved controller has this exact identity but exactly
++        // one has the same vendor, product and serial (an SDL2-era entry whose
++        // version or name CRC differs under SDL3), give it this identity so its
++        // profile follows the pad. Returns the controller index or -1.
++        int adopt_controller_identity(const ControllerGUID& guid);
+         int get_controller_count();
+-        ControllerGUID get_guid_from_sdl_controller(SDL_GameController *game_controller);
+-        int get_controller_profile_index_from_sdl_controller(SDL_GameController *game_controller);
++        ControllerGUID get_guid_from_sdl_controller(SDL_Gamepad *game_controller);
++        int get_controller_profile_index_from_sdl_controller(SDL_Gamepad *game_controller);
+         std::string get_mp_keyboard_profile_key(int player_index);
+         std::string get_mp_keyboard_profile_name(int player_index);
+         void initialize_input_bindings();
          int get_sp_controller_profile_index();
          int get_sp_keyboard_profile_index();
          int get_or_create_mp_keyboard_profile_index(int player_index);
@@ -140,53 +256,56 @@ index 45bedd1..e7c8645 100644
  
          bool load_controls_config(const std::filesystem::path& path);
 diff --git a/recompinput/include/recompinput/recompinput.h b/recompinput/include/recompinput/recompinput.h
-index 855ec2e..9a70053 100644
+index 855ec2e..83e20e2 100644
 --- a/recompinput/include/recompinput/recompinput.h
 +++ b/recompinput/include/recompinput/recompinput.h
-@@ -2,6 +2,7 @@
+@@ -1,7 +1,8 @@
+ #pragma once
  
- #include "SDL.h"
+-#include "SDL.h"
++#include <SDL3/SDL.h>
  #include "chrono"
 +#include "string"
  
  namespace recompinput {
      constexpr size_t max_num_players_supported = 128;
 diff --git a/recompinput/src/input_binding.cpp b/recompinput/src/input_binding.cpp
-index 45d55a7..735ce94 100644
+index 45d55a7..8401cfc 100644
 --- a/recompinput/src/input_binding.cpp
 +++ b/recompinput/src/input_binding.cpp
-@@ -11,6 +11,9 @@ namespace recompinput {
+@@ -11,6 +11,10 @@ namespace recompinput {
          // Designates when binding has been cancelled or completed and the event queue should be purged/ignored.
          bool skip_events = false;
          int player_index = -1;
 +        int profile_index = -1;
-+        SDL_JoystickID controller_id = -1;
++        // RR64-SDL3: instance IDs are unsigned; 0 means "no controller" (SDL2: -1).
++        SDL_JoystickID controller_id = 0;
 +        bool keyboard_assigned = false;
          recompinput::GameInput game_input = recompinput::GameInput::COUNT;
          int binding_index = -1;
          recompinput::InputField new_binding = {};
-@@ -20,6 +23,9 @@ namespace recompinput {
+@@ -20,6 +24,9 @@ namespace recompinput {
              active = false;
              skip_events = false;
              player_index = -1;
 +            profile_index = -1;
-+            controller_id = -1;
++            controller_id = 0;
 +            keyboard_assigned = false;
              game_input = recompinput::GameInput::COUNT;
              binding_index = -1;
              new_binding = {};
-@@ -27,13 +33,37 @@ namespace recompinput {
+@@ -27,13 +34,37 @@ namespace recompinput {
          }
      } BindingState;
  
 +    static SDL_JoystickID assigned_controller_id(int player_index) {
 +        const auto player = players::get_player(player_index);
-+        if (!player.controller) return -1;
++        if (!player.controller) return 0;
 +        const auto connected = recompinput::connected_controllers();
 +        // Removal closes SDL's handle before slot reconciliation. A queued
 +        // binding event must not dereference that stale slot pointer.
-+        if (std::find(connected.begin(), connected.end(), player.controller) == connected.end()) return -1;
-+        return SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(player.controller));
++        if (std::find(connected.begin(), connected.end(), player.controller) == connected.end()) return 0;
++        return SDL_GetJoystickID(SDL_GetGamepadJoystick(player.controller));
 +    }
 +
      void binding::start_scanning(int player_index, recompinput::GameInput game_input, int binding_index, recompinput::InputDevice device) {
@@ -199,8 +318,8 @@ index 45d55a7..735ce94 100644
 +        if (profile < 0 || profile >= profiles::get_input_profile_count() ||
 +            profiles::get_input_profile_device(profile) != device) return;
 +        const auto player = players::get_player(player_index);
-+        const auto controller_id = device == InputDevice::Controller ? assigned_controller_id(player_index) : -1;
-+        if (device == InputDevice::Controller && player.controller && controller_id < 0) return;
++        const SDL_JoystickID controller_id = device == InputDevice::Controller ? assigned_controller_id(player_index) : 0;
++        if (device == InputDevice::Controller && player.controller && controller_id == 0) return;
          BindingState.active = true;
          BindingState.skip_events = false;
          BindingState.player_index = player_index;
@@ -213,7 +332,7 @@ index 45d55a7..735ce94 100644
      }
  
      void binding::stop_scanning() {
-@@ -46,28 +76,49 @@ namespace recompinput {
+@@ -46,28 +77,49 @@ namespace recompinput {
      }
  
      bool binding::is_controller_being_bound(SDL_JoystickID joystick_id) {
@@ -226,7 +345,7 @@ index 45d55a7..735ce94 100644
 -            return true;
 -        }
 +        const auto assigned_id = assigned_controller_id(BindingState.player_index);
-+        if (assigned_id >= 0 && assigned_id == joystick_id && assigned_id == BindingState.controller_id) return true;
++        if (assigned_id != 0 && assigned_id == joystick_id && assigned_id == BindingState.controller_id) return true;
  
 -        const auto& player = players::get_player(BindingState.player_index);
 -        if (player.controller != nullptr) {
@@ -259,8 +378,8 @@ index 45d55a7..735ce94 100644
      void binding::set_scanned_input(recompinput::InputField value) {
 +        if (!BindingState.active) return;
 +        const int profile = profiles::get_input_profile_for_player(BindingState.player_index, BindingState.device);
-+        const auto controller_id = BindingState.device == InputDevice::Controller ?
-+            assigned_controller_id(BindingState.player_index) : -1;
++        const SDL_JoystickID controller_id = BindingState.device == InputDevice::Controller ?
++            assigned_controller_id(BindingState.player_index) : 0;
 +        // An assignment/hotplug event can arrive before the controls page's
 +        // next update. Never apply its queued binding to a different layout.
 +        if (profile != BindingState.profile_index || controller_id != BindingState.controller_id ||
@@ -276,7 +395,7 @@ index 45d55a7..735ce94 100644
              BindingState.binding_index,
              value
 diff --git a/recompinput/src/input_events.cpp b/recompinput/src/input_events.cpp
-index c76a1dc..867bb00 100644
+index c76a1dc..b8a8243 100644
 --- a/recompinput/src/input_events.cpp
 +++ b/recompinput/src/input_events.cpp
 @@ -1,6 +1,12 @@
@@ -292,7 +411,7 @@ index c76a1dc..867bb00 100644
  #include "recompinput/profiles.h"
  #include "recompui/config.h"
  #include "ultramodern/ultramodern.hpp"
-@@ -11,6 +17,60 @@ static struct {
+@@ -11,6 +17,83 @@ static struct {
  
  namespace recompinput {
  
@@ -313,12 +432,12 @@ index c76a1dc..867bb00 100644
 +    ~HotplugTiming() {
 +        if (enabled) std::fprintf(stderr, "[RR64-HOTPLUG] phase=%s duration-ms=%.3f tick-ms=%llu\n", phase,
 +            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-begin).count(),
-+            static_cast<unsigned long long>(SDL_GetTicks64()));
++            static_cast<unsigned long long>(SDL_GetTicks()));
 +    }
 +};
-+int poll_event_with_timing(SDL_Event* event) {
++bool poll_event_with_timing(SDL_Event* event) {
 +    const auto begin = hotplug_diagnostics() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-+    const int result = SDL_PollEvent(event);
++    const bool result = SDL_PollEvent(event);
 +    // Separate opt-in, bounded button-only trace for controller reports that
 +    // are swallowed by a mapping. No keyboard, axis spam or gameplay logging.
 +    static const bool trace_buttons = [] {
@@ -327,15 +446,16 @@ index c76a1dc..867bb00 100644
 +    }();
 +    static unsigned button_reports = 0;
 +    if (result && trace_buttons && button_reports < 256 &&
-+        (event->type == SDL_JOYBUTTONDOWN || event->type == SDL_JOYBUTTONUP ||
-+         event->type == SDL_CONTROLLERBUTTONDOWN || event->type == SDL_CONTROLLERBUTTONUP)) {
++        (event->type == SDL_EVENT_JOYSTICK_BUTTON_DOWN || event->type == SDL_EVENT_JOYSTICK_BUTTON_UP ||
++         event->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || event->type == SDL_EVENT_GAMEPAD_BUTTON_UP)) {
 +        ++button_reports;
-+        const bool raw = event->type == SDL_JOYBUTTONDOWN || event->type == SDL_JOYBUTTONUP;
-+        std::fprintf(stderr,"[RR64-BUTTON] tick=%llu raw=%d device=%d button=%u state=%u\n",
-+            static_cast<unsigned long long>(SDL_GetTicks64()),raw,
-+            raw ? event->jbutton.which : event->cbutton.which,
-+            unsigned(raw ? event->jbutton.button : event->cbutton.button),
-+            unsigned(raw ? event->jbutton.state : event->cbutton.state));
++        const bool raw = event->type == SDL_EVENT_JOYSTICK_BUTTON_DOWN || event->type == SDL_EVENT_JOYSTICK_BUTTON_UP;
++        // RR64-SDL3: gamepad events live in gbutton, and the pressed state is a bool.
++        std::fprintf(stderr,"[RR64-BUTTON] tick=%llu raw=%d device=%u button=%u state=%u\n",
++            static_cast<unsigned long long>(SDL_GetTicks()),raw,
++            unsigned(raw ? event->jbutton.which : event->gbutton.which),
++            unsigned(raw ? event->jbutton.button : event->gbutton.button),
++            unsigned(raw ? event->jbutton.down : event->gbutton.down));
 +    }
 +    if (!hotplug_diagnostics()) return result;
 +    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-begin).count();
@@ -344,78 +464,145 @@ index c76a1dc..867bb00 100644
 +    if (ms >= 20.0 && reports < 32) {
 +        ++reports;
 +        std::fprintf(stderr, "[RR64-HOTPLUG] phase=event-pump duration-ms=%.3f event=%u tick-ms=%llu\n",
-+            ms, result ? unsigned(event->type) : 0u, static_cast<unsigned long long>(SDL_GetTicks64()));
++            ms, result ? unsigned(event->type) : 0u, static_cast<unsigned long long>(SDL_GetTicks()));
 +    }
 +    return result;
 +}
 +}
 +
++// RR64-SDL3: SDL2's SDL_SetRelativeMouseMode applied to the focused window.
++// SDL3 sets it per window, so follow the focused game window and release the
++// previous one when focus moves or the lock ends.
++static void set_relative_mouse_mode(bool enabled) {
++    static SDL_Window* relative_window = nullptr;
++    SDL_Window* target = SDL_GetKeyboardFocus();
++    if (target == nullptr) {
++        target = SDL_GetMouseFocus();
++    }
++
++    if (relative_window != nullptr && (!enabled || relative_window != target)) {
++        SDL_SetWindowRelativeMouseMode(relative_window, false);
++        relative_window = nullptr;
++    }
++
++    if (enabled && target != nullptr && relative_window != target) {
++        if (SDL_SetWindowRelativeMouseMode(target, true)) {
++            relative_window = target;
++        }
++    }
++}
++
  void queue_if_enabled(SDL_Event* event) {
      if (!recompinput::all_input_disabled() && !binding::should_skip_events()) {
          recompui::queue_event(*event);
-@@ -43,6 +103,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
-     case SDL_EventType::SDL_KEYDOWN:
+@@ -40,9 +123,10 @@ void purge_deferred_controller_profiles() {
+ 
+ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+     switch (event->type) {
+-    case SDL_EventType::SDL_KEYDOWN:
++    case SDL_EventType::SDL_EVENT_KEY_DOWN:
      {
          SDL_KeyboardEvent* keyevent = &event->key;
 +        recompinput::mark_keyboard_active();
  
          // Skip repeated events when not in the menu
          if (!recompui::is_context_capturing_input() &&
-@@ -72,38 +133,88 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+@@ -50,61 +134,120 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+             break;
+         }
+ 
+-        if ((keyevent->keysym.scancode == SDL_Scancode::SDL_SCANCODE_RETURN && (keyevent->keysym.mod & SDL_Keymod::KMOD_ALT)) ||
+-            keyevent->keysym.scancode == SDL_Scancode::SDL_SCANCODE_F11
++        // RR64-SDL3: SDL_KeyboardEvent carries scancode/key/mod directly (no keysym),
++        // and SDL_Keymod is a plain bit mask (SDL_KMOD_* are macros).
++        if ((keyevent->scancode == SDL_Scancode::SDL_SCANCODE_RETURN && (keyevent->mod & SDL_KMOD_ALT)) ||
++            keyevent->scancode == SDL_Scancode::SDL_SCANCODE_F11
+             ) {
+             recompui::config::graphics::toggle_fullscreen();
+         }
+         if (binding::is_binding()) {
+-            if (keyevent->keysym.scancode == SDL_Scancode::SDL_SCANCODE_ESCAPE) {
++            if (keyevent->scancode == SDL_Scancode::SDL_SCANCODE_ESCAPE) {
+                 binding::stop_scanning();
+             }
+             else if (binding::get_scanning_device() == InputDevice::Keyboard) {
+-                binding::set_scanned_input({ InputType::Keyboard, keyevent->keysym.scancode });
++                binding::set_scanned_input({ InputType::Keyboard, static_cast<int32_t>(keyevent->scancode) });
+             }
+         }
+         else {
+-            if (!should_override_keystate(keyevent->keysym.scancode, static_cast<SDL_Keymod>(keyevent->keysym.mod))) {
++            if (!should_override_keystate(keyevent->scancode, keyevent->mod)) {
+                 queue_if_enabled(event);
+             }
+         }
+     }
      break;
-     case SDL_EventType::SDL_CONTROLLERDEVICEADDED:
+-    case SDL_EventType::SDL_CONTROLLERDEVICEADDED:
++    case SDL_EventType::SDL_EVENT_GAMEPAD_ADDED:
      {
-+        HotplugTiming total{"add-total"};
-         SDL_ControllerDeviceEvent* controller_event = &event->cdevice;
+-        SDL_ControllerDeviceEvent* controller_event = &event->cdevice;
 -        SDL_GameController* controller = SDL_GameControllerOpen(controller_event->which);
 -        printf("Controller added: %d\n", controller_event->which);
++        HotplugTiming total{"add-total"};
++        // RR64-SDL3: `which` is the joystick instance ID for ADDED as well
++        // (SDL2 sent a device index here), and SDL_OpenGamepad takes it.
++        SDL_GamepadDeviceEvent* controller_event = &event->gdevice;
 +        // HIDAPI identities include the driver/subtype; do not apply this raw
 +        // layout to a kernel/DirectInput device with the same vendor/product.
-+        if (rr64::input::register_n64_hidapi_mapping(SDL_JoystickGetDeviceGUID(controller_event->which)) < 0 && hotplug_diagnostics()) {
++        if (rr64::input::register_n64_hidapi_mapping(SDL_GetJoystickGUIDForID(controller_event->which)) < 0 && hotplug_diagnostics()) {
 +            std::fprintf(stderr, "[RR64-CONTROLLER] N64 Switch mapping failed: %s\n", SDL_GetError());
 +        }
-+        SDL_GameController* controller = nullptr;
++        SDL_Gamepad* controller = nullptr;
 +        {
 +            HotplugTiming open{"open-device"};
-+            controller = SDL_GameControllerOpen(controller_event->which);
++            controller = SDL_OpenGamepad(controller_event->which);
 +        }
-+        // Rapid unplug/replug can invalidate the pending device index. Never
++        // Rapid unplug/replug can remove the device before it is opened. Never
 +        // create a profile for a failed open (the empty GUID is not a device).
 +        if (!controller) break;
-+        if (hotplug_diagnostics()) std::fprintf(stderr, "[RR64-CONTROLLER] Added device index %d.\n", controller_event->which);
++        if (hotplug_diagnostics()) std::fprintf(stderr, "[RR64-CONTROLLER] Added instance %u.\n", unsigned(controller_event->which));
          if (controller != nullptr) {
 -            printf("  Instance ID: %d\n", SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)));
 -            printf("  Path: %s\n", SDL_JoystickPath(SDL_GameControllerGetJoystick(controller)));
-+            SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
+-            recompinput::add_controller_state(SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)), controller);
++            SDL_Joystick* joystick = SDL_GetGamepadJoystick(controller);
 +            if (hotplug_diagnostics()) std::fprintf(
 +                stderr,
-+                "[RR64-CONTROLLER] name=%s instance=%d player=%d rumble=%d path=%s\n",
-+                SDL_GameControllerName(controller),
-+                static_cast<int>(SDL_JoystickInstanceID(joystick)),
-+                SDL_GameControllerGetPlayerIndex(controller),
-+                static_cast<int>(SDL_JoystickHasRumble(joystick)),
-+                SDL_JoystickPath(joystick));
++                "[RR64-CONTROLLER] name=%s instance=%u player=%d rumble=%d path=%s\n",
++                SDL_GetGamepadName(controller),
++                unsigned(SDL_GetJoystickID(joystick)),
++                SDL_GetGamepadPlayerIndex(controller),
++                static_cast<int>(SDL_GetBooleanProperty(SDL_GetJoystickProperties(joystick), SDL_PROP_JOYSTICK_CAP_RUMBLE_BOOLEAN, false)),
++                SDL_GetJoystickPath(joystick));
 +            if (hotplug_diagnostics()) {
 +                char guid[33]{};
-+                SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
-+                char* mapping = SDL_GameControllerMapping(controller);
++                SDL_GUIDToString(SDL_GetJoystickGUID(joystick), guid, sizeof(guid));
++                char* mapping = SDL_GetGamepadMapping(controller);
 +                std::fprintf(stderr, "[RR64-CONTROLLER] guid=%s vendor=%04x product=%04x buttons=%d axes=%d hats=%d mapping=%s\n",
-+                    guid, SDL_GameControllerGetVendor(controller), SDL_GameControllerGetProduct(controller),
-+                    SDL_JoystickNumButtons(joystick), SDL_JoystickNumAxes(joystick), SDL_JoystickNumHats(joystick),
++                    guid, SDL_GetGamepadVendor(controller), SDL_GetGamepadProduct(controller),
++                    SDL_GetNumJoystickButtons(joystick), SDL_GetNumJoystickAxes(joystick), SDL_GetNumJoystickHats(joystick),
 +                    mapping ? mapping : "<none>");
 +                SDL_free(mapping);
 +            }
-             recompinput::add_controller_state(SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)), controller);
++            recompinput::add_controller_state(SDL_GetJoystickID(SDL_GetGamepadJoystick(controller)), controller);
  
+-            if (SDL_GameControllerHasSensor(controller, SDL_SensorType::SDL_SENSOR_GYRO) && SDL_GameControllerHasSensor(controller, SDL_SensorType::SDL_SENSOR_ACCEL)) {
+-                SDL_GameControllerSetSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_GYRO, SDL_TRUE);
+-                SDL_GameControllerSetSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_ACCEL, SDL_TRUE);
 +            HotplugTiming sensors{"enable-sensors"};
-             if (SDL_GameControllerHasSensor(controller, SDL_SensorType::SDL_SENSOR_GYRO) && SDL_GameControllerHasSensor(controller, SDL_SensorType::SDL_SENSOR_ACCEL)) {
-                 SDL_GameControllerSetSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_GYRO, SDL_TRUE);
-                 SDL_GameControllerSetSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_ACCEL, SDL_TRUE);
++            if (SDL_GamepadHasSensor(controller, SDL_SensorType::SDL_SENSOR_GYRO) && SDL_GamepadHasSensor(controller, SDL_SensorType::SDL_SENSOR_ACCEL)) {
++                SDL_SetGamepadSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_GYRO, true);
++                SDL_SetGamepadSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_ACCEL, true);
              }
          }
          
 +        HotplugTiming profile{"register-profile"};
          ControllerGUID guid = profiles::get_guid_from_sdl_controller(controller);
++        // RR64-SDL3: a controller saved by an SDL2 build may report a different
++        // version/name CRC under SDL3. Re-key its saved entry instead of
++        // creating a fresh default profile for the same physical pad.
++        profiles::adopt_controller_identity(guid);
          if (profiles::get_controller_by_guid(guid) < 0) {
 -            if (players::is_single_player_mode()) {
 -                deferred_controller_profiles[guid.hash] = guid;
@@ -430,64 +617,214 @@ index c76a1dc..867bb00 100644
          }
      }
      break;
-     case SDL_EventType::SDL_CONTROLLERDEVICEREMOVED:
+-    case SDL_EventType::SDL_CONTROLLERDEVICEREMOVED:
++    case SDL_EventType::SDL_EVENT_GAMEPAD_REMOVED:
      {
-+        HotplugTiming total{"remove-state"};
-         SDL_ControllerDeviceEvent* controller_event = &event->cdevice;
+-        SDL_ControllerDeviceEvent* controller_event = &event->cdevice;
 -        printf("Controller removed: %d\n", controller_event->which);
++        HotplugTiming total{"remove-state"};
++        SDL_GamepadDeviceEvent* controller_event = &event->gdevice;
 +        if (hotplug_diagnostics()) std::fprintf(
 +            stderr,
-+            "[RR64-CONTROLLER] Removed instance %d.\n",
-+            controller_event->which);
++            "[RR64-CONTROLLER] Removed instance %u.\n",
++            unsigned(controller_event->which));
          recompinput::remove_controller_state(controller_event->which);
      }
      break;
-+    case SDL_EventType::SDL_WINDOWEVENT:
-+        if (event->window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
-+            event->window.event == SDL_WINDOWEVENT_MINIMIZED ||
-+            event->window.event == SDL_WINDOWEVENT_HIDDEN) {
-+            recompinput::set_game_window_focused(false);
-+        }
-+        else if (event->window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
-+            recompinput::set_game_window_focused(true);
-+        }
-+        queue_if_enabled(event);
-+        break;
-+    case SDL_EventType::SDL_APP_WILLENTERBACKGROUND:
-+    case SDL_EventType::SDL_APP_DIDENTERBACKGROUND:
+-    case SDL_EventType::SDL_QUIT: {
++    // RR64-SDL3: window events are individual event types; the rest of the
++    // SDL_EVENT_WINDOW_* range reaches the UI through the default case.
++    case SDL_EventType::SDL_EVENT_WINDOW_FOCUS_LOST:
++    case SDL_EventType::SDL_EVENT_WINDOW_MINIMIZED:
++    case SDL_EventType::SDL_EVENT_WINDOW_HIDDEN:
 +        recompinput::set_game_window_focused(false);
 +        queue_if_enabled(event);
 +        break;
-     case SDL_EventType::SDL_QUIT: {
++    case SDL_EventType::SDL_EVENT_WINDOW_FOCUS_GAINED:
++        recompinput::set_game_window_focused(true);
++        queue_if_enabled(event);
++        break;
++    case SDL_EventType::SDL_EVENT_WILL_ENTER_BACKGROUND:
++    case SDL_EventType::SDL_EVENT_DID_ENTER_BACKGROUND:
++        recompinput::set_game_window_focused(false);
++        queue_if_enabled(event);
++        break;
++    case SDL_EventType::SDL_EVENT_QUIT: {
          if (!ultramodern::is_game_started()) {
              ultramodern::quit();
-@@ -122,13 +233,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+             return true;
+@@ -114,45 +257,46 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+         recompui::activate_mouse();
+         break;
+     }
+-    case SDL_EventType::SDL_MOUSEWHEEL:
++    case SDL_EventType::SDL_EVENT_MOUSE_WHEEL:
+     {
+         SDL_MouseWheelEvent* wheel_event = &event->wheel;
+-        recompinput::add_mouse_wheel_delta(wheel_event->y * (wheel_event->direction == SDL_MOUSEWHEEL_FLIPPED ? -1 : 1));
++        // RR64-SDL3: wheel deltas are floats; integer_y is the accumulated
++        // whole-notch count, matching SDL2's integer wheel.y.
++        recompinput::add_mouse_wheel_delta(wheel_event->integer_y * (wheel_event->direction == SDL_MOUSEWHEEL_FLIPPED ? -1 : 1));
+     }
      queue_if_enabled(event);
      break;
-     case SDL_EventType::SDL_CONTROLLERBUTTONDOWN:
-+        recompinput::mark_controller_active(event->cbutton.which);
-         if (binding::is_binding() && binding::is_controller_being_bound(event->cbutton.which)) {
+-    case SDL_EventType::SDL_CONTROLLERBUTTONDOWN:
+-        if (binding::is_binding() && binding::is_controller_being_bound(event->cbutton.which)) {
 -            // TODO: Needs the controller profile index.
 -            auto menuToggleBinding0 = profiles::get_input_binding(0, GameInput::TOGGLE_MENU, 0);
 -            auto menuToggleBinding1 = profiles::get_input_binding(0, GameInput::TOGGLE_MENU, 1);
 -            // note - magic number: 0 is InputType::None
 -            if ((menuToggleBinding0.input_type != InputType::None && event->cbutton.button == menuToggleBinding0.input_id) ||
 -                (menuToggleBinding1.input_type != InputType::None && event->cbutton.button == menuToggleBinding1.input_id)) {
-+            if (binding::is_cancel_button(event->cbutton.button)) {
++    case SDL_EventType::SDL_EVENT_GAMEPAD_BUTTON_DOWN:
++        recompinput::mark_controller_active(event->gbutton.which);
++        if (binding::is_binding() && binding::is_controller_being_bound(event->gbutton.which)) {
++            if (binding::is_cancel_button(event->gbutton.button)) {
                  binding::stop_scanning();
              }
              else if (binding::get_scanning_device() == InputDevice::Controller) {
-@@ -152,6 +259,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+-                SDL_ControllerButtonEvent* button_event = &event->cbutton;
++                SDL_GamepadButtonEvent* button_event = &event->gbutton;
+                 GameInput scanning_game_input = binding::get_scanning_game_input();
+                 if ((scanning_game_input == GameInput::TOGGLE_MENU ||
+                     scanning_game_input == GameInput::ACCEPT_MENU ||
+                     scanning_game_input == GameInput::APPLY_MENU) && (
+-                    button_event->button == SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_UP ||
+-                    button_event->button == SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_DOWN ||
+-                    button_event->button == SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_LEFT ||
+-                    button_event->button == SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) {
++                    button_event->button == SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_UP ||
++                    button_event->button == SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_DOWN ||
++                    button_event->button == SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_LEFT ||
++                    button_event->button == SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) {
+                     break;
+                 }
+ 
+-                binding::set_scanned_input({ InputType::ControllerDigital, button_event->button });
++                binding::set_scanned_input({ InputType::ControllerDigital, static_cast<int32_t>(button_event->button) });
+             }
+         }
+         else {
+             queue_if_enabled(event);
          }
          break;
-     case SDL_EventType::SDL_CONTROLLERAXISMOTION:
-+        if (event->caxis.value > 8192 || event->caxis.value < -8192) {
-+            recompinput::mark_controller_active(event->caxis.which);
+-    case SDL_EventType::SDL_CONTROLLERAXISMOTION:
+-        if (binding::is_controller_being_bound(event->caxis.which)) {
++    case SDL_EventType::SDL_EVENT_GAMEPAD_AXIS_MOTION:
++        if (event->gaxis.value > 8192 || event->gaxis.value < -8192) {
++            recompinput::mark_controller_active(event->gaxis.which);
 +        }
-         if (binding::is_controller_being_bound(event->caxis.which)) {
++        if (binding::is_controller_being_bound(event->gaxis.which)) {
              GameInput scanning_game_input = binding::get_scanning_game_input();
              if (scanning_game_input == GameInput::TOGGLE_MENU ||
-@@ -250,7 +360,7 @@ void handle_events() {
+                 scanning_game_input == GameInput::ACCEPT_MENU ||
+@@ -160,11 +304,11 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+                 break;
+             }
+ 
+-            SDL_ControllerAxisEvent* axis_event = &event->caxis;
++            SDL_GamepadAxisEvent* axis_event = &event->gaxis;
+             float axis_value = axis_event->value * (1/32768.0f);
+             if (axis_value > recompinput::axis_digital_threshold) {
+                 SDL_Event set_stick_return_event;
+-                set_stick_return_event.type = SDL_USEREVENT;
++                set_stick_return_event.type = SDL_EVENT_USER;
+                 set_stick_return_event.user.code = axis_event->axis;
+                 set_stick_return_event.user.data1 = nullptr;
+                 set_stick_return_event.user.data2 = nullptr;
+@@ -174,7 +318,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+             }
+             else if (axis_value < -recompinput::axis_digital_threshold) {
+                 SDL_Event set_stick_return_event;
+-                set_stick_return_event.type = SDL_USEREVENT;
++                set_stick_return_event.type = SDL_EVENT_USER;
+                 set_stick_return_event.user.code = axis_event->axis;
+                 set_stick_return_event.user.data1 = nullptr;
+                 set_stick_return_event.user.data2 = nullptr;
+@@ -187,54 +331,60 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
+             queue_if_enabled(event);
+         }
+         break;
+-    case SDL_EventType::SDL_CONTROLLERSENSORUPDATE:
+-        if (event->csensor.sensor == SDL_SensorType::SDL_SENSOR_ACCEL) {
++    case SDL_EventType::SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
++        if (event->gsensor.sensor == SDL_SensorType::SDL_SENSOR_ACCEL) {
+             // Convert acceleration to g's.
+-            float x = event->csensor.data[0] / SDL_STANDARD_GRAVITY;
+-            float y = event->csensor.data[1] / SDL_STANDARD_GRAVITY;
+-            float z = event->csensor.data[2] / SDL_STANDARD_GRAVITY;
+-            ControllerState& state = recompinput::get_controller_state(event->csensor.which);
++            float x = event->gsensor.data[0] / SDL_STANDARD_GRAVITY;
++            float y = event->gsensor.data[1] / SDL_STANDARD_GRAVITY;
++            float z = event->gsensor.data[2] / SDL_STANDARD_GRAVITY;
++            ControllerState& state = recompinput::get_controller_state(event->gsensor.which);
+             state.latest_accelerometer[0] = x;
+             state.latest_accelerometer[1] = y;
+             state.latest_accelerometer[2] = z;
+         }
+-        else if (event->csensor.sensor == SDL_SensorType::SDL_SENSOR_GYRO) {
++        else if (event->gsensor.sensor == SDL_SensorType::SDL_SENSOR_GYRO) {
+             // constexpr float gyro_threshold = 0.05f;
+             // Convert rotational velocity to degrees per second.
+             constexpr float rad_to_deg = 180.0f / M_PI;
+-            float x = event->csensor.data[0] * rad_to_deg;
+-            float y = event->csensor.data[1] * rad_to_deg;
+-            float z = event->csensor.data[2] * rad_to_deg;
+-            ControllerState& state = recompinput::get_controller_state(event->csensor.which);
+-            uint64_t cur_timestamp = event->csensor.timestamp;
+-            uint32_t delta_ms = cur_timestamp - state.prev_gyro_timestamp;
+-            state.motion.ProcessMotion(x, y, z, state.latest_accelerometer[0], state.latest_accelerometer[1], state.latest_accelerometer[2], delta_ms * 0.001f);
++            float x = event->gsensor.data[0] * rad_to_deg;
++            float y = event->gsensor.data[1] * rad_to_deg;
++            float z = event->gsensor.data[2] * rad_to_deg;
++            ControllerState& state = recompinput::get_controller_state(event->gsensor.which);
++            // RR64-SDL3: event timestamps are nanoseconds (SDL2: milliseconds).
++            // Keep the millisecond step SDL2 fed to GamepadMotion, but skip the
++            // first sample instead of feeding it the whole uptime.
++            uint64_t cur_timestamp = event->gsensor.timestamp;
++            float delta_s = state.prev_gyro_timestamp != 0 ?
++                float(double(cur_timestamp - state.prev_gyro_timestamp) * 1e-9) : 0.0f;
++            state.motion.ProcessMotion(x, y, z, state.latest_accelerometer[0], state.latest_accelerometer[1], state.latest_accelerometer[2], delta_s);
+             state.prev_gyro_timestamp = cur_timestamp;
+ 
+             float rot_x = 0.0f;
+             float rot_y = 0.0f;
+             state.motion.GetPlayerSpaceGyro(rot_x, rot_y);
+-            recompinput::add_rotation_deltas(event->csensor.which, rot_x, rot_y);
++            recompinput::add_rotation_deltas(event->gsensor.which, rot_x, rot_y);
+         }
+         break;
+-    case SDL_EventType::SDL_MOUSEMOTION:
++    case SDL_EventType::SDL_EVENT_MOUSE_MOTION:
+         if (!recompinput::game_input_disabled()) {
+             SDL_MouseMotionEvent* motion_event = &event->motion;
+             recompinput::add_mouse_deltas(motion_event->xrel, motion_event->yrel);
+         }
+         queue_if_enabled(event);
+         break;
+-    case SDL_EventType::SDL_DROPBEGIN:
++    case SDL_EventType::SDL_EVENT_DROP_BEGIN:
+         DropState.files_dropped.clear();
+         break;
+-    case SDL_EventType::SDL_DROPFILE:
+-        DropState.files_dropped.emplace_back(std::filesystem::path(std::u8string_view((const char8_t*)(event->drop.file))));
+-        SDL_free(event->drop.file);
++    case SDL_EventType::SDL_EVENT_DROP_FILE:
++        // RR64-SDL3: the path is drop.data and SDL owns it (no SDL_free).
++        if (event->drop.data != nullptr) {
++            DropState.files_dropped.emplace_back(std::filesystem::path(std::u8string_view((const char8_t*)(event->drop.data))));
++        }
+         break;
+-    case SDL_EventType::SDL_DROPCOMPLETE:
++    case SDL_EventType::SDL_EVENT_DROP_COMPLETE:
+         recompui::drop_files(DropState.files_dropped);
+         break;
+-    case SDL_EventType::SDL_CONTROLLERBUTTONUP:
++    case SDL_EventType::SDL_EVENT_GAMEPAD_BUTTON_UP:
+         // Always queue button up events to avoid missing them during binding.
+         recompui::queue_event(*event);
+         break;
+@@ -250,7 +400,7 @@ void handle_events() {
      SDL_Event cur_event;
      static bool started = false;
      static bool exited = false;
@@ -496,7 +833,23 @@ index c76a1dc..867bb00 100644
          exited = sdl_event_filter(nullptr, &cur_event);
  
          bool has_mouse_sensitivity = recompui::config::general::has_mouse_sensitivity_option();
-@@ -270,6 +380,10 @@ void handle_events() {
+@@ -264,12 +414,24 @@ void handle_events() {
+             cursor_visible = false;
+         }
+ 
+-        SDL_ShowCursor(cursor_visible ? SDL_ENABLE : SDL_DISABLE);
+-        SDL_SetRelativeMouseMode(cursor_locked ? SDL_TRUE : SDL_FALSE);
++        // RR64-SDL3: cursor visibility is two calls, and relative mode is per window.
++        if (SDL_CursorVisible() != cursor_visible) {
++            if (cursor_visible) {
++                SDL_ShowCursor();
++            }
++            else {
++                SDL_HideCursor();
++            }
++        }
++        set_relative_mouse_mode(cursor_locked);
+     }
  
      binding::stop_skipping_events();
  
@@ -508,7 +861,7 @@ index c76a1dc..867bb00 100644
          started = true;
          recompui::process_game_started();
 diff --git a/recompinput/src/input_mapping.cpp b/recompinput/src/input_mapping.cpp
-index bfcfef4..97ae085 100644
+index bfcfef4..42d6698 100644
 --- a/recompinput/src/input_mapping.cpp
 +++ b/recompinput/src/input_mapping.cpp
 @@ -6,6 +6,7 @@ namespace recompinput {
@@ -519,36 +872,71 @@ index bfcfef4..97ae085 100644
          { GameInput::A,              { InputField::keyboard(SDL_SCANCODE_SPACE) } },
          { GameInput::B,              { InputField::keyboard(SDL_SCANCODE_LSHIFT) } },
          { GameInput::L,              { InputField::keyboard(SDL_SCANCODE_E) } },
-@@ -35,16 +36,23 @@ namespace recompinput {
+@@ -35,31 +36,38 @@ namespace recompinput {
      };
  
      default_game_input_device_mapping default_n64_mappings_controller = {
-+        { GameInput::RR64_MK64_USE_ITEM, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_DOWN) } },
-+        { GameInput::RR64_WEAPON_TRICK, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) } },
-+        { GameInput::RR64_EJECT, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSTICK) } },
-+        { GameInput::RR64_SPOKE_JAM, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK) } },
-         { GameInput::A,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_SOUTH) } },
-         { GameInput::B,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_WEST) } },
-         { GameInput::L,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) } },
-         { GameInput::R,              { InputField::controller_analog( SDL_CONTROLLER_AXIS_TRIGGERRIGHT, true) } },
-         { GameInput::Z,              { InputField::controller_analog( SDL_CONTROLLER_AXIS_TRIGGERLEFT, true) } },
-         { GameInput::START,          { InputField::controller_digital(SDL_CONTROLLER_BUTTON_START) } },
+-        { GameInput::A,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_SOUTH) } },
+-        { GameInput::B,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_WEST) } },
+-        { GameInput::L,              { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) } },
+-        { GameInput::R,              { InputField::controller_analog( SDL_CONTROLLER_AXIS_TRIGGERRIGHT, true) } },
+-        { GameInput::Z,              { InputField::controller_analog( SDL_CONTROLLER_AXIS_TRIGGERLEFT, true) } },
+-        { GameInput::START,          { InputField::controller_digital(SDL_CONTROLLER_BUTTON_START) } },
 -        { GameInput::C_LEFT,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_NORTH) } },
 -        { GameInput::C_RIGHT,        { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, true),  InputField::controller_digital(SDL_CONTROLLER_BUTTON_EAST) } },
 -        { GameInput::C_UP,           { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, false), InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK) } },
 -        { GameInput::C_DOWN,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, true),  InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) } },
+-        { GameInput::DPAD_LEFT,      { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_LEFT) } },
+-        { GameInput::DPAD_RIGHT,     { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) } },
+-        { GameInput::DPAD_UP,        { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_UP) } },
+-        { GameInput::DPAD_DOWN,      { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_DOWN) } },
+-        { GameInput::X_AXIS_NEG,     { InputField::controller_analog( SDL_CONTROLLER_AXIS_LEFTX, false) } },
+-        { GameInput::X_AXIS_POS,     { InputField::controller_analog( SDL_CONTROLLER_AXIS_LEFTX, true) } },
+-        { GameInput::Y_AXIS_POS,     { InputField::controller_analog( SDL_CONTROLLER_AXIS_LEFTY, false) } },
+-        { GameInput::Y_AXIS_NEG,     { InputField::controller_analog( SDL_CONTROLLER_AXIS_LEFTY, true) } },
++        { GameInput::RR64_MK64_USE_ITEM, { InputField::controller_digital(SDL_GAMEPAD_BUTTON_DPAD_DOWN) } },
++        { GameInput::RR64_WEAPON_TRICK, { InputField::controller_digital(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) } },
++        { GameInput::RR64_EJECT, { InputField::controller_digital(SDL_GAMEPAD_BUTTON_LEFT_STICK) } },
++        { GameInput::RR64_SPOKE_JAM, { InputField::controller_digital(SDL_GAMEPAD_BUTTON_RIGHT_STICK) } },
++        { GameInput::A,              { InputField::controller_digital(SDL_GAMEPAD_BUTTON_SOUTH) } },
++        { GameInput::B,              { InputField::controller_digital(SDL_GAMEPAD_BUTTON_WEST) } },
++        { GameInput::L,              { InputField::controller_digital(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) } },
++        { GameInput::R,              { InputField::controller_analog( SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, true) } },
++        { GameInput::Z,              { InputField::controller_analog( SDL_GAMEPAD_AXIS_LEFT_TRIGGER, true) } },
++        { GameInput::START,          { InputField::controller_digital(SDL_GAMEPAD_BUTTON_START) } },
 +        // Directional attacks/weapon cycling default to the right stick only.
 +        // R3 and RB have dedicated actions. Set this at creation/reset rather
 +        // than rewriting a player's deliberately saved secondary bindings.
-+        { GameInput::C_LEFT,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, false) } },
-+        { GameInput::C_RIGHT,        { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTX, true) } },
-+        { GameInput::C_UP,           { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, false) } },
-+        { GameInput::C_DOWN,         { InputField::controller_analog( SDL_CONTROLLER_AXIS_RIGHTY, true) } },
-         { GameInput::DPAD_LEFT,      { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_LEFT) } },
-         { GameInput::DPAD_RIGHT,     { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) } },
-         { GameInput::DPAD_UP,        { InputField::controller_digital(SDL_CONTROLLER_BUTTON_DPAD_UP) } },
++        { GameInput::C_LEFT,         { InputField::controller_analog( SDL_GAMEPAD_AXIS_RIGHTX, false) } },
++        { GameInput::C_RIGHT,        { InputField::controller_analog( SDL_GAMEPAD_AXIS_RIGHTX, true) } },
++        { GameInput::C_UP,           { InputField::controller_analog( SDL_GAMEPAD_AXIS_RIGHTY, false) } },
++        { GameInput::C_DOWN,         { InputField::controller_analog( SDL_GAMEPAD_AXIS_RIGHTY, true) } },
++        { GameInput::DPAD_LEFT,      { InputField::controller_digital(SDL_GAMEPAD_BUTTON_DPAD_LEFT) } },
++        { GameInput::DPAD_RIGHT,     { InputField::controller_digital(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) } },
++        { GameInput::DPAD_UP,        { InputField::controller_digital(SDL_GAMEPAD_BUTTON_DPAD_UP) } },
++        { GameInput::DPAD_DOWN,      { InputField::controller_digital(SDL_GAMEPAD_BUTTON_DPAD_DOWN) } },
++        { GameInput::X_AXIS_NEG,     { InputField::controller_analog( SDL_GAMEPAD_AXIS_LEFTX, false) } },
++        { GameInput::X_AXIS_POS,     { InputField::controller_analog( SDL_GAMEPAD_AXIS_LEFTX, true) } },
++        { GameInput::Y_AXIS_POS,     { InputField::controller_analog( SDL_GAMEPAD_AXIS_LEFTY, false) } },
++        { GameInput::Y_AXIS_NEG,     { InputField::controller_analog( SDL_GAMEPAD_AXIS_LEFTY, true) } },
+ 
+-        { GameInput::TOGGLE_MENU,    { InputField::controller_digital(SDL_CONTROLLER_BUTTON_BACK) } },
+-        { GameInput::ACCEPT_MENU,    { InputField::controller_digital(SDL_CONTROLLER_BUTTON_SOUTH) } },
+-        { GameInput::BACK_MENU,      { InputField::controller_digital(SDL_CONTROLLER_BUTTON_WEST) } },
+-        { GameInput::APPLY_MENU,     { InputField::controller_digital(SDL_CONTROLLER_BUTTON_NORTH), InputField::controller_digital(SDL_CONTROLLER_BUTTON_START) } },
+-        { GameInput::TAB_LEFT_MENU,  { InputField::controller_digital(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) } },
+-        { GameInput::TAB_RIGHT_MENU, { InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) } },
++        { GameInput::TOGGLE_MENU,    { InputField::controller_digital(SDL_GAMEPAD_BUTTON_BACK) } },
++        { GameInput::ACCEPT_MENU,    { InputField::controller_digital(SDL_GAMEPAD_BUTTON_SOUTH) } },
++        { GameInput::BACK_MENU,      { InputField::controller_digital(SDL_GAMEPAD_BUTTON_WEST) } },
++        { GameInput::APPLY_MENU,     { InputField::controller_digital(SDL_GAMEPAD_BUTTON_NORTH), InputField::controller_digital(SDL_GAMEPAD_BUTTON_START) } },
++        { GameInput::TAB_LEFT_MENU,  { InputField::controller_digital(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) } },
++        { GameInput::TAB_RIGHT_MENU, { InputField::controller_digital(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) } },
+     };
+ 
+     // Flag to prevent the base game from changing default mappings after they have been used.
 diff --git a/recompinput/src/input_state.cpp b/recompinput/src/input_state.cpp
-index 03ed871..5bbce2f 100644
+index 03ed871..1e59c3b 100644
 --- a/recompinput/src/input_state.cpp
 +++ b/recompinput/src/input_state.cpp
 @@ -1,7 +1,8 @@
@@ -561,11 +949,24 @@ index 03ed871..5bbce2f 100644
  
  #include "recompinput/recompinput.h"
  #include "recompinput/input_state.h"
-@@ -22,13 +23,19 @@ static struct {
+@@ -15,20 +16,29 @@ template <typename T>
+ using InputArray = std::array<T, max_num_players_supported>;
+ 
+ static struct {
+-    const Uint8* keys = nullptr;
+-    SDL_Keymod keymod = SDL_Keymod::KMOD_NONE;
++    // RR64-SDL3: SDL_GetKeyboardState returns bools; SDL_Keymod is a Uint16 mask.
++    const bool* keys = nullptr;
++    SDL_Keymod keymod = SDL_KMOD_NONE;
+     int numkeys = 0;
+     std::atomic_int32_t mouse_wheel_pos = 0;
      std::mutex controllers_mutex;
-     std::vector<SDL_GameController*> detected_controllers{};
+-    std::vector<SDL_GameController*> detected_controllers{};
++    std::vector<SDL_Gamepad*> detected_controllers{};
      std::unordered_map<SDL_JoystickID, ControllerState> controller_states;
-+    std::atomic<SDL_JoystickID> active_controller_id{ -1 };
++    // RR64-SDL3: joystick instance IDs are unsigned and 0 is never valid
++    // (SDL2 used signed IDs with -1 as "none").
++    std::atomic<SDL_JoystickID> active_controller_id{ 0 };
 +    std::atomic<InputDevice> active_input_device{ InputDevice::Keyboard };
  
      std::array<float, 2> mouse_delta{};
@@ -582,18 +983,27 @@ index 03ed871..5bbce2f 100644
  } InputState;
  
  void recompinput::poll_inputs() {
-@@ -68,8 +75,107 @@ void recompinput::poll_inputs() {
+@@ -45,7 +55,7 @@ void recompinput::poll_inputs() {
+ 
+         for (const auto& [id, state] : InputState.controller_states) {
+             (void)id; // Avoid unused variable warning.
+-            SDL_GameController* controller = state.controller;
++            SDL_Gamepad* controller = state.controller;
+             if (controller != nullptr) {
+                 free_controllers.emplace_back(InputState.detected_controllers.size());
+                 InputState.detected_controllers.push_back(controller);
+@@ -68,8 +78,107 @@ void recompinput::poll_inputs() {
      }
  }
  
-+std::vector<SDL_GameController*> recompinput::connected_controllers() {
++std::vector<SDL_Gamepad*> recompinput::connected_controllers() {
 +    std::lock_guard lock{InputState.controllers_mutex};
-+    std::vector<SDL_GameController*> result;
++    std::vector<SDL_Gamepad*> result;
 +    for (const auto& [id, state] : InputState.controller_states) {
-+        if (state.controller && SDL_GameControllerGetAttached(state.controller)) result.push_back(state.controller);
++        if (state.controller && SDL_GamepadConnected(state.controller)) result.push_back(state.controller);
 +    }
 +    std::sort(result.begin(), result.end(), [](auto* a, auto* b) {
-+        return SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(a)) < SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(b));
++        return SDL_GetJoystickID(SDL_GetGamepadJoystick(a)) < SDL_GetJoystickID(SDL_GetGamepadJoystick(b));
 +    });
 +    return result;
 +}
@@ -635,20 +1045,20 @@ index 03ed871..5bbce2f 100644
 +    // output commands self-expire as a safety net, but this keeps pause and
 +    // Alt-Tab stops immediate when the device is still reachable.
 +    std::lock_guard lock{ InputState.controllers_mutex };
-+    for (SDL_GameController* controller : InputState.detected_controllers) {
++    for (SDL_Gamepad* controller : InputState.detected_controllers) {
 +        if (controller == nullptr) {
 +            continue;
 +        }
 +
-+        SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
-+        const SDL_JoystickID joystick_id = SDL_JoystickInstanceID(joystick);
-+        SDL_JoystickRumble(joystick, 0, 0, 0);
++        SDL_Joystick* joystick = SDL_GetGamepadJoystick(controller);
++        const SDL_JoystickID joystick_id = SDL_GetJoystickID(joystick);
++        SDL_RumbleJoystick(joystick, 0, 0, 0);
 +
 +        const auto state_it = InputState.controller_states.find(joystick_id);
 +        if (state_it != InputState.controller_states.end()) {
 +            state_it->second.last_rumble_low = 0;
 +            state_it->second.last_rumble_high = 0;
-+            state_it->second.last_rumble_command_ms = SDL_GetTicks64();
++            state_it->second.last_rumble_command_ms = SDL_GetTicks();
 +            state_it->second.rumble_output_active = false;
 +        }
 +    }
@@ -691,20 +1101,22 @@ index 03ed871..5bbce2f 100644
  }
  
  static float smoothstep(float from, float to, float amount) {
-@@ -79,78 +185,174 @@ static float smoothstep(float from, float to, float amount) {
+@@ -79,78 +188,175 @@ static float smoothstep(float from, float to, float amount) {
  
  // Update rumble to attempt to mimic the way n64 rumble ramps up and falls off
  void recompinput::update_rumble() {
 -    auto do_rumble = [](SDL_GameController* controller, uint16_t rumble_strength, uint32_t duration) {
-+    auto do_rumble = [](SDL_GameController* controller, uint16_t low_frequency_strength,
+-        SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
+-        SDL_JoystickID joystick_id = SDL_JoystickInstanceID(joystick);
+-        ControllerState &state = InputState.controller_states[joystick_id];
++    auto do_rumble = [](SDL_Gamepad* controller, uint16_t low_frequency_strength,
 +                        uint16_t high_frequency_strength) {
-+        if (controller == nullptr || !SDL_GameControllerGetAttached(controller)) {
++        if (controller == nullptr || !SDL_GamepadConnected(controller)) {
 +            return;
 +        }
 +
-         SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
-         SDL_JoystickID joystick_id = SDL_JoystickInstanceID(joystick);
--        ControllerState &state = InputState.controller_states[joystick_id];
++        SDL_Joystick* joystick = SDL_GetGamepadJoystick(controller);
++        SDL_JoystickID joystick_id = SDL_GetJoystickID(joystick);
 +        const auto state_it = InputState.controller_states.find(joystick_id);
 +        // A device-removal event may arrive between input polls. Never recreate
 +        // its state from the stale detected-controller snapshot.
@@ -718,6 +1130,7 @@ index 03ed871..5bbce2f 100644
             return;
          }
 -        int err = SDL_JoystickRumble(joystick, 0, rumble_strength, duration);
+-        if (err != 0) {
 +
 +        constexpr uint64_t changed_command_interval_ms = 25;
 +        constexpr uint64_t refresh_interval_ms = 100;
@@ -739,7 +1152,7 @@ index 03ed871..5bbce2f 100644
 +        const bool output_changed =
 +            low_frequency_strength != state.last_rumble_low ||
 +            high_frequency_strength != state.last_rumble_high;
-+        const uint64_t now_ms = SDL_GetTicks64();
++        const uint64_t now_ms = SDL_GetTicks();
 +        const uint64_t elapsed_ms = now_ms - state.last_rumble_command_ms;
 +        const bool immediate_stop = !output_requested && state.rumble_output_active;
 +        const bool changed_due =
@@ -754,14 +1167,15 @@ index 03ed871..5bbce2f 100644
 +        // A short, periodically refreshed command cannot remain stuck for
 +        // minutes if the game pauses, loses focus, or a wireless device drops.
 +        const uint32_t duration = output_requested ? command_duration_ms : 0;
-+        int err = SDL_JoystickRumble(
++        // RR64-SDL3: SDL_RumbleJoystick returns true on success (SDL2: 0).
++        const bool ok = SDL_RumbleJoystick(
 +            joystick, low_frequency_strength, high_frequency_strength, duration);
-         if (err != 0) {
++        if (!ok) {
              state.rumble_failed = true;
 +            std::fprintf(
 +                stderr,
-+                "[RR64-RUMBLE] Disabled output for controller %d after SDL error: %s\n",
-+                static_cast<int>(joystick_id),
++                "[RR64-RUMBLE] Disabled output for controller %u after SDL error: %s\n",
++                static_cast<unsigned>(joystick_id),
 +                SDL_GetError());
 +            std::fflush(stderr);
 +            return;
@@ -857,18 +1271,20 @@ index 03ed871..5bbce2f 100644
 +    if (player.controller) {
 +        if (std::find(InputState.detected_controllers.begin(), InputState.detected_controllers.end(),
 +                player.controller) != InputState.detected_controllers.end() &&
-+            SDL_GameControllerGetAttached(player.controller)) read(player.controller);
++            SDL_GamepadConnected(player.controller)) read(player.controller);
 +    }
 +    else if (recompinput::players::is_single_player_mode() && controller_num == 0 &&
 +             recompinput::players::get_number_of_assigned_players() == 0) {
 +        for (auto* controller : InputState.detected_controllers)
-+            if (SDL_GameControllerGetAttached(controller)) read(controller);
++            if (SDL_GamepadConnected(controller)) read(controller);
 +    }
 +}
 +
  bool controller_button_state(int controller_num, int32_t input_id) {
-     if (input_id >= 0 && input_id < SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_MAX) {
-         SDL_GameControllerButton button = (SDL_GameControllerButton)input_id;
+-    if (input_id >= 0 && input_id < SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_MAX) {
+-        SDL_GameControllerButton button = (SDL_GameControllerButton)input_id;
++    if (input_id >= 0 && input_id < SDL_GamepadButton::SDL_GAMEPAD_BUTTON_COUNT) {
++        SDL_GamepadButton button = (SDL_GamepadButton)input_id;
          bool ret = false;
          {
              std::lock_guard lock{ InputState.controllers_mutex };
@@ -883,13 +1299,40 @@ index 03ed871..5bbce2f 100644
 -                    ret |= SDL_GameControllerGetButton(player.controller, button);
 -                }
 -            }
-+            for_game_controllers(controller_num, [&](SDL_GameController* controller) {
-+                ret |= SDL_GameControllerGetButton(controller, button);
++            for_game_controllers(controller_num, [&](SDL_Gamepad* controller) {
++                ret |= SDL_GetGamepadButton(controller, button);
 +            });
          }
  
          return ret;
-@@ -183,20 +385,10 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
+@@ -161,21 +367,21 @@ bool controller_button_state(int controller_num, int32_t input_id) {
+ static std::atomic_bool right_analog_suppressed = false;
+ 
+ float controller_axis_state(int controller_num, int32_t input_id, bool allow_suppression) {
+-    if (abs(input_id) - 1 < SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_MAX) {
+-        SDL_GameControllerAxis axis = (SDL_GameControllerAxis)(abs(input_id) - 1);
++    if (abs(input_id) - 1 < SDL_GamepadAxis::SDL_GAMEPAD_AXIS_COUNT) {
++        SDL_GamepadAxis axis = (SDL_GamepadAxis)(abs(input_id) - 1);
+         bool negative_range = input_id < 0;
+         float ret = 0.0f;
+ 
+         {
+-            auto gather_axis_state = [&](SDL_GameController* controller) {
+-                float cur_val = SDL_GameControllerGetAxis(controller, axis) * (1 / 32768.0f);
++            auto gather_axis_state = [&](SDL_Gamepad* controller) {
++                float cur_val = SDL_GetGamepadAxis(controller, axis) * (1 / 32768.0f);
+                 if (negative_range) {
+                     cur_val = -cur_val;
+                 }
+ 
+                 // Check if this input is a right analog axis and suppress it accordingly.
+                 if (allow_suppression && right_analog_suppressed.load() &&
+-                    (axis == SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_RIGHTX || axis == SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_RIGHTY)) {
++                    (axis == SDL_GamepadAxis::SDL_GAMEPAD_AXIS_RIGHTX || axis == SDL_GamepadAxis::SDL_GAMEPAD_AXIS_RIGHTY)) {
+                     cur_val = 0;
+                 }
+ 
+@@ -183,20 +389,10 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
              };
  
              std::lock_guard lock{ InputState.controllers_mutex };
@@ -907,14 +1350,57 @@ index 03ed871..5bbce2f 100644
 -                    ret = gather_axis_state(player.controller);
 -                }
 -            }
-+            for_game_controllers(controller_num, [&](SDL_GameController* controller) {
++            for_game_controllers(controller_num, [&](SDL_Gamepad* controller) {
 +                float controller_state = gather_axis_state(controller);
 +                if (fabsf(controller_state) > fabsf(ret)) ret = controller_state;
 +            });
          }
  
          return std::clamp(ret, 0.0f, 1.0f);
-@@ -374,6 +566,38 @@ bool recompinput::all_input_disabled() {
+@@ -207,7 +403,7 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
+ bool recompinput::should_override_keystate(SDL_Scancode key, SDL_Keymod mod) {
+     // Override Enter when Alt is held.
+     if (key == SDL_Scancode::SDL_SCANCODE_RETURN) {
+-        if (mod & SDL_Keymod::KMOD_ALT) {
++        if (mod & SDL_KMOD_ALT) {
+             return true;
+         }
+     }
+@@ -252,7 +448,7 @@ bool recompinput::get_input_digital(int controller_num, const InputField& field)
+             if (should_override_keystate(static_cast<SDL_Scancode>(field.input_id), InputState.keymod)) {
+                 return false;
+             }
+-            return InputState.keys[field.input_id] != 0;
++            return InputState.keys[field.input_id];
+         }
+         return false;
+     case InputType::ControllerDigital:
+@@ -297,7 +493,7 @@ void recompinput::get_gyro_deltas(int controller_num, float* x, float* y) {
+             *y = 0.0f;
+             return;
+         }
+-        SDL_JoystickID joystick_id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(player.controller));
++        SDL_JoystickID joystick_id = SDL_GetJoystickID(SDL_GetGamepadJoystick(player.controller));
+         ControllerState &state = get_controller_state(joystick_id);
+         cur_rotation_delta = state.rotation_delta;
+     }
+@@ -350,11 +546,11 @@ void recompinput::apply_joystick_deadzone(float x_in, float y_in, float* x_out,
+ 
+ void recompinput::get_right_analog(int controller_num, float* x, float* y) {
+     float x_val =
+-        controller_axis_state(controller_num, (SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_RIGHTX + 1), false) -
+-        controller_axis_state(controller_num, -(SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_RIGHTX + 1), false);
++        controller_axis_state(controller_num, (SDL_GamepadAxis::SDL_GAMEPAD_AXIS_RIGHTX + 1), false) -
++        controller_axis_state(controller_num, -(SDL_GamepadAxis::SDL_GAMEPAD_AXIS_RIGHTX + 1), false);
+     float y_val =
+-        controller_axis_state(controller_num, (SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_RIGHTY + 1), false) -
+-        controller_axis_state(controller_num, -(SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_RIGHTY + 1), false);
++        controller_axis_state(controller_num, (SDL_GamepadAxis::SDL_GAMEPAD_AXIS_RIGHTY + 1), false) -
++        controller_axis_state(controller_num, -(SDL_GamepadAxis::SDL_GAMEPAD_AXIS_RIGHTY + 1), false);
+     apply_joystick_deadzone(x_val, y_val, x, y);
+ }
+ 
+@@ -374,12 +570,44 @@ bool recompinput::all_input_disabled() {
          recompinput::binding::is_binding();
  }
  
@@ -931,38 +1417,51 @@ index 03ed871..5bbce2f 100644
 +    return InputState.active_input_device.load(std::memory_order_relaxed);
 +}
 +
-+SDL_GameControllerType recompinput::get_active_controller_type() {
++SDL_GamepadType recompinput::get_active_controller_type() {
 +    std::lock_guard lock{ InputState.controllers_mutex };
 +
 +    const SDL_JoystickID active_id =
 +        InputState.active_controller_id.load(std::memory_order_relaxed);
 +    const auto active_it = InputState.controller_states.find(active_id);
 +    if (active_it != InputState.controller_states.end() && active_it->second.controller != nullptr) {
-+        return SDL_GameControllerGetType(active_it->second.controller);
++        return SDL_GetGamepadType(active_it->second.controller);
 +    }
 +
-+    for (SDL_GameController* controller : InputState.detected_controllers) {
++    for (SDL_Gamepad* controller : InputState.detected_controllers) {
 +        if (controller != nullptr) {
-+            return SDL_GameControllerGetType(controller);
++            return SDL_GetGamepadType(controller);
 +        }
 +    }
 +
-+    return SDL_CONTROLLER_TYPE_UNKNOWN;
++    return SDL_GAMEPAD_TYPE_STANDARD;
 +}
 +
  ControllerState &recompinput::get_controller_state(SDL_JoystickID joystick_id) {
      std::lock_guard lock{ InputState.controllers_mutex };
      return InputState.controller_states[joystick_id];
-@@ -392,11 +616,38 @@ void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameContr
+ }
+ 
+-SDL_GameController *recompinput::get_controller_from_joystick_id(SDL_JoystickID joystick_id) {
++SDL_Gamepad *recompinput::get_controller_from_joystick_id(SDL_JoystickID joystick_id) {
      std::lock_guard lock{ InputState.controllers_mutex };
-     ControllerState& state = InputState.controller_states[SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))];
+     auto it = InputState.controller_states.find(joystick_id);
+     if (it != InputState.controller_states.end()) {
+@@ -388,15 +616,42 @@ SDL_GameController *recompinput::get_controller_from_joystick_id(SDL_JoystickID
+     return nullptr;
+ }
+ 
+-void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller) {
++void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_Gamepad* controller) {
+     std::lock_guard lock{ InputState.controllers_mutex };
+-    ControllerState& state = InputState.controller_states[SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))];
++    ControllerState& state = InputState.controller_states[SDL_GetJoystickID(SDL_GetGamepadJoystick(controller))];
      state.controller = controller;
 +    state.rumble_failed = false;
 +    state.last_rumble_low = 0;
 +    state.last_rumble_high = 0;
 +    state.last_rumble_command_ms = 0;
 +    state.rumble_output_active = false;
-+    SDL_JoystickID expected = -1;
++    SDL_JoystickID expected = 0;
 +    InputState.active_controller_id.compare_exchange_strong(
 +        expected,
 +        joystick_id,
@@ -975,7 +1474,7 @@ index 03ed871..5bbce2f 100644
 -    InputState.controller_states.erase(joystick_id);
 +    const auto state_it = InputState.controller_states.find(joystick_id);
 +    if (state_it != InputState.controller_states.end()) {
-+        SDL_GameController* controller = state_it->second.controller;
++        SDL_Gamepad* controller = state_it->second.controller;
 +        if (controller != nullptr) {
 +            // SDL has already reported this device disconnected. Do not issue
 +            // driver I/O to a vanished device while holding the input lock.
@@ -988,13 +1487,13 @@ index 03ed871..5bbce2f 100644
 +    SDL_JoystickID expected = joystick_id;
 +    InputState.active_controller_id.compare_exchange_strong(
 +        expected,
-+        -1,
++        0,
 +        std::memory_order_relaxed);
  }
  
  void recompinput::add_rotation_deltas(SDL_JoystickID joystick_id, float rot_x, float rot_y) {
 diff --git a/recompinput/src/input_types.cpp b/recompinput/src/input_types.cpp
-index c6786e6..9ac1724 100644
+index c6786e6..062f60a 100644
 --- a/recompinput/src/input_types.cpp
 +++ b/recompinput/src/input_types.cpp
 @@ -12,11 +12,36 @@ static std::array<std::string, num_game_inputs> game_input_names = {
@@ -1035,8 +1534,116 @@ index c6786e6..9ac1724 100644
      descriptions[static_cast<size_t>(GameInput::TOGGLE_MENU)] = "Open or close this configuration menu from in game.";
      descriptions[static_cast<size_t>(GameInput::ACCEPT_MENU)] = "In the recomp interface, performs the action for the currently highlighted item. Like pressing a button, or toggling a switch.";
      descriptions[static_cast<size_t>(GameInput::BACK_MENU)] = "In the recomp interface, returns to the header or backs out to a previous menu.";
+@@ -85,49 +110,49 @@ const std::string& get_game_input_enum_name(GameInput input) {
+     return game_input_enum_names.at(static_cast<size_t>(input));
+ }
+ 
+-static std::string controller_button_to_string(SDL_GameControllerButton button) {
++static std::string controller_button_to_string(SDL_GamepadButton button) {
+     switch (button) {
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_A:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_SOUTH:
+         return PF_GAMEPAD_A;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_B:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_EAST:
+         return PF_GAMEPAD_B;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_X:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_WEST:
+         return PF_GAMEPAD_X;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_Y:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_NORTH:
+         return PF_GAMEPAD_Y;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_BACK:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_BACK:
+         return PF_XBOX_VIEW;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_GUIDE:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_GUIDE:
+         return PF_GAMEPAD_HOME;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_START:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_START:
+         return PF_XBOX_MENU;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_LEFTSTICK:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_LEFT_STICK:
+         return PF_ANALOG_L_CLICK;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_RIGHTSTICK:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_RIGHT_STICK:
+         return PF_ANALOG_R_CLICK;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:
+         return PF_XBOX_LEFT_SHOULDER;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
+         return PF_XBOX_RIGHT_SHOULDER;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_UP:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_UP:
+         return PF_DPAD_UP;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_DOWN:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_DOWN:
+         return PF_DPAD_DOWN;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_LEFT:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_LEFT:
+         return PF_DPAD_LEFT;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+         return PF_DPAD_RIGHT;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_MISC1:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_MISC1:
+         return PF_STEAM_OPTIONS;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_PADDLE1:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1:
+         return PF_GAMEPAD_L4;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_PADDLE2:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_LEFT_PADDLE1:
+         return PF_GAMEPAD_R4;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_PADDLE3:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2:
+         return PF_GAMEPAD_L5;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_PADDLE4:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_LEFT_PADDLE2:
+         return PF_GAMEPAD_R5;
+-    case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_TOUCHPAD:
++    case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_TOUCHPAD:
+         return PF_SONY_TOUCHPAD;
+     default:
+         return recompinput::unknown_device_input;
+@@ -229,19 +254,19 @@ static std::string keyboard_input_to_string(SDL_Scancode key) {
+ 
+ static std::string controller_axis_to_string(int axis) {
+     bool positive = axis > 0;
+-    SDL_GameControllerAxis actual_axis = SDL_GameControllerAxis(abs(axis) - 1);
++    SDL_GamepadAxis actual_axis = SDL_GamepadAxis(abs(axis) - 1);
+     switch (actual_axis) {
+-    case SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTX:
++    case SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTX:
+         return positive ? PF_ANALOG_L_RIGHT : PF_ANALOG_L_LEFT;
+-    case SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTY:
++    case SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTY:
+         return positive ? PF_ANALOG_L_DOWN : PF_ANALOG_L_UP;
+-    case SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_RIGHTX:
++    case SDL_GamepadAxis::SDL_GAMEPAD_AXIS_RIGHTX:
+         return positive ? PF_ANALOG_R_RIGHT : PF_ANALOG_R_LEFT;
+-    case SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_RIGHTY:
++    case SDL_GamepadAxis::SDL_GAMEPAD_AXIS_RIGHTY:
+         return positive ? PF_ANALOG_R_DOWN : PF_ANALOG_R_UP;
+-    case SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_TRIGGERLEFT:
++    case SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFT_TRIGGER:
+         return positive ? PF_XBOX_LEFT_TRIGGER : PF_XBOX_LEFT_TRIGGER_PULL;
+-    case SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
++    case SDL_GamepadAxis::SDL_GAMEPAD_AXIS_RIGHT_TRIGGER:
+         return positive ? PF_XBOX_RIGHT_TRIGGER : PF_XBOX_RIGHT_TRIGGER_PULL;
+     default:
+         return recompinput::unknown_device_input;
+@@ -255,7 +280,7 @@ std::string recompinput::InputField::to_string() const {
+     case InputType::None:
+         return "";
+     case InputType::ControllerDigital:
+-        return controller_button_to_string((SDL_GameControllerButton)input_id);
++        return controller_button_to_string((SDL_GamepadButton)input_id);
+     case InputType::ControllerAnalog:
+         return controller_axis_to_string(input_id);
+     case InputType::Keyboard:
 diff --git a/recompinput/src/players.cpp b/recompinput/src/players.cpp
-index 08cb3f3..fe2aa8e 100644
+index 08cb3f3..b011744 100644
 --- a/recompinput/src/players.cpp
 +++ b/recompinput/src/players.cpp
 @@ -1,3 +1,4 @@
@@ -1068,11 +1675,13 @@ index 08cb3f3..fe2aa8e 100644
              Player &player = (*this)[count++];
              player = Player();
              player.keyboard_enabled = true;
-@@ -34,7 +41,7 @@ public:
+@@ -33,8 +40,8 @@ public:
+         }
      }
  
-     void add_controller_player(SDL_GameController* controller) {
+-    void add_controller_player(SDL_GameController* controller) {
 -        if (count < max_num_players_supported) {
++    void add_controller_player(SDL_Gamepad* controller) {
 +        if (count < 4) {
              Player &player = (*this)[count++];
              player = Player();
@@ -1146,7 +1755,7 @@ index 08cb3f3..fe2aa8e 100644
  }
  
  // playerassignment start
-+bool players::select_player_device(int index, SDL_GameController* controller) {
++bool players::select_player_device(int index, SDL_Gamepad* controller) {
 +    const auto connected = recompinput::connected_controllers();
 +    std::scoped_lock lock(assignment_mutex);
 +    if (index < 0 || index >= 4 || PlayerState.is_assigning) return false;
@@ -1196,7 +1805,7 @@ index 08cb3f3..fe2aa8e 100644
 +    std::scoped_lock lock(assignment_mutex);
 +    if (PlayerState.is_assigning) return;
 +    include_keyboard = include_keyboard || std::any_of(explicit_keyboard.begin(), explicit_keyboard.end(), [](bool selected) { return selected; });
-+    static std::vector<SDL_GameController*> previous;
++    static std::vector<SDL_Gamepad*> previous;
 +    static bool previous_keyboard = false;
 +    static bool initialized = false;
 +    if (initialized && previous == connected && previous_keyboard == include_keyboard) return;
@@ -1269,8 +1878,32 @@ index 08cb3f3..fe2aa8e 100644
          }
      }
  }
+@@ -219,10 +336,10 @@ void playerassignment::process_sdl_event(SDL_Event* event) {
+     }
+ 
+     switch (event->type) {
+-    case SDL_EventType::SDL_KEYDOWN: {
++    case SDL_EventType::SDL_EVENT_KEY_DOWN: {
+         SDL_KeyboardEvent* keyevent = &event->key;
+ 
+-        switch (keyevent->keysym.scancode) {
++        switch (keyevent->scancode) {
+         case SDL_Scancode::SDL_SCANCODE_ESCAPE:
+             // TODO: Restore previous assignment?
+             playerassignment::stop();
+@@ -246,8 +363,8 @@ void playerassignment::process_sdl_event(SDL_Event* event) {
+         }
+         break;
+     }
+-    case SDL_EventType::SDL_CONTROLLERBUTTONDOWN: {
+-        SDL_ControllerButtonEvent* button_event = &event->cbutton;
++    case SDL_EventType::SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
++        SDL_GamepadButtonEvent* button_event = &event->gbutton;
+         SDL_JoystickID joystick_id = button_event->which;
+         auto controller = recompinput::get_controller_from_joystick_id(joystick_id);
+ 
 diff --git a/recompinput/src/profiles.cpp b/recompinput/src/profiles.cpp
-index c89956e..7d97112 100644
+index c89956e..983a33a 100644
 --- a/recompinput/src/profiles.cpp
 +++ b/recompinput/src/profiles.cpp
 @@ -2,7 +2,9 @@
@@ -1361,7 +1994,7 @@ index c89956e..7d97112 100644
 +        return -1;
 +    }
 +
-+    int profiles::get_controller_event_profile(SDL_GameController* controller) {
++    int profiles::get_controller_event_profile(SDL_Gamepad* controller) {
 +        if (controller) {
 +            for (int i = 0; i < max_num_players_supported; ++i) {
 +                if (players::get_player(i).controller == controller)
@@ -1389,7 +2022,72 @@ index c89956e..7d97112 100644
          if (it != controller_hash_index_map.end()) {
              return it->second;
          }
-@@ -285,14 +353,7 @@ namespace recompinput {
+@@ -259,23 +327,60 @@ namespace recompinput {
+         }
+     }
+ 
++    int profiles::adopt_controller_identity(const ControllerGUID& guid) {
++        const uint64_t hash = controller_identity_hash(guid);
++        if (controller_hash_index_map.find(hash) != controller_hash_index_map.end()) {
++            return -1;
++        }
++
++        int match = -1;
++        for (int i = 0; i < (int)(controllers.size()); i++) {
++            const ControllerGUID& saved = controllers[i].guid;
++            if (saved.vendor == guid.vendor && saved.product == guid.product && saved.serial == guid.serial) {
++                if (match >= 0) {
++                    // Two saved pads of the same model: ambiguous, leave both alone.
++                    return -1;
++                }
++                match = i;
++            }
++        }
++
++        if (match < 0) {
++            return -1;
++        }
++
++        // Only re-key an entry that no connected controller currently owns.
++        for (SDL_Gamepad* connected : recompinput::connected_controllers()) {
++            const ControllerGUID connected_guid = get_guid_from_sdl_controller(connected);
++            if (controller_identity_hash(connected_guid) == controllers[match].guid.hash) {
++                return -1;
++            }
++        }
++
++        controller_hash_index_map.erase(controllers[match].guid.hash);
++        controllers[match].guid = guid;
++        controllers[match].guid.hash = hash;
++        controller_hash_index_map.emplace(hash, match);
++        return match;
++    }
++
+     int profiles::get_controller_count() {
+         return (int)(controllers.size());
+     }
+ 
+-    ControllerGUID profiles::get_guid_from_sdl_controller(SDL_GameController *game_controller) {
++    ControllerGUID profiles::get_guid_from_sdl_controller(SDL_Gamepad *game_controller) {
+         if (game_controller == nullptr) {
+             return {};
+         }
+ 
+-        SDL_Joystick *joystick = SDL_GameControllerGetJoystick(game_controller);
++        SDL_Joystick *joystick = SDL_GetGamepadJoystick(game_controller);
+         if (joystick == nullptr) {
+             return {};
+         }
+ 
+         Uint16 vendor, product, version, crc16;
+-        const char *joystick_serial = SDL_JoystickGetSerial(joystick);
+-        SDL_JoystickGUID joystick_guid = SDL_JoystickGetGUID(joystick);
++        const char *joystick_serial = SDL_GetJoystickSerial(joystick);
++        SDL_GUID joystick_guid = SDL_GetJoystickGUID(joystick);
+         SDL_GetJoystickGUIDInfo(joystick_guid, &vendor, &product, &version, &crc16);
+ 
+         ControllerGUID guid;
+@@ -285,19 +390,12 @@ namespace recompinput {
          guid.version = version;
          guid.crc16 = crc16;
  
@@ -1405,7 +2103,13 @@ index c89956e..7d97112 100644
  
          return guid;
      }
-@@ -371,6 +432,29 @@ namespace recompinput {
+ 
+-    int profiles::get_controller_profile_index_from_sdl_controller(SDL_GameController *game_controller) {
++    int profiles::get_controller_profile_index_from_sdl_controller(SDL_Gamepad *game_controller) {
+         if (game_controller == nullptr) {
+             return -1;
+         }
+@@ -371,6 +469,29 @@ namespace recompinput {
          return "SERIAL_" + guid.serial + "_VID_" + std::to_string(guid.vendor) + "_PID_" + std::to_string(guid.product) +"_VERSION_" + std::to_string(guid.version) +"_CRC16_" + std::to_string(guid.crc16);
      }
  
@@ -1435,7 +2139,7 @@ index c89956e..7d97112 100644
      bool profiles::get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out) {
          uint16_t cur_buttons = 0;
          float cur_x = 0.0f;
-@@ -397,8 +481,8 @@ namespace recompinput {
+@@ -397,8 +518,8 @@ namespace recompinput {
                  cur_y += recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::Y_AXIS_POS]) - recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::Y_AXIS_NEG]);
              };
              
@@ -1446,6 +2150,39 @@ index c89956e..7d97112 100644
              check_buttons(profile_index_cont);
              check_buttons(profile_index_kb);
  
+diff --git a/recompui/CMakeLists.txt b/recompui/CMakeLists.txt
+index 4dce8e0..9aeddb8 100644
+--- a/recompui/CMakeLists.txt
++++ b/recompui/CMakeLists.txt
+@@ -58,8 +58,8 @@ add_compile_definitions(
+ add_subdirectory(lib/RmlUi)
+ target_compile_definitions(rmlui_core PRIVATE LUNASVG_BUILD_STATIC)
+ 
+-# TODO: Only necessary because frontend is unable to build standalone without the SDL2 Package.
+-target_compile_definitions(recompui PRIVATE RMLUI_SDL_VERSION_MAJOR=2)
++# RR64-SDL3: RmlUi's SDL platform backend targets SDL3.
++target_compile_definitions(recompui PRIVATE RMLUI_SDL_VERSION_MAJOR=3)
+ 
+ target_include_directories(recompui PUBLIC
+     ${CMAKE_CURRENT_SOURCE_DIR}/../recompinput/include
+@@ -104,10 +104,13 @@ build_pixel_shader(recompui "shaders/InterfacePS.hlsl" "shaders/InterfacePS.hlsl
+ 
+ target_include_directories(recompui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include/recompui")
+ 
+-if (WIN32)
+-    target_include_directories(recompui PRIVATE ${sdl2_SOURCE_DIR}/include)
+-elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux")
+-    target_include_directories(recompui PRIVATE ${SDL2_INCLUDE_DIRS})
++# RR64-SDL3: the parent build provides SDL3 as SDL3_LIBRARIES (SDL3.dll on Windows); it
++# carries the SDL3 headers and SDL's system link requirements.
++if (SDL3_LIBRARIES)
++    target_link_libraries(recompui PUBLIC ${SDL3_LIBRARIES})
++else()
++    find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
++    target_link_libraries(recompui PUBLIC SDL3::SDL3)
+ endif()
+ 
+ target_compile_options(recompui PRIVATE
 diff --git a/recompui/include/recompui/config.h b/recompui/include/recompui/config.h
 index 38b84f5..1ba092d 100644
 --- a/recompui/include/recompui/config.h
@@ -1500,9 +2237,18 @@ index 38b84f5..1ba092d 100644
  
          // Must be called after all tabs have been created.
 diff --git a/recompui/include/recompui/recompui.h b/recompui/include/recompui/recompui.h
-index 30c463b..96a639d 100644
+index 30c463b..e12fc1e 100644
 --- a/recompui/include/recompui/recompui.h
 +++ b/recompui/include/recompui/recompui.h
+@@ -4,7 +4,7 @@
+ #include <string_view>
+ #include <list>
+ 
+-#include "SDL.h"
++#include <SDL3/SDL.h>
+ #include "RmlUi/Core.h"
+ 
+ #include "recompinput/recompinput.h"
 @@ -42,6 +42,10 @@ namespace recompui {
      // Use this to update the launcher each frame.
      void register_launcher_update_callback(std::function<void(LauncherMenu *menu)> callback);
@@ -1514,6 +2260,15 @@ index 30c463b..96a639d 100644
      class UiEventListenerInstancer;
  
      using event_handler_t = void(const std::string& param, Rml::Event&);
+@@ -131,7 +135,7 @@ namespace recompui {
+         };
+ 
+         static const key_map accept =    { MenuAction::Accept,   recompinput::GameInput::ACCEPT_MENU,    SDLK_RETURN, Rml::Input::KI_RETURN };
+-        static const key_map apply =     { MenuAction::Apply,    recompinput::GameInput::APPLY_MENU,     SDLK_f,      Rml::Input::KI_F };
++        static const key_map apply =     { MenuAction::Apply,    recompinput::GameInput::APPLY_MENU,     SDLK_F,      Rml::Input::KI_F };
+         static const key_map back =      { MenuAction::Back,     recompinput::GameInput::BACK_MENU,      SDLK_F15,    Rml::Input::KI_F15 };
+         static const key_map toggle =    { MenuAction::Toggle,   recompinput::GameInput::TOGGLE_MENU,    SDLK_ESCAPE, Rml::Input::KI_ESCAPE };
+         static const key_map tab_left =  { MenuAction::TabLeft,  recompinput::GameInput::TAB_LEFT_MENU,  SDLK_F16,    Rml::Input::KI_F16 };
 diff --git a/recompui/src/base/ui_launcher.cpp b/recompui/src/base/ui_launcher.cpp
 index 6de7a94..7a9509c 100644
 --- a/recompui/src/base/ui_launcher.cpp
@@ -1659,25 +2414,26 @@ index eb8833e..85a96b7 100644
          Element *get_menu_container() { return menu_container; }
      };
 diff --git a/recompui/src/base/ui_state.cpp b/recompui/src/base/ui_state.cpp
-index 277a421..dc6da6c 100644
+index 277a421..a032280 100644
 --- a/recompui/src/base/ui_state.cpp
 +++ b/recompui/src/base/ui_state.cpp
-@@ -1,3 +1,5 @@
+@@ -1,10 +1,12 @@
 +#include "recompui/startup_diagnostics.h"
 +#include "rr64_popup_input.hpp"
  #ifdef _WIN32
  #define WIN32_LEAN_AND_MEAN
- #include <SDL_video.h>
-@@ -5,6 +7,8 @@
- #include <SDL2/SDL_video.h>
+-#include <SDL_video.h>
+-#else
+-#include <SDL2/SDL_video.h>
  #endif
++#include <SDL3/SDL.h>
  #include <chrono>
 +#include <cstdio>
 +#include <exception>
  
  #include "rt64_render_hooks.h"
  
-@@ -23,6 +27,7 @@
+@@ -23,6 +25,7 @@
  #include "recompinput/profiles.h"
  
  #include "librecomp/game.hpp"
@@ -1685,7 +2441,7 @@ index 277a421..dc6da6c 100644
  
  #include "base/ui_launcher.h"
  #include "composites/ui_mod_menu.h"
-@@ -34,6 +39,11 @@
+@@ -34,6 +37,11 @@
  #include "util/file.h"
  
  static std::atomic_bool cursor_enabled = true;
@@ -1697,7 +2453,7 @@ index 277a421..dc6da6c 100644
  
  void recompui::open_quit_game_prompt() {
      recompui::open_choice_prompt(
-@@ -241,7 +251,7 @@ public:
+@@ -241,7 +249,7 @@ public:
  
          int width, height;
          SDL_GetWindowSizeInPixels(window, &width, &height);
@@ -1706,7 +2462,7 @@ index 277a421..dc6da6c 100644
          context = Rml::CreateContext("main", Rml::Vector2i(width, height));
  
          Rml::Debugger::Initialise(context);
-@@ -255,6 +265,7 @@ public:
+@@ -255,6 +263,7 @@ public:
                  {"promptfont/promptfont.ttf", false},
              };
  
@@ -1714,7 +2470,7 @@ index 277a421..dc6da6c 100644
              for (const FontFace& face : font_faces) {
                  auto font = recompui::file::get_asset_path(face.filename);
                  Rml::LoadFontFace(font.string(), face.fallback_face);
-@@ -267,6 +278,7 @@ public:
+@@ -267,6 +276,7 @@ public:
              auto primary_font_path = recompui::file::get_asset_path(primary_font.c_str());
              Rml::LoadFontFace(primary_font_path.string(), false);
  
@@ -1722,7 +2478,7 @@ index 277a421..dc6da6c 100644
              for (const auto& extra_font : extra_fonts) {
                  auto extra_font_path = recompui::file::get_asset_path(extra_font.c_str());
                  Rml::LoadFontFace(extra_font_path.string(), false);
-@@ -275,11 +287,13 @@ public:
+@@ -275,11 +285,13 @@ public:
      }
  
      void create_menus() {
@@ -1736,7 +2492,7 @@ index 277a421..dc6da6c 100644
      }
  
      void unload() {
-@@ -419,6 +433,12 @@ public:
+@@ -419,6 +431,12 @@ public:
      }
  
      void hide_context(recompui::ContextId context) {
@@ -1749,7 +2505,7 @@ index 277a421..dc6da6c 100644
          auto remove_it = std::remove_if(shown_contexts.begin(), shown_contexts.end(), [context](auto& c) { return c.context == context; });
          if (remove_it == shown_contexts.end()) {
              recompui::message_box("Attemped to hide a context that isn't shown");
-@@ -431,6 +451,9 @@ public:
+@@ -431,6 +449,9 @@ public:
      
      void hide_all_contexts() {
          for (auto& context : shown_contexts) {
@@ -1759,7 +2515,7 @@ index 277a421..dc6da6c 100644
              context.document->Hide();
          }
  
-@@ -513,8 +536,18 @@ void init_hook(plume::RenderInterface* interface, plume::RenderDevice* device) {
+@@ -513,8 +534,18 @@ void init_hook(plume::RenderInterface* interface, plume::RenderDevice* device) {
  #if defined(__linux__)
      std::locale::global(std::locale::classic());
  #endif
@@ -1780,7 +2536,17 @@ index 277a421..dc6da6c 100644
  }
  
  moodycamel::ConcurrentQueue<SDL_Event> ui_event_queue{};
-@@ -571,17 +604,20 @@ Rml::Input::KeyIdentifier convert_sdl_to_rml(int sdl_key) {
+@@ -552,7 +583,8 @@ bool recompui::menu_action_mapping::is_sdl_input_fake_mapped(int32_t sdl_key) {
+ 
+ // Extends RmlSDL::ConvertKey for some extra mapping slots
+ Rml::Input::KeyIdentifier convert_sdl_to_rml(int sdl_key) {
+-    Rml::Input::KeyIdentifier identifier = RmlSDL::ConvertKey(sdl_key);
++    // RR64-SDL3: SDL_Keycode is a Uint32; the menu tables keep keycodes in ints.
++    Rml::Input::KeyIdentifier identifier = RmlSDL::ConvertKey(static_cast<SDL_Keycode>(sdl_key));
+     if (identifier == Rml::Input::KeyIdentifier::KI_UNKNOWN) {
+         switch (sdl_key) {
+             case SDLK_F15: return Rml::Input::KI_F15;
+@@ -571,17 +603,20 @@ Rml::Input::KeyIdentifier convert_sdl_to_rml(int sdl_key) {
  }
  
  bool check_menu_button_pressed(int profile_index, recompinput::GameInput input, int32_t event_button) {
@@ -1796,17 +2562,172 @@ index 277a421..dc6da6c 100644
      return false;
  }
  
- int cont_button_to_key(SDL_ControllerButtonEvent& button) {
+-int cont_button_to_key(SDL_ControllerButtonEvent& button) {
 -    int player1_profile = recompinput::profiles::get_input_profile_for_player(0, recompinput::InputDevice::Controller);
++int cont_button_to_key(SDL_GamepadButtonEvent& button) {
 +    // Menu events belong to the device that emitted them, including empty P1 slots.
 +    int player1_profile = recompinput::profiles::get_controller_event_profile(
-+        SDL_GameControllerFromInstanceID(button.which));
++        SDL_GetGamepadFromID(button.which));
  
      for (const auto& mapping_pair : recompui::menu_action_mapping::rml_key_to_action) {
          const auto& mapping = mapping_pair.second;
-@@ -821,14 +857,8 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
-             case SDL_EventType::SDL_CONTROLLERBUTTONDOWN: {
-                 SDL_ControllerButtonEvent* button_event = &cur_event.cbutton;
+@@ -591,13 +626,13 @@ int cont_button_to_key(SDL_ControllerButtonEvent& button) {
+     }
+ 
+     switch (button.button) {
+-        case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_UP:
++        case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_UP:
+             return SDLK_UP;
+-        case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_DOWN:
++        case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_DOWN:
+             return SDLK_DOWN;
+-        case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_LEFT:
++        case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_LEFT:
+             return SDLK_LEFT;
+-        case SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
++        case SDL_GamepadButton::SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+             return SDLK_RIGHT;
+     }
+ 
+@@ -605,12 +640,12 @@ int cont_button_to_key(SDL_ControllerButtonEvent& button) {
+ }
+ 
+ 
+-int cont_axis_to_key(SDL_ControllerAxisEvent& axis, float value) {
++int cont_axis_to_key(SDL_GamepadAxisEvent& axis, float value) {
+     switch (axis.axis) {
+-    case SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTY:
++    case SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTY:
+         if (value < 0) return SDLK_UP;
+         return SDLK_DOWN;
+-    case SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTX:
++    case SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTX:
+         if (value >= 0) return SDLK_RIGHT;
+         return SDLK_LEFT;
+     }
+@@ -687,8 +722,8 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+         bool context_capturing_mouse = recompui::is_context_capturing_mouse();
+ 
+         // Handle up button events even when input is disabled to avoid missing them during binding.
+-        if (cur_event.type == SDL_EventType::SDL_CONTROLLERBUTTONUP) {
+-            int sdl_key = cont_button_to_key(cur_event.cbutton);
++        if (cur_event.type == SDL_EventType::SDL_EVENT_GAMEPAD_BUTTON_UP) {
++            int sdl_key = cont_button_to_key(cur_event.gbutton);
+             if (sdl_key == latest_controller_key_pressed) {
+                 latest_controller_key_pressed = SDLK_UNKNOWN;
+             }
+@@ -698,7 +733,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+             bool is_mouse_input = false;
+             // Implement some additional behavior for specific events on top of what RmlUi normally does with them.
+             switch (cur_event.type) {
+-            case SDL_EventType::SDL_MOUSEMOTION: {
++            case SDL_EventType::SDL_EVENT_MOUSE_MOTION: {
+                 int *last_mouse_pos = ui_state->last_active_mouse_position;
+ 
+                 if (!ui_state->mouse_is_active) {
+@@ -717,19 +752,19 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+                 }
+             }
+             // fallthrough
+-            case SDL_EventType::SDL_MOUSEBUTTONDOWN:
++            case SDL_EventType::SDL_EVENT_MOUSE_BUTTON_DOWN:
+                 mouse_moved = true;
+                 mouse_clicked = true;
+                 is_mouse_input = true;
+                 break;
+                 
+-            case SDL_EventType::SDL_MOUSEBUTTONUP:
+-            case SDL_EventType::SDL_MOUSEWHEEL:
++            case SDL_EventType::SDL_EVENT_MOUSE_BUTTON_UP:
++            case SDL_EventType::SDL_EVENT_MOUSE_WHEEL:
+                 is_mouse_input = true;
+                 break;
+                 
+-            case SDL_EventType::SDL_CONTROLLERBUTTONDOWN: {
+-                int sdl_key = cont_button_to_key(cur_event.cbutton);
++            case SDL_EventType::SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
++                int sdl_key = cont_button_to_key(cur_event.gbutton);
+                 if (context_capturing_input && sdl_key) {
+                     ui_state->context->ProcessKeyDown(convert_sdl_to_rml(sdl_key), 0);
+                     latest_controller_key_pressed = sdl_key;
+@@ -739,13 +774,13 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+                 cont_interacted = true;
+                 break;
+             }
+-            case SDL_EventType::SDL_KEYDOWN:
++            case SDL_EventType::SDL_EVENT_KEY_DOWN:
+                 // Exclude the ESC key from triggering keyboard mode.
+-                if (cur_event.key.keysym.scancode != SDL_Scancode::SDL_SCANCODE_ESCAPE) {
++                if (cur_event.key.scancode != SDL_Scancode::SDL_SCANCODE_ESCAPE) {
+                     non_mouse_interacted = true;
+                     kb_interacted = true;
+ 
+-                    if (cur_event.key.keysym.scancode == SDL_Scancode::SDL_SCANCODE_F8) {
++                    if (cur_event.key.scancode == SDL_Scancode::SDL_SCANCODE_F8) {
+                         if (recompui::config::general::get_debug_mode_enabled()) {
+                             Rml::Debugger::SetVisible(!Rml::Debugger::IsVisible());
+                         }
+@@ -753,28 +788,28 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+                 }
+ 
+                 break;
+-            case SDL_EventType::SDL_USEREVENT:
+-                if (cur_event.user.code == SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTY) {
++            case SDL_EventType::SDL_EVENT_USER:
++                if (cur_event.user.code == SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTY) {
+                     ui_state->await_stick_return_y = true;
+-                } else if (cur_event.user.code == SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTX) {
++                } else if (cur_event.user.code == SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTX) {
+                     ui_state->await_stick_return_x = true;
+                 }
+                 break;
+-            case SDL_EventType::SDL_CONTROLLERAXISMOTION:
+-                SDL_ControllerAxisEvent* axis_event = &cur_event.caxis;
+-                if (axis_event->axis != SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTY && axis_event->axis != SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTX) {
++            case SDL_EventType::SDL_EVENT_GAMEPAD_AXIS_MOTION:
++                SDL_GamepadAxisEvent* axis_event = &cur_event.gaxis;
++                if (axis_event->axis != SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTY && axis_event->axis != SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTX) {
+                     break;
+                 }
+ 
+                 float axis_value = axis_event->value * (1 / 32768.0f);
+-                bool* await_stick_return = axis_event->axis == SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_LEFTY
++                bool* await_stick_return = axis_event->axis == SDL_GamepadAxis::SDL_GAMEPAD_AXIS_LEFTY
+                         ? &ui_state->await_stick_return_y
+                         : &ui_state->await_stick_return_x;
+                 if (fabsf(axis_value) > 0.5f) {
+                     if (!*await_stick_return) {
+                         *await_stick_return = true;
+                         non_mouse_interacted = true;
+-                        int sdl_key = cont_axis_to_key(cur_event.caxis, axis_value);
++                        int sdl_key = cont_axis_to_key(cur_event.gaxis, axis_value);
+                         if (context_capturing_input && sdl_key) {
+                             ui_state->context->ProcessKeyDown(convert_sdl_to_rml(sdl_key), 0);
+                             latest_controller_key_pressed = sdl_key;
+@@ -787,7 +822,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+                 else if (*await_stick_return && fabsf(axis_value) < 0.15f) {
+                     *await_stick_return = false;
+                     // Stop pressing the current key if the axis that was released was the one triggering key presses.
+-                    int sdl_key = cont_axis_to_key(cur_event.caxis, axis_value);
++                    int sdl_key = cont_axis_to_key(cur_event.gaxis, axis_value);
+                     if (sdl_key == latest_controller_key_pressed) {
+                         latest_controller_key_pressed = SDLK_UNKNOWN;
+                     }
+@@ -813,24 +848,18 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+             bool open_config = false;
+ 
+             switch (cur_event.type) {
+-            case SDL_EventType::SDL_KEYDOWN:
+-                if (cur_event.key.keysym.scancode == SDL_Scancode::SDL_SCANCODE_ESCAPE) {
++            case SDL_EventType::SDL_EVENT_KEY_DOWN:
++                if (cur_event.key.scancode == SDL_Scancode::SDL_SCANCODE_ESCAPE) {
+                     open_config = true;
+                 }
+                 break;
+-            case SDL_EventType::SDL_CONTROLLERBUTTONDOWN: {
+-                SDL_ControllerButtonEvent* button_event = &cur_event.cbutton;
++            case SDL_EventType::SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
++                SDL_GamepadButtonEvent* button_event = &cur_event.gbutton;
                  SDL_JoystickID joystick_id = button_event->which;
 -                int profile_index;
 -                if (recompinput::players::is_single_player_mode()) {
@@ -1819,9 +2740,12 @@ index 277a421..dc6da6c 100644
 +                auto controller = recompinput::get_controller_from_joystick_id(joystick_id);
 +                int profile_index = recompinput::profiles::get_controller_event_profile(controller);
  
-                 if (check_menu_button_pressed(profile_index, recompinput::GameInput::TOGGLE_MENU, cur_event.cbutton.button)) {
+-                if (check_menu_button_pressed(profile_index, recompinput::GameInput::TOGGLE_MENU, cur_event.cbutton.button)) {
++                if (check_menu_button_pressed(profile_index, recompinput::GameInput::TOGGLE_MENU, cur_event.gbutton.button)) {
                      open_config = true;
-@@ -859,6 +889,12 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
+                 }
+                 break;
+@@ -859,6 +888,12 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
      ui_state->update_primary_input(mouse_moved, non_mouse_interacted);
      ui_state->update_focus(mouse_moved, non_mouse_interacted);
  
@@ -1834,7 +2758,7 @@ index 277a421..dc6da6c 100644
      if (recompui::is_any_context_shown()) {
          if (recompui::is_context_shown(recompui::get_launcher_context_id())) {
              recompui::update_launcher_menu();
-@@ -1015,8 +1051,8 @@ void recompui::release_image(const std::string &src) {
+@@ -1015,8 +1050,8 @@ void recompui::release_image(const std::string &src) {
  }
  
  void recompui::drop_files(const std::list<std::filesystem::path> &file_list) {
@@ -2082,7 +3006,7 @@ index 294c371..c767867 100644
  
  } // namespace recompui
 diff --git a/recompui/src/composites/ui_player_card.cpp b/recompui/src/composites/ui_player_card.cpp
-index 7a75884..425b412 100644
+index 7a75884..6dfa21d 100644
 --- a/recompui/src/composites/ui_player_card.cpp
 +++ b/recompui/src/composites/ui_player_card.cpp
 @@ -2,9 +2,17 @@
@@ -2164,7 +3088,7 @@ index 7a75884..425b412 100644
 +        std::string selected_device = player.keyboard_enabled ? "keyboard" : "unassigned";
 +        if (!player.controller && !player.keyboard_enabled) devices.emplace_back("Unassigned", "unassigned");
 +        for (size_t i = 0; i < controllers.size(); ++i) {
-+            const char* name = SDL_GameControllerName(controllers[i]);
++            const char* name = SDL_GetGamepadName(controllers[i]);
 +            devices.emplace_back(std::to_string(i + 1) + ": " + (name ? name : "Controller"), std::to_string(i));
 +            if (controllers[i] == player.controller) selected_device = std::to_string(i);
          }
@@ -2204,7 +3128,7 @@ index 7a75884..425b412 100644
 +        device_value.set_overflow_x(Overflow::Hidden);
 +        device_select->add_change_callback([player_index, controllers](SelectOption& option, int) {
 +            if (option.value == "unassigned") return;
-+            SDL_GameController* controller = option.value == "keyboard" ? nullptr : controllers.at(std::stoul(option.value));
++            SDL_Gamepad* controller = option.value == "keyboard" ? nullptr : controllers.at(std::stoul(option.value));
 +            recompinput::players::select_player_device(player_index, controller);
          });
 -        select->set_width(100.0f, Unit::Percent);
@@ -2276,7 +3200,7 @@ index 6c84c05..507e2b3 100644
              // Can close
              [id, name](TabCloseContext close_context) {
 diff --git a/recompui/src/config/ui_config_page_controls.cpp b/recompui/src/config/ui_config_page_controls.cpp
-index f379a6f..00dafc4 100644
+index f379a6f..31d907b 100644
 --- a/recompui/src/config/ui_config_page_controls.cpp
 +++ b/recompui/src/config/ui_config_page_controls.cpp
 @@ -8,6 +8,7 @@
@@ -2526,7 +3450,7 @@ index f379a6f..00dafc4 100644
 -        selected_profile_index = single_player_show_keyboard_mappings
 +bool ConfigPageControls::set_current_profile_index() {
 +    const auto device = get_player_input_device();
-+    SDL_GameController *controller = nullptr;
++    SDL_Gamepad *controller = nullptr;
 +    int profile_index = -1;
 +    if (multiplayer_enabled) {
 +        if (selected_player >= 0 && static_cast<size_t>(selected_player) < max_num_players &&
@@ -2614,7 +3538,7 @@ index f379a6f..00dafc4 100644
          recompinput::profiles::clear_input_binding(selected_profile_index, game_input);
      } else {
 diff --git a/recompui/src/config/ui_config_page_controls.h b/recompui/src/config/ui_config_page_controls.h
-index dd8ff24..595dad3 100644
+index dd8ff24..47c1d70 100644
 --- a/recompui/src/config/ui_config_page_controls.h
 +++ b/recompui/src/config/ui_config_page_controls.h
 @@ -96,6 +96,9 @@ protected:
@@ -2623,7 +3547,7 @@ index dd8ff24..595dad3 100644
      int selected_profile_index = -1;
 +    int selected_profile_player = -1;
 +    recompinput::InputDevice selected_profile_device = recompinput::InputDevice::COUNT;
-+    SDL_GameController *selected_profile_controller = nullptr;
++    SDL_Gamepad *selected_profile_controller = nullptr;
      size_t max_num_players;
  
      bool multiplayer_enabled;
@@ -3254,3 +4178,43 @@ index 5ca5349..0ccecfa 100644
  }
  
  Rml::RenderInterface* recompui::RmlRenderInterface_RT64::get_rml_interface() {
+diff --git a/recompui/src/util/file.cpp b/recompui/src/util/file.cpp
+index 7ee84ed..e3208eb 100644
+--- a/recompui/src/util/file.cpp
++++ b/recompui/src/util/file.cpp
+@@ -1,6 +1,6 @@
+ #include "file.h"
+ 
+-#include <SDL.h>
++#include <SDL3/SDL.h>
+ #include "nfd.h"
+ #include "RmlUi/Core.h"
+ 
+diff --git a/recompui/src/util/support_apple.mm b/recompui/src/util/support_apple.mm
+index 5160801..e9dd532 100644
+--- a/recompui/src/util/support_apple.mm
++++ b/recompui/src/util/support_apple.mm
+@@ -2,7 +2,7 @@
+ #import <Foundation/Foundation.h>
+ #import <objc/runtime.h>
+ #import <objc/message.h>
+-#include <SDL.h>
++#include <SDL3/SDL.h>
+ #include "nfd.h"
+ 
+ namespace recompui::file {
+@@ -34,8 +34,13 @@ namespace recompui::file {
+ 
+ // Used to swizzle the updateDrawableSize method in SDL_cocoametalview to not
+ // automatically resize the underlying CAMetalLayer when the window size changes.
++// RR64-SDL3: SDL3 registers the class as SDL3_cocoametalview (SDL_cocoametalview
++// is only a source-level macro), so look that name up first.
+ static void MySwizzleSDLMetalView(void) {
+-    Class cls = objc_getClass("SDL_cocoametalview");
++    Class cls = objc_getClass("SDL3_cocoametalview");
++    if (!cls) {
++        cls = objc_getClass("SDL_cocoametalview");
++    }
+     if (!cls) {
+         // Probably means SDL is using a different name, or the symbol is still hidden.
+         return;

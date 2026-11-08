@@ -10,7 +10,7 @@
 #include "librecomp/config.hpp"
 
 #endif
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -82,7 +82,7 @@ std::shared_ptr<const Track> decode(std::filesystem::path path) {
             const auto info = stb_vorbis_get_info(v);
             spec.freq = int(info.sample_rate);
             spec.channels = 2;
-            spec.format = AUDIO_S16SYS;
+            spec.format = SDL_AUDIO_S16;
             std::array<short, 8192> chunk{};
             for (;;) {
                 int n =
@@ -97,33 +97,38 @@ std::shared_ptr<const Track> decode(std::filesystem::path path) {
             }
             stb_vorbis_close(v);
         } else {
-            auto *rw = SDL_RWFromFile(path.string().c_str(), "rb");
-            if (!rw || !SDL_LoadWAV_RW(rw, 1, &spec, &wav, &length))
+            // RR64-SDL3: SDL_IOStream replaces SDL_RWops; LoadWAV returns bool.
+            auto *rw = SDL_IOFromFile(path.string().c_str(), "rb");
+            if (!rw || !SDL_LoadWAV_IO(rw, true, &spec, &wav, &length))
                 return {};
         }
         const auto *raw = wav ? wav : reinterpret_cast<const Uint8 *>(source.data());
         const auto raw_size = wav ? std::size_t(length) : source.size() * 2;
-        SDL_AudioCVT cvt{};
-        if (spec.freq < 8000 || spec.freq > 192000 || spec.channels == 0 ||
-            SDL_BuildAudioCVT(&cvt, spec.format, spec.channels, spec.freq, AUDIO_S16SYS, 2, 48000) <
-                0 ||
+        // RR64-SDL3: SDL_AudioCVT is gone; SDL_ConvertAudioSamples converts to
+        // 48 kHz stereo S16 in one call and allocates the result. The same
+        // input and 512 MiB output limits apply (output bound computed from
+        // the frame count and rate ratio, as cvt.len_mult bounded it before).
+        const std::size_t src_frame_bytes = std::size_t(SDL_AUDIO_FRAMESIZE(spec));
+        if (spec.freq < 8000 || spec.freq > 192000 || spec.channels == 0 || src_frame_bytes == 0 ||
             raw_size > max_frames * 4 ||
-            raw_size * std::size_t(cvt.len_mult) > 512u * 1024u * 1024u) {
+            (raw_size / src_frame_bytes + 1) * 4u * (48000u / std::size_t(spec.freq) + 1u) > 512u * 1024u * 1024u) {
             if (wav)
-                SDL_FreeWAV(wav);
+                SDL_free(wav);
             return {};
         }
-        std::vector<Uint8> converted(raw_size * std::size_t(cvt.len_mult));
-        std::copy(raw, raw + raw_size, converted.data());
+        const SDL_AudioSpec target{SDL_AUDIO_S16, 2, 48000};
+        Uint8 *converted = nullptr;
+        int converted_len = 0;
+        const bool converted_ok = SDL_ConvertAudioSamples(&spec, raw, int(raw_size), &target, &converted, &converted_len);
         if (wav)
-            SDL_FreeWAV(wav);
-        cvt.buf = converted.data();
-        cvt.len = int(raw_size);
-        if (SDL_ConvertAudio(&cvt) < 0 || cvt.len_cvt < 4 ||
-            std::size_t(cvt.len_cvt) > max_frames * 4)
+            SDL_free(wav);
+        if (!converted_ok || converted_len < 4 || std::size_t(converted_len) > max_frames * 4) {
+            SDL_free(converted);
             return {};
-        result->pcm.resize(std::size_t(cvt.len_cvt) / 2);
-        std::memcpy(result->pcm.data(), converted.data(), result->pcm.size() * 2);
+        }
+        result->pcm.resize(std::size_t(converted_len) / 2);
+        std::memcpy(result->pcm.data(), converted, result->pcm.size() * 2);
+        SDL_free(converted);
         return result;
     } catch (...) {
         return {};

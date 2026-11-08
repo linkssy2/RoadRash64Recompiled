@@ -44,7 +44,8 @@ Exact dependency revisions and local modifications are recorded in dependencies.
 - native/lib/RecompFrontend/recompui/lib/lunasvg: [LICENSE](licenses/dependencies/native/lib/RecompFrontend/recompui/lib/lunasvg/LICENSE) ([upstream](https://github.com/sammycage/lunasvg))
 - native/lib/ffmpeg: [COPYING.LGPLv2.1](licenses/dependencies/native/lib/ffmpeg/COPYING.LGPLv2.1) ([upstream](https://github.com/FFmpeg/FFmpeg.git)) — Linux only, built with a minimal audio-decode-only configuration (no `--enable-gpl`, no encoders/muxers/network/video/hardware acceleration) so it stays under the LGPL rather than pulling in GPL-only components. Bundled shared libraries linked into the player executable to decode custom soundtrack FLAC/MP3/MP4/M4A/AAC/WMA files; the Windows build uses the OS-provided Media Foundation codecs for the same formats instead.
 - opus: [COPYING](licenses/opus/COPYING)
-- sdl2: [COPYING.txt](licenses/sdl2/COPYING.txt)
+- SDL3 3.4.16: [LICENSE.txt](licenses/SDL3/LICENSE.txt) ([upstream](https://github.com/libsdl-org/SDL)) — built from source; shipped as `SDL3.dll` on Windows and linked statically into the executable on Linux.
+- sdl2 (earlier releases): [COPYING.txt](licenses/sdl2/COPYING.txt)
 
 Font licenses are also preserved with native/assets/promptfont and the binary assets folder. Generic interface SVGs originated from BanjoRecomp under GPL-3.0; no Banjo branding is included. This release does not include the obsolete Go setup executable.
 

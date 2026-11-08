@@ -7,8 +7,8 @@
 
 static int checks = 0;
 #define CHECK(expr) do { ++checks; if (!(expr)) { std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #expr); std::exit(1); } } while (0)
-struct SDL_GameController { int identity; };
-SDL_GameController controller_a{1}, controller_b{2};
+struct SDL_Gamepad { int identity; };
+SDL_Gamepad controller_a{1}, controller_b{2};
 
 namespace recompinput {
 enum class InputDevice { Keyboard, Controller, COUNT };
@@ -16,10 +16,10 @@ enum class GameInput { Attack, Menu, COUNT };
 struct InputField { int input_id = 0; };
 constexpr int num_bindings_per_input = 2;
 bool get_game_input_is_menu(GameInput input) { return input == GameInput::Menu; }
-struct Player { SDL_GameController* controller = nullptr; bool keyboard_enabled = false; };
+struct Player { SDL_Gamepad* controller = nullptr; bool keyboard_enabled = false; };
 std::array<Player, 4> slots;
-std::vector<SDL_GameController*> connected;
-std::vector<SDL_GameController*> connected_controllers() { return connected; }
+std::vector<SDL_Gamepad*> connected;
+std::vector<SDL_Gamepad*> connected_controllers() { return connected; }
 namespace players {
 InputDevice get_player_input_device(int player) {
     if (player < 0 || player >= 4) return InputDevice::COUNT;
@@ -90,7 +90,7 @@ public:
     int last_update_index = 0, update_index = 0;
     int selected_player = 0, selected_profile_index = -1, selected_profile_player = -1;
     recompinput::InputDevice selected_profile_device = recompinput::InputDevice::COUNT;
-    SDL_GameController* selected_profile_controller = nullptr;
+    SDL_Gamepad* selected_profile_controller = nullptr;
     size_t max_num_players = 4;
     bool multiplayer_enabled = true, multiplayer_view_mappings = false, single_player_show_keyboard_mappings = false;
     bool awaiting_binding = false, awaiting_binding_for_menu_action_button = false, queue_first_game_input_row_focus = false;

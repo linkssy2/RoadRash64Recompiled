@@ -1,4 +1,3 @@
-#define SDL_MAIN_HANDLED
 #include "recompinput.h"
 #include <cstdio>
 int main() {
@@ -10,8 +9,8 @@ int main() {
         if(get_game_input_name(action).empty() || get_game_input_description(action).empty() ||
             get_game_input_is_menu(action) || !get_game_input_clearable(action))return 1;
         const auto& fields=get_default_mapping_for_input(InputDevice::Controller,action);
-        const auto button=action==GameInput::RR64_WEAPON_TRICK?SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-            action==GameInput::RR64_EJECT?SDL_CONTROLLER_BUTTON_LEFTSTICK:SDL_CONTROLLER_BUTTON_RIGHTSTICK;
+        const auto button=action==GameInput::RR64_WEAPON_TRICK?SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
+            action==GameInput::RR64_EJECT?SDL_GAMEPAD_BUTTON_LEFT_STICK:SDL_GAMEPAD_BUTTON_RIGHT_STICK;
         if(fields.size()!=1 || fields[0]!=InputField::controller_digital(button))return 2;
         if(!get_default_mapping_for_input(InputDevice::Keyboard,action).empty())return 3;
         nlohmann::json saved;

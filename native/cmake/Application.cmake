@@ -141,10 +141,8 @@ target_include_directories(RoadRash64Recompiled PRIVATE
     "${RECOMP_FRONTEND_ROOT}/recompinput/include"
     "${RECOMP_FRONTEND_ROOT}/recompui/include"
     "${RECOMP_FRONTEND_ROOT}/recompui/src"
-    "${RR64_SDL2_INCLUDE_DIRS}"
+    "${RR64_SDL_INCLUDE_DIRS}"
 )
-
-target_link_directories(RoadRash64Recompiled PRIVATE ${RR64_SDL2_LIB_DIRS})
 
 if(MSVC)
     target_compile_options(RoadRash64Recompiled PRIVATE
@@ -172,7 +170,7 @@ target_link_libraries(RoadRash64Recompiled PRIVATE
     ultramodern
     rt64
     nfd
-    ${RR64_SDL2_TARGET}
+    ${RR64_SDL_TARGET}
     opus
 )
 if(WIN32)
@@ -180,9 +178,11 @@ if(WIN32)
 endif()
 
 if(WIN32)
+    # RR64-SDL3: SDL3.dll needs no copy here; it is built straight into
+    # <build>/bin beside the exe (see Sdl.cmake). Only DXC's DLLs come from
+    # contrib.
     add_custom_command(TARGET RoadRash64Recompiled POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${sdl2_SOURCE_DIR}/lib/x64/SDL2.dll"
             "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxil.dll"
             "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxcompiler.dll"
             "$<TARGET_FILE_DIR:RoadRash64Recompiled>"

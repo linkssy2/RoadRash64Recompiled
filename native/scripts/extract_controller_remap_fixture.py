@@ -32,8 +32,9 @@ def main() -> None:
     events = (source / "input_events.cpp").read_text()
     state = players[players.index("using players_array"):
                     players.index("size_t players::get_number_of_assigned_players")]
-    axis = events[events.index("    case SDL_EventType::SDL_CONTROLLERAXISMOTION:"):
-                  events.index("    case SDL_EventType::SDL_CONTROLLERSENSORUPDATE:")]
+    # RR64-SDL3: SDL3 event names.
+    axis = events[events.index("    case SDL_EventType::SDL_EVENT_GAMEPAD_AXIS_MOTION:"):
+                  events.index("    case SDL_EventType::SDL_EVENT_GAMEPAD_SENSOR_UPDATE:")]
     text = """// Generated from production; do not edit.
 namespace recompui {
 struct FixtureControls { void force_update() {} };

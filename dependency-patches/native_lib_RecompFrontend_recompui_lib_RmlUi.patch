@@ -1,0 +1,274 @@
+diff --git a/Backends/RmlUi_Platform_SDL.cpp b/Backends/RmlUi_Platform_SDL.cpp
+index 8269dc21..16dfffda 100644
+--- a/Backends/RmlUi_Platform_SDL.cpp
++++ b/Backends/RmlUi_Platform_SDL.cpp
+@@ -31,28 +31,32 @@
+ #include <RmlUi/Core/Input.h>
+ #include <RmlUi/Core/StringUtilities.h>
+ #include <RmlUi/Core/SystemInterface.h>
+-#include <SDL.h>
++#include <SDL3/SDL.h>
++
++#if !defined(RMLUI_SDL_VERSION_MAJOR) || RMLUI_SDL_VERSION_MAJOR != 3
++#error "RR64: RmlUi_Platform_SDL.cpp is built for SDL3 (define RMLUI_SDL_VERSION_MAJOR=3)."
++#endif
+ 
+ SystemInterface_SDL::SystemInterface_SDL()
+ {
+-	cursor_default = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+-	cursor_move = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEALL);
+-	cursor_pointer = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+-	cursor_resize = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
++	cursor_default = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
++	cursor_move = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_MOVE);
++	cursor_pointer = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
++	cursor_resize = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NWSE_RESIZE);
+ 	cursor_cross = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
+-	cursor_text = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_IBEAM);
+-	cursor_unavailable = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NO);
++	cursor_text = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
++	cursor_unavailable = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NOT_ALLOWED);
+ }
+ 
+ SystemInterface_SDL::~SystemInterface_SDL()
+ {
+-	SDL_FreeCursor(cursor_default);
+-	SDL_FreeCursor(cursor_move);
+-	SDL_FreeCursor(cursor_pointer);
+-	SDL_FreeCursor(cursor_resize);
+-	SDL_FreeCursor(cursor_cross);
+-	SDL_FreeCursor(cursor_text);
+-	SDL_FreeCursor(cursor_unavailable);
++	SDL_DestroyCursor(cursor_default);
++	SDL_DestroyCursor(cursor_move);
++	SDL_DestroyCursor(cursor_pointer);
++	SDL_DestroyCursor(cursor_resize);
++	SDL_DestroyCursor(cursor_cross);
++	SDL_DestroyCursor(cursor_text);
++	SDL_DestroyCursor(cursor_unavailable);
+ }
+ 
+ void SystemInterface_SDL::SetWindow(SDL_Window* in_window)
+@@ -100,54 +104,66 @@ void SystemInterface_SDL::SetClipboardText(const Rml::String& text_utf8)
+ void SystemInterface_SDL::GetClipboardText(Rml::String& text)
+ {
+ 	char* raw_text = SDL_GetClipboardText();
+-	text = Rml::String(raw_text);
++	text = Rml::String(raw_text ? raw_text : "");
+ 	SDL_free(raw_text);
+ }
+ 
++void SystemInterface_SDL::ActivateKeyboard(Rml::Vector2f caret_position, float line_height)
++{
++	if (window)
++	{
++		const SDL_Rect rect = {int(caret_position.x), int(caret_position.y), 1, int(line_height)};
++		SDL_SetTextInputArea(window, &rect, 0);
++		SDL_StartTextInput(window);
++	}
++}
++
++void SystemInterface_SDL::DeactivateKeyboard()
++{
++	if (window)
++		SDL_StopTextInput(window);
++}
++
+ bool RmlSDL::InputEventHandler(Rml::Context* context, SDL_Event& ev)
+ {
+ 	bool result = true;
+ 
+ 	switch (ev.type)
+ 	{
+-	case SDL_MOUSEMOTION: result = context->ProcessMouseMove(ev.motion.x, ev.motion.y, GetKeyModifierState()); break;
+-	case SDL_MOUSEBUTTONDOWN:
++	// RR64-SDL3: mouse coordinates are floats in SDL3; RmlUi takes whole pixels.
++	case SDL_EVENT_MOUSE_MOTION: result = context->ProcessMouseMove(int(ev.motion.x), int(ev.motion.y), GetKeyModifierState()); break;
++	case SDL_EVENT_MOUSE_BUTTON_DOWN:
+ 		result = context->ProcessMouseButtonDown(ConvertMouseButton(ev.button.button), GetKeyModifierState());
+-		SDL_CaptureMouse(SDL_TRUE);
++		SDL_CaptureMouse(true);
+ 		break;
+-	case SDL_MOUSEBUTTONUP:
+-		SDL_CaptureMouse(SDL_FALSE);
++	case SDL_EVENT_MOUSE_BUTTON_UP:
++		SDL_CaptureMouse(false);
+ 		result = context->ProcessMouseButtonUp(ConvertMouseButton(ev.button.button), GetKeyModifierState());
+ 		break;
+-	case SDL_MOUSEWHEEL: result = context->ProcessMouseWheel(float(-ev.wheel.y), GetKeyModifierState()); break;
+-	case SDL_KEYDOWN:
+-		result = context->ProcessKeyDown(ConvertKey(ev.key.keysym.sym), GetKeyModifierState());
+-		if (ev.key.keysym.sym == SDLK_RETURN || ev.key.keysym.sym == SDLK_KP_ENTER)
++	case SDL_EVENT_MOUSE_WHEEL: result = context->ProcessMouseWheel(-ev.wheel.y, GetKeyModifierState()); break;
++	case SDL_EVENT_KEY_DOWN:
++		result = context->ProcessKeyDown(ConvertKey(ev.key.key), GetKeyModifierState());
++		if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER)
+ 			result &= context->ProcessTextInput('\n');
+ 		break;
+-	case SDL_KEYUP: result = context->ProcessKeyUp(ConvertKey(ev.key.keysym.sym), GetKeyModifierState()); break;
+-	case SDL_TEXTINPUT: result = context->ProcessTextInput(Rml::String(&ev.text.text[0])); break;
+-	case SDL_WINDOWEVENT:
++	case SDL_EVENT_KEY_UP: result = context->ProcessKeyUp(ConvertKey(ev.key.key), GetKeyModifierState()); break;
++	case SDL_EVENT_TEXT_INPUT: result = context->ProcessTextInput(Rml::String(ev.text.text)); break;
++	// SDL3 reports window changes as top-level events. The pixel size event
++	// matches SDL2's SIZE_CHANGED on high-DPI displays (drawable size).
++	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+ 	{
+-		switch (ev.window.event)
+-		{
+-		case SDL_WINDOWEVENT_SIZE_CHANGED:
+-		{
+-			Rml::Vector2i dimensions(ev.window.data1, ev.window.data2);
+-			context->SetDimensions(dimensions);
+-		}
+-		break;
+-		case SDL_WINDOWEVENT_LEAVE: context->ProcessMouseLeave(); break;
+-		}
++		Rml::Vector2i dimensions(ev.window.data1, ev.window.data2);
++		context->SetDimensions(dimensions);
+ 	}
+ 	break;
++	case SDL_EVENT_WINDOW_MOUSE_LEAVE: context->ProcessMouseLeave(); break;
+ 	default: break;
+ 	}
+ 
+ 	return result;
+ }
+ 
+-Rml::Input::KeyIdentifier RmlSDL::ConvertKey(int sdlkey)
++Rml::Input::KeyIdentifier RmlSDL::ConvertKey(SDL_Keycode sdlkey)
+ {
+ 	// clang-format off
+ 	switch (sdlkey)
+@@ -165,43 +181,43 @@ Rml::Input::KeyIdentifier RmlSDL::ConvertKey(int sdlkey)
+ 	case SDLK_7:            return Rml::Input::KI_7;
+ 	case SDLK_8:            return Rml::Input::KI_8;
+ 	case SDLK_9:            return Rml::Input::KI_9;
+-	case SDLK_a:            return Rml::Input::KI_A;
+-	case SDLK_b:            return Rml::Input::KI_B;
+-	case SDLK_c:            return Rml::Input::KI_C;
+-	case SDLK_d:            return Rml::Input::KI_D;
+-	case SDLK_e:            return Rml::Input::KI_E;
+-	case SDLK_f:            return Rml::Input::KI_F;
+-	case SDLK_g:            return Rml::Input::KI_G;
+-	case SDLK_h:            return Rml::Input::KI_H;
+-	case SDLK_i:            return Rml::Input::KI_I;
+-	case SDLK_j:            return Rml::Input::KI_J;
+-	case SDLK_k:            return Rml::Input::KI_K;
+-	case SDLK_l:            return Rml::Input::KI_L;
+-	case SDLK_m:            return Rml::Input::KI_M;
+-	case SDLK_n:            return Rml::Input::KI_N;
+-	case SDLK_o:            return Rml::Input::KI_O;
+-	case SDLK_p:            return Rml::Input::KI_P;
+-	case SDLK_q:            return Rml::Input::KI_Q;
+-	case SDLK_r:            return Rml::Input::KI_R;
+-	case SDLK_s:            return Rml::Input::KI_S;
+-	case SDLK_t:            return Rml::Input::KI_T;
+-	case SDLK_u:            return Rml::Input::KI_U;
+-	case SDLK_v:            return Rml::Input::KI_V;
+-	case SDLK_w:            return Rml::Input::KI_W;
+-	case SDLK_x:            return Rml::Input::KI_X;
+-	case SDLK_y:            return Rml::Input::KI_Y;
+-	case SDLK_z:            return Rml::Input::KI_Z;
++	case SDLK_A:            return Rml::Input::KI_A;
++	case SDLK_B:            return Rml::Input::KI_B;
++	case SDLK_C:            return Rml::Input::KI_C;
++	case SDLK_D:            return Rml::Input::KI_D;
++	case SDLK_E:            return Rml::Input::KI_E;
++	case SDLK_F:            return Rml::Input::KI_F;
++	case SDLK_G:            return Rml::Input::KI_G;
++	case SDLK_H:            return Rml::Input::KI_H;
++	case SDLK_I:            return Rml::Input::KI_I;
++	case SDLK_J:            return Rml::Input::KI_J;
++	case SDLK_K:            return Rml::Input::KI_K;
++	case SDLK_L:            return Rml::Input::KI_L;
++	case SDLK_M:            return Rml::Input::KI_M;
++	case SDLK_N:            return Rml::Input::KI_N;
++	case SDLK_O:            return Rml::Input::KI_O;
++	case SDLK_P:            return Rml::Input::KI_P;
++	case SDLK_Q:            return Rml::Input::KI_Q;
++	case SDLK_R:            return Rml::Input::KI_R;
++	case SDLK_S:            return Rml::Input::KI_S;
++	case SDLK_T:            return Rml::Input::KI_T;
++	case SDLK_U:            return Rml::Input::KI_U;
++	case SDLK_V:            return Rml::Input::KI_V;
++	case SDLK_W:            return Rml::Input::KI_W;
++	case SDLK_X:            return Rml::Input::KI_X;
++	case SDLK_Y:            return Rml::Input::KI_Y;
++	case SDLK_Z:            return Rml::Input::KI_Z;
+ 	case SDLK_SEMICOLON:    return Rml::Input::KI_OEM_1;
+ 	case SDLK_PLUS:         return Rml::Input::KI_OEM_PLUS;
+ 	case SDLK_COMMA:        return Rml::Input::KI_OEM_COMMA;
+ 	case SDLK_MINUS:        return Rml::Input::KI_OEM_MINUS;
+ 	case SDLK_PERIOD:       return Rml::Input::KI_OEM_PERIOD;
+ 	case SDLK_SLASH:        return Rml::Input::KI_OEM_2;
+-	case SDLK_BACKQUOTE:    return Rml::Input::KI_OEM_3;
++	case SDLK_GRAVE:        return Rml::Input::KI_OEM_3;
+ 	case SDLK_LEFTBRACKET:  return Rml::Input::KI_OEM_4;
+ 	case SDLK_BACKSLASH:    return Rml::Input::KI_OEM_5;
+ 	case SDLK_RIGHTBRACKET: return Rml::Input::KI_OEM_6;
+-	case SDLK_QUOTEDBL:     return Rml::Input::KI_OEM_7;
++	case SDLK_DBLAPOSTROPHE: return Rml::Input::KI_OEM_7;
+ 	case SDLK_KP_0:         return Rml::Input::KI_NUMPAD0;
+ 	case SDLK_KP_1:         return Rml::Input::KI_NUMPAD1;
+ 	case SDLK_KP_2:         return Rml::Input::KI_NUMPAD2;
+@@ -289,19 +305,19 @@ int RmlSDL::GetKeyModifierState()
+ 
+ 	int retval = 0;
+ 
+-	if (sdl_mods & KMOD_CTRL)
++	if (sdl_mods & SDL_KMOD_CTRL)
+ 		retval |= Rml::Input::KM_CTRL;
+ 
+-	if (sdl_mods & KMOD_SHIFT)
++	if (sdl_mods & SDL_KMOD_SHIFT)
+ 		retval |= Rml::Input::KM_SHIFT;
+ 
+-	if (sdl_mods & KMOD_ALT)
++	if (sdl_mods & SDL_KMOD_ALT)
+ 		retval |= Rml::Input::KM_ALT;
+ 
+-	if (sdl_mods & KMOD_NUM)
++	if (sdl_mods & SDL_KMOD_NUM)
+ 		retval |= Rml::Input::KM_NUMLOCK;
+ 
+-	if (sdl_mods & KMOD_CAPS)
++	if (sdl_mods & SDL_KMOD_CAPS)
+ 		retval |= Rml::Input::KM_CAPSLOCK;
+ 
+ 	return retval;
+diff --git a/Backends/RmlUi_Platform_SDL.h b/Backends/RmlUi_Platform_SDL.h
+index 937a6b08..b78c98a3 100644
+--- a/Backends/RmlUi_Platform_SDL.h
++++ b/Backends/RmlUi_Platform_SDL.h
+@@ -32,7 +32,8 @@
+ #include <RmlUi/Core/Input.h>
+ #include <RmlUi/Core/SystemInterface.h>
+ #include <RmlUi/Core/Types.h>
+-#include <SDL.h>
++// RR64-SDL3: this backend targets SDL3 only (RMLUI_SDL_VERSION_MAJOR=3).
++#include <SDL3/SDL.h>
+ 
+ class SystemInterface_SDL : public Rml::SystemInterface {
+ public:
+@@ -51,6 +52,11 @@ public:
+ 	void SetClipboardText(const Rml::String& text) override;
+ 	void GetClipboardText(Rml::String& text) override;
+ 
++	// SDL3 delivers SDL_EVENT_TEXT_INPUT only while text input is started on a
++	// window, so focusing/blurring an RmlUi text field toggles it here.
++	void ActivateKeyboard(Rml::Vector2f caret_position, float line_height) override;
++	void DeactivateKeyboard() override;
++
+ private:
+ 	SDL_Window* window = nullptr;
+ 
+@@ -70,7 +76,7 @@ namespace RmlSDL {
+ bool InputEventHandler(Rml::Context* context, SDL_Event& ev);
+ 
+ // Converts the SDL key to RmlUi key.
+-Rml::Input::KeyIdentifier ConvertKey(int sdl_key);
++Rml::Input::KeyIdentifier ConvertKey(SDL_Keycode sdl_key);
+ 
+ // Converts the SDL mouse button to RmlUi mouse button.
+ int ConvertMouseButton(int sdl_mouse_button);

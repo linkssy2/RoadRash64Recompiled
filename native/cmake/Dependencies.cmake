@@ -32,6 +32,11 @@ foreach(REQUIRED_PATH
     endif()
 endforeach()
 
+# RR64-SDL3: SDL3 3.4.16 (SDL3.dll on Windows, static on Linux), built before
+# RT64 and RecompFrontend so all three compile against the same SDL3 headers
+# and link one SDL3 library.
+include("${CMAKE_CURRENT_LIST_DIR}/Sdl.cmake")
+
 # Match the shared N64Recomp frontend stack used by current ports.
 set(RT64_STATIC TRUE)
 set(RT64_SDL_WINDOW_VULKAN TRUE)
@@ -81,20 +86,9 @@ else()
 endif()
 
 include(FetchContent)
-if(WIN32)
-    set(SDL2_VERSION "2.30.3" CACHE STRING "SDL2 development package version")
-    FetchContent_Declare(sdl2
-        URL "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-VC.zip")
-    FetchContent_MakeAvailable(sdl2)
-    set(RR64_SDL2_INCLUDE_DIRS "${sdl2_SOURCE_DIR}/include")
-    set(RR64_SDL2_LIB_DIRS "${sdl2_SOURCE_DIR}/lib/x64")
-    set(RR64_SDL2_TARGET SDL2)
-else()
-    find_package(SDL2 2.26 REQUIRED)
-    set(RR64_SDL2_INCLUDE_DIRS "${SDL2_INCLUDE_DIRS}")
-    set(RR64_SDL2_LIB_DIRS "")
-    set(RR64_SDL2_TARGET SDL2::SDL2)
-
+# RR64-SDL3: the SDL2-devel download (Windows) and find_package(SDL2) (Linux)
+# are replaced by cmake/Sdl.cmake, which sets RR64_SDL_* above.
+if(NOT WIN32)
     # Custom soundtrack support decodes FLAC/MP3/MP4/M4A/AAC/WMA through a
     # minimal, bundled shared FFmpeg built here from the pinned source in
     # native/lib/ffmpeg: audio decode only, no encoders, muxers, network,

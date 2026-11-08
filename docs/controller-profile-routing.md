@@ -34,9 +34,10 @@ game as B (`0x4000`).
 The earlier Linux controller logs contain working raw and mapped B events.
 That is evidence about the earlier reporter, not this new PikaOS installation.
 Linux's [Nintendo driver](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-nintendo.c)
-maps N64 A and B independently. SDL2's N64 HIDAPI path likewise preserves
-button labels in its
-[Switch driver](https://github.com/libsdl-org/SDL/blob/release-2.30.3/src/joystick/hidapi/SDL_hidapi_switch.c).
+maps N64 A and B independently. SDL's N64 HIDAPI path likewise preserves
+button labels in its Switch driver (SDL 2.30.3 then, SDL 3.4.16 now:
+[SDL_hidapi_switch.c](https://github.com/libsdl-org/SDL/blob/release-3.4.16/src/joystick/hidapi/SDL_hidapi_switch.c),
+`AlwaysUsesLabels`).
 Do not apply a global A/B swap or attribute this report to the prior L3 driver
 limitation without this reporter's evidence.
 
