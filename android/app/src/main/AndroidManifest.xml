@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-game manifest — SCAFFOLD ONLY. LauncherActivity / GameActivity do
+     not exist yet (they land with the full port, after the RT64 probe
+     passes). This file is the intended shape, adapted from AeroGauge:
+     Vulkan 1.1 feature gate, :game separate process so the launcher
+     survives a native crash, sensorLandscape, singleTask. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x00401000" android:required="true" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <application android:label="Road Rash 64 Recompiled" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" android:hasCode="true">
+        <activity android:name=".LauncherActivity" android:exported="true" android:configChanges="orientation|screenSize|smallestScreenSize|keyboard|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".GameActivity" android:exported="false" android:process=":game" android:screenOrientation="sensorLandscape" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode|layoutDirection|locale|navigation|density" android:launchMode="singleTask" />
+    </application>
+</manifest>

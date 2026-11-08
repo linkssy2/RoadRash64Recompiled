@@ -1,0 +1,19 @@
+diff --git a/src/shaders/FbCommon.hlsli b/src/shaders/FbCommon.hlsli
+index 973ee67..e952f57 100644
+--- a/src/shaders/FbCommon.hlsli
++++ b/src/shaders/FbCommon.hlsli
+@@ -7,8 +7,13 @@
+ 
+ #include "Formats.hlsli"
+ 
++// The Adreno system Vulkan driver rejects any compute pipeline whose shader contains this swap
++// written with a bitwise OR: vkCreateComputePipelines returns VK_ERROR_UNKNOWN even though the
++// SPIR-V is valid, and the null pipeline handle that leaves behind crashes the driver on bind.
++// The two masked fields occupy disjoint bit ranges, so XOR produces an identical result and the
++// driver accepts it. The 32-bit swap below is not affected.
+ uint EndianSwapUINT16(uint i) {
+-    return ((i << 8) & 0xFF00) | ((i >> 8) & 0xFF);
++    return ((i << 8) & 0xFF00) ^ ((i >> 8) & 0xFF);
+ }
+ 
+ // This endian swapping function generates a DXC-LLVM code generation bug when optimizations are enabled. All files that include this 

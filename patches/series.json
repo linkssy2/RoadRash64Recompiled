@@ -1,0 +1,39 @@
+[
+  {
+    "repository": "native/lib/rt64",
+    "patch": "0019-rt64-android-cross-build.patch",
+    "platforms": [
+      "android"
+    ]
+  },
+  {
+    "repository": "native/lib/rt64/src/contrib/plume",
+    "patch": "0020-plume-android-sdl-window.patch",
+    "platforms": [
+      "android"
+    ]
+  },
+  {
+    "repository": "build-android/deps/SDL",
+    "patch": "0021-sdl-android-usb-receiver.patch",
+    "platforms": [
+      "android"
+    ]
+  },
+  {
+    "repository": "native/lib/RecompFrontend",
+    "patch": "0022-recompfrontend-android.patch",
+    "platforms": [
+      "android"
+    ]
+  },
+  {
+    "repository": "native/lib/rt64",
+    "patch": "0023-rt64-adreno-endian-swap.patch",
+    "platforms": [
+      "windows",
+      "linux",
+      "android"
+    ]
+  }
+]

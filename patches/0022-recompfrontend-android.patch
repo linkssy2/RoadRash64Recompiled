@@ -1,0 +1,79 @@
+diff --git a/recompui/src/base/ui_launcher.cpp b/recompui/src/base/ui_launcher.cpp
+index 7a9509c..95742b0 100644
+--- a/recompui/src/base/ui_launcher.cpp
++++ b/recompui/src/base/ui_launcher.cpp
+@@ -6,7 +6,6 @@
+ #include "util/file.h"
+ #include "librecomp/game.hpp"
+ #include "ultramodern/ultramodern.hpp"
+-#include "nfd.h"
+ #include <filesystem>
+ #include <map>
+ #include "elements/ui_svg.h"
+@@ -705,4 +704,3 @@ namespace recompui {
+         launcher_context.close();
+     }
+ }
+-
+diff --git a/recompui/src/renderer/ui_renderer.cpp b/recompui/src/renderer/ui_renderer.cpp
+index 0ccecfa..b53a040 100644
+--- a/recompui/src/renderer/ui_renderer.cpp
++++ b/recompui/src/renderer/ui_renderer.cpp
+@@ -111,7 +111,11 @@ class RmlRenderInterface_RT64_impl : public Rml::RenderInterfaceCompatibility {
+     static constexpr uint32_t initial_index_buffer_size = 1024 * sizeof(int);
+     static constexpr plume::RenderFormat RmlTextureFormat = plume::RenderFormat::R8G8B8A8_UNORM;
+     static constexpr plume::RenderFormat RmlTextureFormatBgra = plume::RenderFormat::B8G8R8A8_UNORM;
++#if defined(__ANDROID__)
++    static constexpr plume::RenderFormat SwapChainFormat = plume::RenderFormat::R8G8B8A8_UNORM;
++#else
+     static constexpr plume::RenderFormat SwapChainFormat = plume::RenderFormat::B8G8R8A8_UNORM;
++#endif
+     static constexpr uint32_t RmlTextureFormatBytesPerPixel = RenderFormatSize(RmlTextureFormat);
+     static_assert(RenderFormatSize(RmlTextureFormatBgra) == RmlTextureFormatBytesPerPixel);
+     plume::RenderInterface* interface_;
+diff --git a/recompui/src/util/file.cpp b/recompui/src/util/file.cpp
+index 7ee84ed..675f376 100644
+--- a/recompui/src/util/file.cpp
++++ b/recompui/src/util/file.cpp
+@@ -1,7 +1,9 @@
+ #include "file.h"
+ 
+ #include <SDL.h>
++#if !defined(__ANDROID__)
+ #include "nfd.h"
++#endif
+ #include "RmlUi/Core.h"
+ 
+ #include "recompui/program_config.h"
+@@ -21,6 +23,9 @@
+ 
+ namespace recompui {
+     static void perform_file_dialog_operation(const std::function<void(bool, const std::filesystem::path&)>& callback) {
++#if defined(__ANDROID__)
++        callback(false, {}); // Android's launcher owns document import.
++#else
+         nfdnchar_t* native_path = nullptr;
+         nfdresult_t result = NFD_OpenDialogN(&native_path, nullptr, 0, nullptr);
+ 
+@@ -33,9 +38,13 @@ namespace recompui {
+         }
+ 
+         callback(success, path);
++#endif
+     }
+ 
+     static void perform_file_dialog_operation_multiple(const std::function<void(bool, const std::list<std::filesystem::path>&)>& callback) {
++#if defined(__ANDROID__)
++        callback(false, {});
++#else
+         const nfdpathset_t* native_paths = nullptr;
+         nfdresult_t result = NFD_OpenDialogMultipleN(&native_paths, nullptr, 0, nullptr);
+ 
+@@ -56,6 +65,7 @@ namespace recompui {
+         }
+ 
+         callback(success, paths);
++#endif
+     }
+ 
+     std::filesystem::path file::get_app_folder_path() {

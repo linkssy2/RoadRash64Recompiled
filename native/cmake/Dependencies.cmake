@@ -72,12 +72,22 @@ if(MSVC)
         /clang:-Wno-implicit-function-declaration
     )
 else()
-    target_compile_options(RecompiledFuncs PRIVATE
-        -march=nehalem
-        -fno-strict-aliasing
-        -Wno-unused-variable
-        -Wno-implicit-function-declaration
-    )
+    # Android/ARM64: -march=nehalem is x86-64-only and does not compile for
+    # ARM64. The NDK toolchain already sets the right -march for the ABI.
+    if(ANDROID)
+        target_compile_options(RecompiledFuncs PRIVATE
+            -fno-strict-aliasing
+            -Wno-unused-variable
+            -Wno-implicit-function-declaration
+        )
+    else()
+        target_compile_options(RecompiledFuncs PRIVATE
+            -march=nehalem
+            -fno-strict-aliasing
+            -Wno-unused-variable
+            -Wno-implicit-function-declaration
+        )
+    endif()
 endif()
 
 include(FetchContent)
@@ -89,6 +99,17 @@ if(WIN32)
     set(RR64_SDL2_INCLUDE_DIRS "${sdl2_SOURCE_DIR}/include")
     set(RR64_SDL2_LIB_DIRS "${sdl2_SOURCE_DIR}/lib/x64")
     set(RR64_SDL2_TARGET SDL2)
+elseif(ANDROID)
+    # Android: SDL2 is built from source by cmake/Android.cmake (see
+    # scripts/build_android.py); find_package(SDL2) cannot see it.
+    if(NOT DEFINED RR64_ANDROID_SDL2_INCLUDE_DIRS)
+        message(FATAL_ERROR "Android SDL2 include dir is not set: configure through cmake/Android.cmake (scripts/build_android.py)")
+    endif()
+    set(RR64_SDL2_INCLUDE_DIRS "${RR64_ANDROID_SDL2_INCLUDE_DIRS}")
+    set(RR64_SDL2_LIB_DIRS "")
+    set(RR64_SDL2_TARGET SDL2::SDL2)
+    # No FFmpeg on Android v1: custom-soundtrack decoding is disabled (see
+    # Application.cmake). Game audio itself does not need FFmpeg.
 else()
     find_package(SDL2 2.26 REQUIRED)
     set(RR64_SDL2_INCLUDE_DIRS "${SDL2_INCLUDE_DIRS}")
@@ -196,6 +217,24 @@ if(MSVC)
         "-fspv-extension=SPV_KHR_ray_tracing"
         "-fspv-extension=SPV_EXT_descriptor_indexing")
     set(DXC "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxc.exe")
+elseif(ANDROID)
+    # Android cross-compile: the shader compiler must be the HOST dxc
+    # binary (x86_64), never a target-arch one. scripts/build_android.py
+    # sets RR64_HOST_DXC to it (same idea as AeroGauge's AERO_HOST_DXC).
+    if(NOT DEFINED RR64_HOST_DXC)
+        message(FATAL_ERROR "RR64_HOST_DXC is not set: configure through cmake/Android.cmake (scripts/build_android.py)")
+    endif()
+    set(DXC_COMMON_OPTS "-I${CMAKE_CURRENT_SOURCE_DIR}/src")
+    set(DXC_SPV_OPTS "-spirv" "-fspv-target-env=vulkan1.0" "-fvk-use-dx-layout")
+    set(DXC_PS_OPTS "${DXC_COMMON_OPTS}" "-E" "PSMain" "-T" "ps_6_0" "-D" "DYNAMIC_RENDER_PARAMS")
+    set(DXC_VS_OPTS "${DXC_COMMON_OPTS}" "-E" "VSMain" "-T" "vs_6_0" "-D" "DYNAMIC_RENDER_PARAMS" "-fvk-invert-y")
+    set(DXC_CS_OPTS "${DXC_COMMON_OPTS}" "-E" "CSMain" "-T" "cs_6_0")
+    set(DXC_GS_OPTS "${DXC_COMMON_OPTS}" "-E" "GSMain" "-T" "gs_6_0")
+    set(DXC_RT_OPTS "${DXC_COMMON_OPTS}" "-D" "RT_SHADER" "-T" "lib_6_3"
+        "-fspv-target-env=vulkan1.1spirv1.4"
+        "-fspv-extension=SPV_KHR_ray_tracing"
+        "-fspv-extension=SPV_EXT_descriptor_indexing")
+    set(DXC ${RR64_HOST_DXC})
 else()
     set(DXC_COMMON_OPTS "-I${CMAKE_CURRENT_SOURCE_DIR}/src")
     set(DXC_SPV_OPTS "-spirv" "-fspv-target-env=vulkan1.0" "-fvk-use-dx-layout")

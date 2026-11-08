@@ -159,6 +159,10 @@ if(MSVC)
         "-map:$<TARGET_FILE_DIR:RoadRash64Recompiled>/RoadRash64Recompiled.map"
         "$<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS>"
         "$<$<NOT:$<CONFIG:Debug>>:/ENTRY:mainCRTStartup>")
+elseif(ANDROID)
+    # Android/ARM64: -march=nehalem is x86-64-only. The NDK toolchain sets
+    # the right -march for the ABI.
+    target_compile_options(RoadRash64Recompiled PRIVATE -fno-strict-aliasing -fms-extensions)
 else()
     target_compile_options(RoadRash64Recompiled PRIVATE -march=nehalem -fno-strict-aliasing -fms-extensions)
 endif()
@@ -171,10 +175,15 @@ target_link_libraries(RoadRash64Recompiled PRIVATE
     librecomp
     ultramodern
     rt64
-    nfd
     ${RR64_SDL2_TARGET}
     opus
 )
+# nativefiledialog-extended is not built on Android (RT64's Android patch
+# skips it; file dialogs belong to the Java launcher). Link nfd everywhere
+# else.
+if(NOT ANDROID)
+    target_link_libraries(RoadRash64Recompiled PRIVATE nfd)
+endif()
 if(WIN32)
     target_link_libraries(RoadRash64Recompiled PRIVATE Winmm.lib Ws2_32.lib)
 endif()
@@ -208,6 +217,11 @@ set_property(TARGET RoadRash64Recompiled PROPERTY VS_DEBUGGER_WORKING_DIRECTORY 
 # Audio backends and the Windows entry point belong to playable builds too.
 if(WIN32)
     target_link_libraries(RoadRash64Recompiled PRIVATE mfplat mfreadwrite mfuuid ole32)
+elseif(ANDROID)
+    # Android v1: no FFmpeg (see Dependencies.cmake). Custom-soundtrack
+    # decoding is disabled; game audio does not need it. pthread lives in
+    # bionic's libc, so only libz is linked explicitly.
+    target_link_libraries(RoadRash64Recompiled PRIVATE z)
 else()
     add_dependencies(RoadRash64Recompiled rr64_ffmpeg)
     target_include_directories(RoadRash64Recompiled PRIVATE "${RR64_FFMPEG_INCLUDE_DIR}")

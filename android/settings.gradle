@@ -1,0 +1,6 @@
+rootProject.name = 'RoadRash64Recompiled'
+include ':probe'
+// The full-game module lives in android/app/ but is NOT included yet: its
+// native target (executable -> shared 'main' library, launcher, touch
+// controls) does not exist until the RT64 probe passes on device. See
+// android/app/README_SCAFFOLD.md. Promote it with: include ':app'

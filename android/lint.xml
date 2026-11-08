@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Pinned SDL guards direct Bluetooth HID access in initializeBluetooth.
+         Android gamepad events need no Bluetooth permission. This app never
+         opens audio capture. Keep suppression scoped to these vendor files. -->
+    <issue id="MissingPermission">
+        <ignore path="**/org/libsdl/app/HIDDeviceManager.java" />
+        <ignore path="**/org/libsdl/app/HIDDeviceBLESteamController.java" />
+        <ignore path="**/org/libsdl/app/SDLAudioManager.java" />
+    </issue>
+</lint>

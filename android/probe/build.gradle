@@ -1,0 +1,59 @@
+// RR64 RT64 probe app. Debug-only on purpose: there is no release signing
+// for a diagnostics probe, and the probe must never ship a game or a ROM.
+plugins { id 'com.android.application' }
+
+def repoRoot = rootProject.projectDir.parentFile
+// scripts/build_probe.py sets these env vars; the fallbacks are the paths
+// that script creates, so `./gradlew :probe:assembleDebug` also works after
+// a manual `python3 scripts/build_probe.py` run. RT64 comes from the repo's
+// own dependency tree (native/lib/rt64, fetched by
+// scripts/setup_dependencies.py); only SDL lives under build-probe/deps.
+def rt64Dir = System.getenv('RR64_RT64_DIR') ?: "${repoRoot}/native/lib/rt64"
+def sdlDir = System.getenv('RR64_SDL_DIR') ?: "${repoRoot}/build-probe/deps/SDL"
+def hostToolsDir = System.getenv('RR64_HOST_TOOLS_DIR') ?: "${repoRoot}/build-probe/host/bin"
+def isWindowsHost = System.properties['os.name'].toLowerCase().contains('windows')
+def hostDxcBin = System.getenv('RR64_HOST_DXC_BIN') ?: (isWindowsHost
+    ? "${rt64Dir}/src/contrib/dxc/bin/x64/dxc.exe"
+    : "${rt64Dir}/src/contrib/dxc/bin/x64/dxc-linux")
+def hostDxcLib = System.getenv('RR64_HOST_DXC_LIB') ?: "${rt64Dir}/src/contrib/dxc/lib/x64"
+
+android {
+    namespace 'io.github.rayishere0.rr64probe'
+    compileSdk 35
+    ndkVersion "28.2.13676358"
+    lint { lintConfig file('../lint.xml') }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    defaultConfig {
+        applicationId 'io.github.rayishere0.rr64probe'
+        minSdk 28
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0"
+        ndk { abiFilters 'arm64-v8a' }
+        externalNativeBuild {
+            cmake {
+                arguments "-DRR64_RT64_DIR=${rt64Dir}",
+                          "-DRR64_SDL_DIR=${sdlDir}",
+                          "-DRR64_HOST_TOOLS_DIR=${hostToolsDir}",
+                          "-DRR64_HOST_DXC_BIN=${hostDxcBin}",
+                          "-DRR64_HOST_DXC_LIB=${hostDxcLib}",
+                          "-DANDROID_STL=c++_shared",
+                          "-DCMAKE_BUILD_TYPE=Release"
+            }
+        }
+    }
+    buildTypes {
+        release { minifyEnabled false }
+    }
+    externalNativeBuild {
+        cmake { path "CMakeLists.txt" }
+    }
+    sourceSets.main {
+        // SDL2's Android activity sources, from the SDL tree fetched by
+        // scripts/build_probe.py (same pattern as AeroGauge).
+        java.srcDir "${sdlDir}/android-project/app/src/main/java"
+    }
+}
