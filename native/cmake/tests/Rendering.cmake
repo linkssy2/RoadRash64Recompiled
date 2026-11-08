@@ -17,7 +17,6 @@ target_include_directories(RR64WorldMatchingSmoke PRIVATE "${RT64_ROOT}/src"
     "${RT64_ROOT}/src/contrib" "${RT64_ROOT}/src/contrib/hlslpp/include"
     "${RT64_ROOT}/src/contrib/dxc/inc")
 target_link_libraries(RR64WorldMatchingSmoke PRIVATE rt64)
-target_link_directories(RR64WorldMatchingSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
 if(MSVC)
     target_compile_options(RR64WorldMatchingSmoke PRIVATE /clang:-march=nehalem)
 endif()
@@ -29,7 +28,6 @@ target_include_directories(RR64HighlightCameraBoundarySmoke PRIVATE src
     $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES>)
 target_compile_features(RR64HighlightCameraBoundarySmoke PRIVATE cxx_std_20)
 target_link_libraries(RR64HighlightCameraBoundarySmoke PRIVATE rt64)
-target_link_directories(RR64HighlightCameraBoundarySmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
 if(MSVC)
     target_compile_options(RR64HighlightCameraBoundarySmoke PRIVATE /clang:-march=nehalem)
 endif()
@@ -47,10 +45,9 @@ add_executable(RR64ShadowTagsSmoke EXCLUDE_FROM_ALL tests/rr64_shadow_tags_smoke
     tests/rr64_matching_test_callbacks.cpp src/rr64_shadow_tags.cpp "${_shadow_fixture}")
 target_include_directories(RR64ShadowTagsSmoke PRIVATE src "${RT64_ROOT}"
     $<TARGET_PROPERTY:RR64WorldMatchingSmoke,INCLUDE_DIRECTORIES>
-    $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES> "${RR64_SDL2_INCLUDE_DIRS}")
+    $<TARGET_PROPERTY:RR64NetplaySmoke,INCLUDE_DIRECTORIES> "${RR64_SDL_INCLUDE_DIRS}")
 target_compile_features(RR64ShadowTagsSmoke PRIVATE cxx_std_20)
 target_link_libraries(RR64ShadowTagsSmoke PRIVATE rt64)
-target_link_directories(RR64ShadowTagsSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
 if(MSVC)
     target_compile_options(RR64ShadowTagsSmoke PRIVATE /clang:-march=nehalem)
 endif()
@@ -82,9 +79,8 @@ foreach(RR64_CPU_TEST RR64OwnedTextureReuseSmoke RR64RSPVertexSmoke RR64RSPTrans
         tests/rr64_matching_test_callbacks.cpp)
     target_include_directories(${RR64_CPU_TEST} PRIVATE "${RT64_ROOT}" "${RT64_ROOT}/src"
         "${RT64_ROOT}/src/contrib" "${RT64_ROOT}/src/contrib/hlslpp/include"
-        "${RT64_ROOT}/src/contrib/dxc/inc" "${RR64_SDL2_INCLUDE_DIRS}")
+        "${RT64_ROOT}/src/contrib/dxc/inc" "${RR64_SDL_INCLUDE_DIRS}")
     target_link_libraries(${RR64_CPU_TEST} PRIVATE rt64)
-    target_link_directories(${RR64_CPU_TEST} PRIVATE ${RR64_SDL2_LIB_DIRS})
     set_target_properties(${RR64_CPU_TEST} PROPERTIES CXX_STANDARD 17)
 endforeach()
 add_executable(RR64CoordinateConsistencySmoke EXCLUDE_FROM_ALL
@@ -354,13 +350,12 @@ if(RR64_TEST_POWERSHELL)
         "${CMAKE_CURRENT_BINARY_DIR}/generated/RR64WorldTerrainSmoke/original_functions.c")
     target_include_directories(RR64TerrainHandoffRSPSmoke PRIVATE ${RR64_ACTOR_MATH_INCLUDES}
         "${N64MODERN_RUNTIME_ROOT}/thirdparty" "${N64MODERN_RUNTIME_ROOT}/thirdparty/concurrentqueue"
-        "${RT64_ROOT}" "${RR64_SDL2_INCLUDE_DIRS}"
+        "${RT64_ROOT}" "${RR64_SDL_INCLUDE_DIRS}"
         $<TARGET_PROPERTY:RR64WorldMatchingSmoke,INCLUDE_DIRECTORIES>)
     target_compile_options(RR64TerrainHandoffRSPSmoke PRIVATE ${RR64_ACTOR_MATH_OPTIONS})
     target_compile_definitions(RR64TerrainHandoffRSPSmoke PRIVATE RR64_TERRAIN_RSP_HANDOFF NOMINMAX)
     target_compile_features(RR64TerrainHandoffRSPSmoke PRIVATE cxx_std_20)
     target_link_libraries(RR64TerrainHandoffRSPSmoke PRIVATE rt64)
-    target_link_directories(RR64TerrainHandoffRSPSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
     rr64_generated_world_test(RR64WorldObjectAssetsSmoke generate_world_object_assets_fixture.ps1
         rr64_world_object_assets_smoke.cpp src/rr64_world_object_assets.cpp)
     rr64_generated_world_test(RR64HighlightTrafficSmoke generate_highlight_traffic_fixture.ps1

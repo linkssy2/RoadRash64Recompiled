@@ -4,20 +4,22 @@ For the validated experimental Linux recipe and limitations, see [Linux experime
 
 The game executable is built ahead of time. Players of the binary release only select a ROM; these instructions are for compiling from source, on Windows or Linux.
 
+SDL is **SDL3 3.4.16**, built from source. On Windows it builds as **`SDL3.dll`**, placed beside `RoadRash64Recompiled.exe` in the build's `bin` folder (pass `-DRR64_SDL3_SHARED=OFF` to link it into the EXE instead); on Linux it is **linked statically**, so no SDL `.so` ships with the game. The game, RT64 (window, debug inspector, Vulkan surface) and RecompFrontend (menus, input, controller handling) use the SDL3 API directly; SDL2 is gone. SDL3 is pinned in `dependencies.lock.json` and fetched by `scripts/setup_dependencies.py`; no SDL package needs to be installed. To build from an extracted source archive instead, pass `-DRR64_SDL3_SOURCE_DIR=<path to SDL-release-3.4.16>`. See [docs/SDL3.md](docs/SDL3.md) for what changed.
+
 ## Prerequisites
 
 ### Windows
 
 - 64-bit Windows and **Visual Studio 2022**, with Desktop development with C++, the x64 Windows SDK, and the **C++ Clang tools for Windows** component (ClangCL toolset).
 - Git, CMake 3.20 or newer, and Python 3.11 or newer available on PATH.
-- Internet access to obtain pinned open-source dependencies, SDL2 and Opus.
+- Internet access to obtain pinned open-source dependencies, SDL3 and Opus.
 
 ### Linux
 
 - A 64-bit distro with a C++20-capable compiler (GCC or Clang), `make`, `pkg-config`, and `ninja-build`. On Fedora: `sudo dnf install gcc-c++ clang make ninja-build pkg-config`.
 - Git, CMake 3.20 or newer, and Python 3.11 or newer available on PATH.
-- SDL2 development package (`sudo dnf install SDL2-devel` on Fedora, `libsdl2-dev` on Debian/Ubuntu).
-- Internet access to obtain pinned open-source dependencies (SDL2, Opus, and — Linux only — a minimal FFmpeg build compiled from source for custom soundtrack decoding; see `native/lib/ffmpeg` and `native/CMakeLists.txt`).
+- Development headers for the SDL3 build (SDL3 is compiled from source and linked statically; it still loads these system libraries at run time, so only their headers are needed to build): on Fedora `sudo dnf install libX11-devel libXext-devel libXcursor-devel libXi-devel libXrandr-devel libXScrnSaver-devel libxkbcommon-devel wayland-devel wayland-protocols-devel libdecor-devel alsa-lib-devel pulseaudio-libs-devel pipewire-devel dbus-devel ibus-devel systemd-devel`; on Debian/Ubuntu `sudo apt install libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev libibus-1.0-dev libudev-dev`. Missing ones only switch the matching SDL3 backend off (the configure summary lists them).
+- Internet access to obtain pinned open-source dependencies (SDL3, Opus, and — Linux only — a minimal FFmpeg build compiled from source for custom soundtrack decoding; see `native/lib/ffmpeg` and `native/CMakeLists.txt`).
 - To package a portable AppImage afterward: ImageMagick (`sudo dnf install ImageMagick`) and `curl`. No other setup needed — the AppImage tooling downloads itself.
 
 Both platforms: your own supported Road Rash 64 USA v1.0 ROM. No ROM download is performed by these scripts.
@@ -90,7 +92,7 @@ cmake -S native -B native/build -G "Visual Studio 17 2022" -A x64 -T ClangCL
 cmake --build native/build --config Release --target RoadRash64Recompiled RoadRash64DirectStart --parallel 2
 ```
 
-The executable, frontend assets and required graphics/SDL DLLs are placed under `native/build/bin`. Run `RoadRash64Recompiled.exe` there and select your supported ROM. Keep the DLLs and assets with the EXE. `RoadRash64DirectStart.exe` uses the same configured ROM and settings.
+The executable, frontend assets and required DLLs (`SDL3.dll`, and DXC's `dxil.dll` and `dxcompiler.dll`) are placed under `native/build/bin`. Run `RoadRash64Recompiled.exe` there and select your supported ROM. Keep the DLLs and assets with the EXE. `RoadRash64DirectStart.exe` uses the same configured ROM and settings.
 
 ### Linux
 

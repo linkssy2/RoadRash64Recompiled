@@ -4,8 +4,7 @@
 #include <string>
 #include <string_view>
 
-#define SDL_MAIN_HANDLED
-#include "SDL.h"
+#include <SDL3/SDL.h>
 
 #include "recomp.h"
 #include "recompinput/input_state.h"
@@ -24,111 +23,111 @@ enum class ControllerFamily {
 
 ControllerFamily active_controller_family() {
     switch (recompinput::get_active_controller_type()) {
-    case SDL_CONTROLLER_TYPE_XBOX360:
-    case SDL_CONTROLLER_TYPE_XBOXONE:
+    case SDL_GAMEPAD_TYPE_XBOX360:
+    case SDL_GAMEPAD_TYPE_XBOXONE:
         return ControllerFamily::Xbox;
-    case SDL_CONTROLLER_TYPE_PS3:
-    case SDL_CONTROLLER_TYPE_PS4:
-    case SDL_CONTROLLER_TYPE_PS5:
+    case SDL_GAMEPAD_TYPE_PS3:
+    case SDL_GAMEPAD_TYPE_PS4:
+    case SDL_GAMEPAD_TYPE_PS5:
         return ControllerFamily::PlayStation;
-    case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
-    case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
-    case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
-    case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
         return ControllerFamily::Nintendo;
     default:
         return ControllerFamily::Generic;
     }
 }
 
-std::string face_button_label(SDL_GameControllerButton button, ControllerFamily family) {
+std::string face_button_label(SDL_GamepadButton button, ControllerFamily family) {
     if (family == ControllerFamily::PlayStation) {
         switch (button) {
-        case SDL_CONTROLLER_BUTTON_A: return "X";
-        case SDL_CONTROLLER_BUTTON_B: return "O";
-        case SDL_CONTROLLER_BUTTON_X: return "SQ";
-        case SDL_CONTROLLER_BUTTON_Y: return "TRI";
+        case SDL_GAMEPAD_BUTTON_SOUTH: return "X";
+        case SDL_GAMEPAD_BUTTON_EAST: return "O";
+        case SDL_GAMEPAD_BUTTON_WEST: return "SQ";
+        case SDL_GAMEPAD_BUTTON_NORTH: return "TRI";
         default: break;
         }
     }
     else if (family == ControllerFamily::Nintendo) {
         switch (button) {
-        case SDL_CONTROLLER_BUTTON_A: return "B";
-        case SDL_CONTROLLER_BUTTON_B: return "A";
-        case SDL_CONTROLLER_BUTTON_X: return "Y";
-        case SDL_CONTROLLER_BUTTON_Y: return "X";
+        case SDL_GAMEPAD_BUTTON_SOUTH: return "B";
+        case SDL_GAMEPAD_BUTTON_EAST: return "A";
+        case SDL_GAMEPAD_BUTTON_WEST: return "Y";
+        case SDL_GAMEPAD_BUTTON_NORTH: return "X";
         default: break;
         }
     }
     else {
         switch (button) {
-        case SDL_CONTROLLER_BUTTON_A: return "A";
-        case SDL_CONTROLLER_BUTTON_B: return "B";
-        case SDL_CONTROLLER_BUTTON_X: return "X";
-        case SDL_CONTROLLER_BUTTON_Y: return "Y";
+        case SDL_GAMEPAD_BUTTON_SOUTH: return "A";
+        case SDL_GAMEPAD_BUTTON_EAST: return "B";
+        case SDL_GAMEPAD_BUTTON_WEST: return "X";
+        case SDL_GAMEPAD_BUTTON_NORTH: return "Y";
         default: break;
         }
     }
     return {};
 }
 
-std::string controller_button_label(SDL_GameControllerButton button) {
+std::string controller_button_label(SDL_GamepadButton button) {
     const ControllerFamily family = active_controller_family();
     if (std::string face = face_button_label(button, family); !face.empty()) {
         return face;
     }
 
     switch (button) {
-    case SDL_CONTROLLER_BUTTON_BACK:
+    case SDL_GAMEPAD_BUTTON_BACK:
         if (family == ControllerFamily::PlayStation) return "SHARE";
         if (family == ControllerFamily::Nintendo) return "-";
         return "VIEW";
-    case SDL_CONTROLLER_BUTTON_GUIDE:
+    case SDL_GAMEPAD_BUTTON_GUIDE:
         return "HOME";
-    case SDL_CONTROLLER_BUTTON_START:
+    case SDL_GAMEPAD_BUTTON_START:
         if (family == ControllerFamily::PlayStation) return "OPTIONS";
         if (family == ControllerFamily::Nintendo) return "+";
         return "MENU";
-    case SDL_CONTROLLER_BUTTON_LEFTSTICK:
+    case SDL_GAMEPAD_BUTTON_LEFT_STICK:
         return family == ControllerFamily::PlayStation ? "L3" : "LS";
-    case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
+    case SDL_GAMEPAD_BUTTON_RIGHT_STICK:
         return family == ControllerFamily::PlayStation ? "R3" : "RS";
-    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:
         if (family == ControllerFamily::PlayStation) return "L1";
         if (family == ControllerFamily::Nintendo) return "L";
         return "LB";
-    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
         if (family == ControllerFamily::PlayStation) return "R1";
         if (family == ControllerFamily::Nintendo) return "R";
         return "RB";
-    case SDL_CONTROLLER_BUTTON_DPAD_UP: return "D-UP";
-    case SDL_CONTROLLER_BUTTON_DPAD_DOWN: return "D-DOWN";
-    case SDL_CONTROLLER_BUTTON_DPAD_LEFT: return "D-LEFT";
-    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: return "D-RIGHT";
-    case SDL_CONTROLLER_BUTTON_MISC1: return "MISC";
-    case SDL_CONTROLLER_BUTTON_PADDLE1: return "P1";
-    case SDL_CONTROLLER_BUTTON_PADDLE2: return "P2";
-    case SDL_CONTROLLER_BUTTON_PADDLE3: return "P3";
-    case SDL_CONTROLLER_BUTTON_PADDLE4: return "P4";
-    case SDL_CONTROLLER_BUTTON_TOUCHPAD: return "PAD";
+    case SDL_GAMEPAD_BUTTON_DPAD_UP: return "D-UP";
+    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return "D-DOWN";
+    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return "D-LEFT";
+    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return "D-RIGHT";
+    case SDL_GAMEPAD_BUTTON_MISC1: return "MISC";
+    case SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1: return "P1";
+    case SDL_GAMEPAD_BUTTON_LEFT_PADDLE1: return "P2";
+    case SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2: return "P3";
+    case SDL_GAMEPAD_BUTTON_LEFT_PADDLE2: return "P4";
+    case SDL_GAMEPAD_BUTTON_TOUCHPAD: return "PAD";
     default: return "PAD";
     }
 }
 
 std::string controller_axis_label(int input_id) {
     const bool positive = input_id > 0;
-    const auto axis = static_cast<SDL_GameControllerAxis>(std::abs(input_id) - 1);
+    const auto axis = static_cast<SDL_GamepadAxis>(std::abs(input_id) - 1);
     const ControllerFamily family = active_controller_family();
     switch (axis) {
-    case SDL_CONTROLLER_AXIS_LEFTX: return positive ? "LS-R" : "LS-L";
-    case SDL_CONTROLLER_AXIS_LEFTY: return positive ? "LS-D" : "LS-U";
-    case SDL_CONTROLLER_AXIS_RIGHTX: return positive ? "RS-R" : "RS-L";
-    case SDL_CONTROLLER_AXIS_RIGHTY: return positive ? "RS-D" : "RS-U";
-    case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
+    case SDL_GAMEPAD_AXIS_LEFTX: return positive ? "LS-R" : "LS-L";
+    case SDL_GAMEPAD_AXIS_LEFTY: return positive ? "LS-D" : "LS-U";
+    case SDL_GAMEPAD_AXIS_RIGHTX: return positive ? "RS-R" : "RS-L";
+    case SDL_GAMEPAD_AXIS_RIGHTY: return positive ? "RS-D" : "RS-U";
+    case SDL_GAMEPAD_AXIS_LEFT_TRIGGER:
         if (family == ControllerFamily::PlayStation) return "L2";
         if (family == ControllerFamily::Nintendo) return "ZL";
         return "LT";
-    case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
+    case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER:
         if (family == ControllerFamily::PlayStation) return "R2";
         if (family == ControllerFamily::Nintendo) return "ZR";
         return "RT";
@@ -174,7 +173,7 @@ std::string binding_label(const recompinput::InputField& binding) {
     case recompinput::InputType::Keyboard:
         return keyboard_label(static_cast<SDL_Scancode>(binding.input_id));
     case recompinput::InputType::ControllerDigital:
-        return controller_button_label(static_cast<SDL_GameControllerButton>(binding.input_id));
+        return controller_button_label(static_cast<SDL_GamepadButton>(binding.input_id));
     case recompinput::InputType::ControllerAnalog:
         return controller_axis_label(binding.input_id);
     case recompinput::InputType::Mouse:
@@ -220,8 +219,8 @@ std::string prompt_for_input(recompinput::GameInput input, std::string_view fall
                 // face bindings, but frame keyboard and extended controller
                 // inputs as compact pixel keycaps.
                 if (binding.input_type == recompinput::InputType::ControllerDigital &&
-                    binding.input_id >= SDL_CONTROLLER_BUTTON_A &&
-                    binding.input_id <= SDL_CONTROLLER_BUTTON_Y) {
+                    binding.input_id >= SDL_GAMEPAD_BUTTON_SOUTH &&
+                    binding.input_id <= SDL_GAMEPAD_BUTTON_NORTH) {
                     return label;
                 }
                 return "[" + label + "]";

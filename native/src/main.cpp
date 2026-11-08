@@ -52,9 +52,9 @@
 #include "librecomp/game.hpp"
 #include "librecomp/rsp.hpp"
 
-#define SDL_MAIN_HANDLED
-#include "SDL.h"
-#include "SDL_syswm.h"
+// RR64-SDL3: SDL3 renames main() only when <SDL3/SDL_main.h> is included,
+// which nothing here does, so the game keeps its own entry point.
+#include <SDL3/SDL.h>
 #ifdef None
 #undef None
 #endif
@@ -199,6 +199,10 @@ std::vector<recomp::GameEntry> supported_games = {
 
 namespace {
 std::atomic<float> g_master_volume_gain{1.0f};
+// RR64-SDL3: SDL3 replaces queued audio (SDL_QueueAudio) with an audio stream
+// bound to the device. g_audio_stream carries the samples; g_audio_device is
+// the opened device, kept for logging and the "audio is open" checks.
+SDL_AudioStream* g_audio_stream = nullptr;
 SDL_AudioDeviceID g_audio_device = 0;
 uint32_t g_audio_rate = 48000;
 rr64::audio::QueueMonitor g_audio_queue_monitor{};
@@ -675,31 +679,32 @@ ultramodern::gfx_callbacks_t::gfx_data_t create_gfx() {
     g_create_gfx_seen = true;
     rr64_log("[RR64-STAGE] create_gfx entered.\n");
 
-    SDL_version compiled_version{};
-    SDL_version runtime_version{};
-    SDL_VERSION(&compiled_version);
-    SDL_GetVersion(&runtime_version);
+    // RR64-SDL3: versions are packed ints. On Windows the runtime version is
+    // the SDL3.dll beside the EXE, which a player may have replaced.
+    const int compiled_version = SDL_VERSION;
+    const int runtime_version = SDL_GetVersion();
     rr64_log(
         "[RR64-STAGE] SDL compiled=%u.%u.%u runtime=%u.%u.%u\n",
-        static_cast<unsigned>(compiled_version.major),
-        static_cast<unsigned>(compiled_version.minor),
-        static_cast<unsigned>(compiled_version.patch),
-        static_cast<unsigned>(runtime_version.major),
-        static_cast<unsigned>(runtime_version.minor),
-        static_cast<unsigned>(runtime_version.patch)
+        static_cast<unsigned>(SDL_VERSIONNUM_MAJOR(compiled_version)),
+        static_cast<unsigned>(SDL_VERSIONNUM_MINOR(compiled_version)),
+        static_cast<unsigned>(SDL_VERSIONNUM_MICRO(compiled_version)),
+        static_cast<unsigned>(SDL_VERSIONNUM_MAJOR(runtime_version)),
+        static_cast<unsigned>(SDL_VERSIONNUM_MINOR(runtime_version)),
+        static_cast<unsigned>(SDL_VERSIONNUM_MICRO(runtime_version))
     );
 
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
-    SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1");
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1");
+    // RR64-SDL3: SDL3 is per-monitor-v2 DPI aware on Windows without a hint,
+    // and its gamepad face buttons are always positional (SDL2's
+    // USE_BUTTON_LABELS=0 behaviour), so those two hints are gone.
+    SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "1");
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
     rr64_log("[RR64-STAGE] Calling SDL_Init(video/input).\n");
-    const int init_result = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC);
-    rr64_log("[RR64-STAGE] SDL_Init returned %d (%s).\n", init_result, SDL_GetError());
-    if (init_result < 0) {
+    // RR64-SDL3: SDL_Init returns true on success (SDL2: 0).
+    const bool init_ok = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC);
+    rr64_log("[RR64-STAGE] SDL_Init returned %s (%s).\n", init_ok ? "true" : "false", SDL_GetError());
+    if (!init_ok) {
         fatal_sdl("SDL video/input initialization failed");
     }
 
@@ -717,34 +722,37 @@ ultramodern::gfx_callbacks_t::gfx_data_t create_gfx() {
 ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::gfx_data_t) {
     recompui::startup_checkpoint("window-begin");
     rr64_log("[RR64-STAGE] create_window entered.\n");
-    uint32_t flags = SDL_WINDOW_RESIZABLE;
+    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
 #if defined(PLUME_SDL_VULKAN_ENABLED)
     flags |= SDL_WINDOW_VULKAN;
 #endif
 
-    window = SDL_CreateWindow(
-        kProgramName,
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        960,
-        540,
-        flags
-    );
+    // RR64-SDL3: SDL_CreateWindow lost its position arguments; create through
+    // properties so the window still opens centred, with no visible move.
+    const SDL_PropertiesID window_props = SDL_CreateProperties();
+    SDL_SetStringProperty(window_props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, kProgramName);
+    SDL_SetNumberProperty(window_props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
+    SDL_SetNumberProperty(window_props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
+    SDL_SetNumberProperty(window_props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, 960);
+    SDL_SetNumberProperty(window_props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, 540);
+    SDL_SetNumberProperty(window_props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, static_cast<Sint64>(flags));
+    window = SDL_CreateWindowWithProperties(window_props);
+    SDL_DestroyProperties(window_props);
     if (window == nullptr) {
         fatal_sdl("SDL window creation failed");
     }
     g_window_created = true;
-    rr64_log("[RR64-STAGE] SDL window created: %p flags=0x%08" PRIX32 "\n", static_cast<void*>(window), flags);
-
-    SDL_SysWMinfo wm_info{};
-    SDL_VERSION(&wm_info.version);
-    if (!SDL_GetWindowWMInfo(window, &wm_info)) {
-        fatal_sdl("SDL_GetWindowWMInfo failed");
-    }
+    rr64_log("[RR64-STAGE] SDL window created: %p flags=0x%08" PRIX64 "\n", static_cast<void*>(window), static_cast<uint64_t>(flags));
 
 #ifdef _WIN32
-    rr64_log("[RR64-STAGE] HWND acquired: %p thread=%lu\n", static_cast<void*>(wm_info.info.win.window), static_cast<unsigned long>(GetCurrentThreadId()));
-    return ultramodern::renderer::WindowHandle{ wm_info.info.win.window, GetCurrentThreadId() };
+    // RR64-SDL3: native handles come from window properties (SDL_SysWMinfo is gone).
+    HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(
+        SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    if (hwnd == nullptr) {
+        fatal_sdl("SDL window has no HWND");
+    }
+    rr64_log("[RR64-STAGE] HWND acquired: %p thread=%lu\n", static_cast<void*>(hwnd), static_cast<unsigned long>(GetCurrentThreadId()));
+    return ultramodern::renderer::WindowHandle{ hwnd, GetCurrentThreadId() };
 #else
     rr64_log("[RR64-STAGE] SDL window handle acquired: %p\n", static_cast<void*>(window));
     return window;
@@ -1273,43 +1281,61 @@ void update_gfx(void*) {
     }
 }
 
-bool reset_audio(uint32_t frequency) {
-    if (g_audio_device != 0) {
-        SDL_CloseAudioDevice(g_audio_device);
-        g_audio_device = 0;
+void close_audio() {
+    // Destroying a stream from SDL_OpenAudioDeviceStream also closes its device.
+    if (g_audio_stream != nullptr) {
+        SDL_DestroyAudioStream(g_audio_stream);
+        g_audio_stream = nullptr;
     }
+    g_audio_device = 0;
+}
 
+bool reset_audio(uint32_t frequency) {
+    close_audio();
+
+    // RR64-SDL3: the game submits 16-bit stereo at the N64 rate into an audio
+    // stream; SDL converts it to the device format, as SDL2's queue did. The
+    // 0x400-frame device period that SDL2 took in SDL_AudioSpec.samples is a
+    // hint in SDL3 and must be set before the device opens.
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");
     SDL_AudioSpec desired{};
     desired.freq = static_cast<int>(frequency);
-    desired.format = AUDIO_S16SYS;
+    desired.format = SDL_AUDIO_S16;
     desired.channels = 2;
-    desired.samples = 0x400;
-    desired.callback = nullptr;
 
-    SDL_AudioSpec obtained{};
-    g_audio_device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
-    if (g_audio_device == 0) {
+    // The device opens paused; playback starts after the prebuffer fills.
+    g_audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired, nullptr, nullptr);
+    if (g_audio_stream == nullptr) {
         rr64_log("[RR64-AUDIO] Device open failed at %" PRIu32 " Hz: %s\n", frequency, SDL_GetError());
         return false;
     }
+    g_audio_device = SDL_GetAudioStreamDevice(g_audio_stream);
+
+    SDL_AudioSpec obtained{};
+    int obtained_frames = 0;
+    if (!SDL_GetAudioDeviceFormat(g_audio_device, &obtained, &obtained_frames) || obtained_frames <= 0) {
+        obtained = desired;
+        obtained_frames = 0x400;
+    }
 
     g_audio_rate = frequency;
-    g_audio_host_period_frames = static_cast<std::uint32_t>(obtained.samples);
+    g_audio_host_period_frames = static_cast<std::uint32_t>(obtained_frames);
     g_audio_queue_monitor.reset(frequency, g_audio_host_period_frames);
     g_audio_playback_started = false;
     g_audio_timeline_epoch_seen = rr64_audio_timeline_epoch();
     g_audio_startup_prebuffer_frames = ultramodern::audio_startup_prebuffer_frames(
         frequency, g_audio_host_period_frames);
-    SDL_PauseAudioDevice(g_audio_device, 1);
+    SDL_PauseAudioStreamDevice(g_audio_stream);
+    const char* device_name = SDL_GetAudioDeviceName(g_audio_device);
     rr64_log(
         "[RR64-AUDIO] Opened driver=%s device=%s requested=%" PRIu32 "Hz/S16/2ch obtained=%dHz/0x%04X/%uch samples=%u id=%u\n",
         SDL_GetCurrentAudioDriver() != nullptr ? SDL_GetCurrentAudioDriver() : "unknown",
-        SDL_GetAudioDeviceName(0, 0) != nullptr ? SDL_GetAudioDeviceName(0, 0) : "default",
+        device_name != nullptr ? device_name : "default",
         frequency,
         obtained.freq,
         static_cast<unsigned>(obtained.format),
         static_cast<unsigned>(obtained.channels),
-        static_cast<unsigned>(obtained.samples),
+        static_cast<unsigned>(obtained_frames),
         static_cast<unsigned>(g_audio_device));
     rr64_log("[RR64-AUDIO] Prebuffering %u frames before playback.\n",
         g_audio_startup_prebuffer_frames);
@@ -1317,12 +1343,12 @@ bool reset_audio(uint32_t frequency) {
 }
 
 void resynchronize_audio_queue(const char* reason, std::uint32_t queued_frames) {
-    if (g_audio_device == 0) {
+    if (g_audio_stream == nullptr) {
         return;
     }
 
-    SDL_PauseAudioDevice(g_audio_device, 1);
-    SDL_ClearQueuedAudio(g_audio_device);
+    SDL_PauseAudioStreamDevice(g_audio_stream);
+    SDL_ClearAudioStream(g_audio_stream);
     g_audio_playback_started = false;
     g_audio_queue_monitor.reset(g_audio_rate, g_audio_host_period_frames);
     rr64_log(
@@ -1332,7 +1358,7 @@ void resynchronize_audio_queue(const char* reason, std::uint32_t queued_frames) 
 }
 
 void queue_samples(int16_t* audio_data, size_t sample_count) {
-    if (g_audio_device == 0 || audio_data == nullptr || sample_count == 0) {
+    if (g_audio_stream == nullptr || audio_data == nullptr || sample_count == 0) {
         return;
     }
 
@@ -1370,7 +1396,13 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
 
     constexpr std::uint32_t bytes_per_frame = sizeof(std::int16_t) * 2u;
     const bool playback_started_before = g_audio_playback_started;
-    std::uint32_t queued_before_frames = SDL_GetQueuedAudioSize(g_audio_device) / bytes_per_frame;
+    // RR64-SDL3: bytes still waiting in the stream, in the submitted format,
+    // like SDL2's SDL_GetQueuedAudioSize. Negative only on error.
+    const auto queued_frames = []() -> std::uint32_t {
+        const int bytes = SDL_GetAudioStreamQueued(g_audio_stream);
+        return bytes > 0 ? static_cast<std::uint32_t>(bytes) / bytes_per_frame : 0u;
+    };
+    std::uint32_t queued_before_frames = queued_frames();
     const std::uint32_t timeline_epoch = rr64_audio_timeline_epoch();
     if (timeline_epoch != g_audio_timeline_epoch_seen) {
         resynchronize_audio_queue("gameplay-boundary", queued_before_frames);
@@ -1390,12 +1422,14 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
         }
     }
     const Uint32 byte_count = static_cast<Uint32>(swapped.size() * sizeof(int16_t));
-    const int queue_result = SDL_QueueAudio(g_audio_device, swapped.data(), byte_count);
-    const std::uint32_t queued_after_frames = SDL_GetQueuedAudioSize(g_audio_device) / bytes_per_frame;
+    // RR64-SDL3: SDL_PutAudioStreamData returns bool; keep the SDL2-style
+    // 0 / -1 code for the existing diagnostics below.
+    const int queue_result = SDL_PutAudioStreamData(g_audio_stream, swapped.data(), static_cast<int>(byte_count)) ? 0 : -1;
+    const std::uint32_t queued_after_frames = queued_frames();
     if (queue_result == 0 && !g_audio_playback_started &&
         queued_after_frames >= g_audio_startup_prebuffer_frames)
     {
-        SDL_PauseAudioDevice(g_audio_device, 0);
+        SDL_ResumeAudioStreamDevice(g_audio_stream);
         g_audio_playback_started = true;
         rr64_log("[RR64-AUDIO] Playback started with %u frames queued.\n", queued_after_frames);
     }
@@ -1457,11 +1491,11 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
 }
 
 size_t get_frames_remaining() {
-    if (g_audio_device == 0) {
+    if (g_audio_stream == nullptr) {
         return 0;
     }
-    const uint64_t bytes = SDL_GetQueuedAudioSize(g_audio_device);
-    return static_cast<size_t>(bytes / (sizeof(int16_t) * 2));
+    const int bytes = SDL_GetAudioStreamQueued(g_audio_stream);
+    return bytes > 0 ? static_cast<size_t>(bytes) / (sizeof(int16_t) * 2) : 0;
 }
 
 void set_frequency(uint32_t frequency) {
@@ -2810,7 +2844,9 @@ int main(int argc, char** argv) {
     plume::setD3D12PresentOutcomeCallback(record_d3d12_present_outcome);
     SetConsoleOutputCP(CP_UTF8);
     timeBeginPeriod(1);
-    SDL_setenv("SDL_AUDIODRIVER", "wasapi", 1);
+    // RR64-SDL3: the driver is chosen by the SDL_AUDIO_DRIVER hint (SDL2 read
+    // the SDL_AUDIODRIVER environment variable).
+    SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "wasapi");
 #endif
 
     rr64_log("[RR64] Road Rash 64 playable checkpoint %s\n", kVersion);
@@ -2880,15 +2916,15 @@ int main(int argc, char** argv) {
     // these tabs before registering the launcher callback.
     // Enumerate input devices only after SDL audio initialization; this opens
     // no microphone. Actual capture remains confined to enabled online races.
-    const int audio_init_result = SDL_InitSubSystem(SDL_INIT_AUDIO);
+    const bool audio_init_ok = SDL_InitSubSystem(SDL_INIT_AUDIO);
     init_recompui_config();
     recompui::register_update_callback(on_ui_update);
     recompui::register_launcher_init_callback(on_launcher_init);
     recompui::register_launcher_update_callback(on_launcher_update);
 
     rr64_log("[RR64-STAGE] Initializing SDL audio subsystem.\n");
-    rr64_log("[RR64-STAGE] SDL audio init returned %d (%s).\n", audio_init_result, SDL_GetError());
-    if (audio_init_result < 0) {
+    rr64_log("[RR64-STAGE] SDL audio init returned %s (%s).\n", audio_init_ok ? "true" : "false", SDL_GetError());
+    if (!audio_init_ok) {
         rr64_log("[RR64] SDL audio initialization failed: %s\n", SDL_GetError());
     }
     else if (!reset_audio(48000)) {
@@ -3103,9 +3139,7 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    if (g_audio_device != 0) {
-        SDL_CloseAudioDevice(g_audio_device);
-    }
+    close_audio();
     if (g_audio_trace_file != nullptr) {
         std::fclose(g_audio_trace_file);
         g_audio_trace_file = nullptr;
