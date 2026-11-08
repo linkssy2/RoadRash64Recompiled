@@ -106,6 +106,8 @@
 #include <timeapi.h>
 #endif
 
+#include "common/rt64_rr64_simd.h"
+
 #include "rr64_msvc_crt_compat.hpp"
 #include "rr64_native.hpp"
 #include "rr64_actor_render_diagnostics.hpp"
@@ -658,6 +660,9 @@ void initialize_runtime_diagnostics() {
 #endif
 
     rr64_log("[RR64-DIAG] Runtime diagnostics enabled.\n");
+    rr64_log("[RR64-SIMD] Build floor: %s; active kernels: %s%s\n",
+        RT64::RR64Simd::baselineName(), RT64::RR64Simd::levelName(RT64::RR64Simd::level()),
+        std::getenv("RR64_SIMD_VERIFY") ? " (RR64_SIMD_VERIFY on)" : "");
 #ifdef _WIN32
     rr64_log("[RR64-DIAG] Executable directory: " RR64_PATH_FORMAT "\n", executable_directory().c_str());
     rr64_log("[RR64-DIAG] Runtime log: " RR64_PATH_FORMAT "\n", g_runtime_log_path.c_str());

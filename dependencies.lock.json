@@ -196,7 +196,7 @@
       },
       {
         "path": "src/hle/rt64_rr64_geometry_match.h",
-        "sha256": "184c77431a0d96f272d259cb60eec28a5e6a4249698559b0fff8b832d56c8bd2"
+        "sha256": "4135fb816683d8dad91451ed3d023e26b6ff8695313f9e81102287e4e44296f0"
       },
       {
         "path": "src/hle/rt64_rr64_interpolation_pressure.h",
@@ -237,6 +237,14 @@
       {
         "path": "src/render/rt64_buffer_capacity.h",
         "sha256": "54a7b0736586055d8982e9a887d30c49d25f0ee770739a0f84e1b4d56de2a1ff"
+      },
+      {
+        "path": "src/common/rt64_rr64_simd.cpp",
+        "sha256": "c0b872642bd03dc82df3d7c390b20aec0a2e2fa5b0745830bc4f6b2fbf2255ca"
+      },
+      {
+        "path": "src/common/rt64_rr64_simd.h",
+        "sha256": "6568780c37c4793c4088f199f6f8854409681d21dd9c08d064e98d1f4bd909a8"
       }
     ]
   },
@@ -258,7 +266,7 @@
     "path": "native/lib/rt64/src/contrib/hlslpp",
     "url": "https://github.com/redorav/hlslpp",
     "commit": "6f5274c66132e8f951c400103d897582b8f21491",
-    "patch": null,
+    "patch": "dependency-patches/native_lib_rt64_src_contrib_hlslpp.patch",
     "extraFiles": []
   },
   {

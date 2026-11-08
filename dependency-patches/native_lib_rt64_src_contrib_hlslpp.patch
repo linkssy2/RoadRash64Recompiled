@@ -1,0 +1,29 @@
+diff --git a/include/hlsl++/platforms/sse.h b/include/hlsl++/platforms/sse.h
+index 764fe90..6804302 100644
+--- a/include/hlsl++/platforms/sse.h
++++ b/include/hlsl++/platforms/sse.h
+@@ -65,12 +65,24 @@ typedef __m128d n128d;
+ 
+ #if defined(__AVX__)
+ 
++// RR64: HLSLPP_NO_SIMD_REGISTER_256 keeps the 128-bit type layouts and math
++// order when the compiler targets AVX. Road Rash 64 Recompiled sets it for the
++// whole build: its x86 floor is AVX, but switching hlslpp to 256-bit registers
++// would change float4x4 from 16- to 32-byte alignment (struct layouts across
++// every RT64 consumer), change the summation order of mul(float4, float4x4)
++// and with it every transformed vertex's low bits, and does not compile with
++// GCC (anonymous aggregates with copy-assignable members). The 128-bit code is
++// still VEX-encoded and uses AVX permutes; hot loops use explicit kernels.
++#if !defined(HLSLPP_NO_SIMD_REGISTER_256)
++
+ // Whether the float8 type is available
+ #define HLSLPP_FLOAT8
+ 
+ // Whether this configuration has a 256-wide register
+ #define HLSLPP_SIMD_REGISTER_256
+ 
++#endif
++
+ typedef __m256  n256;
+ typedef __m256d n256d;
+ typedef __m256i n256i;

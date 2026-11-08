@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 79dfc38..2a7a16f 100644
+index 79dfc38..21c3660 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -313,6 +313,7 @@ set (SOURCES
+@@ -313,11 +313,13 @@ set (SOURCES
      "${PROJECT_SOURCE_DIR}/src/common/rt64_emulator_configuration.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_enhancement_configuration.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_filesystem_zip.cpp"
@@ -10,7 +10,13 @@ index 79dfc38..2a7a16f 100644
      "${PROJECT_SOURCE_DIR}/src/common/rt64_load_types.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_mapped_file.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_math.cpp"
-@@ -412,6 +413,7 @@ set (SOURCES
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_profiling_timer.cpp"
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_replacement_database.cpp"
++    "${PROJECT_SOURCE_DIR}/src/common/rt64_rr64_simd.cpp"
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_thread.cpp"
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_timer.cpp"
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_user_configuration.cpp"
+@@ -412,6 +414,7 @@ set (SOURCES
      "${PROJECT_SOURCE_DIR}/src/contrib/implot/implot_demo.cpp"
      "${PROJECT_SOURCE_DIR}/src/contrib/implot/implot_items.cpp"
      "${PROJECT_SOURCE_DIR}/src/contrib/miniz/miniz.c"
@@ -392,19 +398,29 @@ index 15d8332..d84a1e4 100644
      struct Timer {
          static void initialize();
 diff --git a/src/common/rt64_tmem_hasher.h b/src/common/rt64_tmem_hasher.h
-index 8c6af2b..8744b64 100644
+index 8c6af2b..d5637e4 100644
 --- a/src/common/rt64_tmem_hasher.h
 +++ b/src/common/rt64_tmem_hasher.h
-@@ -4,6 +4,8 @@
+@@ -4,6 +4,10 @@
  
  #pragma once
  
 +#include <array>
 +
++#include "common/rt64_rr64_simd.h"
++
  // Referenced from zstd.
  
  static unsigned bitScanForward64(uint64_t val) {
-@@ -72,10 +74,29 @@ namespace RT64 {
+@@ -66,21 +70,45 @@ namespace RT64 {
+             const uint32_t tmemMask = halfTMEM ? TMEMMask16 : TMEMMask8;
+             const uint32_t tmemAddress = (loadTile.tmem << 3) & tmemMask;
+             uint64_t tlutBitset[4] = {};
++            alignas(32) std::array<uint8_t, 256> ci8Seen{};
++            bool ci8Marked = false;
+             auto hashUpdate = [&](const uint8_t *tmemBytes, uint32_t byteCount) {
+                 XXH3_64bits_update(&xxh3, tmemBytes, byteCount);
+ 
                  // Version 5 parses every byte individually if TLUT is enabled to determine the TLUT bytes that can be hashed.
                  if ((version >= 5) && usesTLUT) {
                      if (loadTile.siz == G_IM_SIZ_4b) {
@@ -436,7 +452,29 @@ index 8c6af2b..8744b64 100644
 +                        tlutBitset[0] = used;
                      }
                      else {
-                         for (uint32_t i = 0; i < byteCount; i++) {
+-                        for (uint32_t i = 0; i < byteCount; i++) {
+-                            tlutBitset[tmemBytes[i] >> 6U] |= (1ULL << (tmemBytes[i] & 0x3FU));
+-                        }
++                        // RR64-SIMD: mark a 256-entry presence table with plain
++                        // stores and pack it into tlutBitset once, below. The old
++                        // `bits[b >> 6] |= ...` serialized on read-modify-writes of
++                        // the same word for neighboring palette indices.
++                        RR64Simd::markBytesPresent(tmemBytes, byteCount, ci8Seen.data());
++                        ci8Marked = true;
+                     }
+                 }
+             };
+@@ -141,6 +169,10 @@ namespace RT64 {
+                 }
+             }
+ 
++            if (ci8Marked) {
++                RR64Simd::packBytesPresent(ci8Seen.data(), tlutBitset);
++            }
++
+             // If TLUT is active, we also hash the corresponding palette bytes.
+             if (usesTLUT) {
+                 const bool CI4 = (loadTile.siz == G_IM_SIZ_4b);
 diff --git a/src/common/rt64_user_configuration.h b/src/common/rt64_user_configuration.h
 index 4857f22..ade30a1 100644
 --- a/src/common/rt64_user_configuration.h
@@ -579,11 +617,14 @@ index 785de27..83b5eae 100644
          }
  
 diff --git a/src/hle/rt64_game_frame.cpp b/src/hle/rt64_game_frame.cpp
-index 87392d0..ffa5b3d 100644
+index 87392d0..554bacb 100644
 --- a/src/hle/rt64_game_frame.cpp
 +++ b/src/hle/rt64_game_frame.cpp
-@@ -5,11 +5,521 @@
+@@ -3,13 +3,521 @@
+ //
+ 
  #include "common/rt64_math.h"
++#include "common/rt64_rr64_simd.h"
  
  #include "rt64_game_frame.h"
 +#include "rt64_rr64_pipeline_diagnostics.h"
@@ -781,12 +822,9 @@ index 87392d0..ffa5b3d 100644
 +            if (!mesh.valid) { continue; }
 +            mesh.topologyHash = XXH3_64bits(mesh.topology.data(), mesh.topology.size() * sizeof(uint32_t));
 +            positionBits.resize(mesh.positionCount);
-+            for (size_t i = 0; i < mesh.positionCount; i++) {
-+                if (!std::isfinite(mesh.positions[i])) { mesh.valid = false; break; }
-+                uint32_t bits = 0;
-+                if (mesh.positions[i] != 0.0f) { std::memcpy(&bits, &mesh.positions[i], sizeof(bits)); }
-+                positionBits[i] = bits;
-+            }
++            // RR64-SIMD: finite check plus signed-zero canonicalization, 8 lanes
++            // per step. Same result and the same early rejection as the loop.
++            if (!RR64Simd::canonicalizePositionBits(mesh.positions, positionBits.data(), mesh.positionCount)) { mesh.valid = false; }
 +            if (mesh.valid) {
 +                mesh.geometryHash = XXH3_64bits_withSeed(positionBits.data(), positionBits.size() * sizeof(uint32_t), mesh.topologyHash);
 +            }
@@ -1104,7 +1142,7 @@ index 87392d0..ffa5b3d 100644
      // GameFrame
      
      bool GameFrame::areFramebufferPairsCompatible(const WorkloadQueue &workloadQueue, const GameIndices::FramebufferPair &first, const GameIndices::FramebufferPair &second) {
-@@ -77,6 +587,8 @@ namespace RT64 {
+@@ -77,6 +585,8 @@ namespace RT64 {
          assert(indicesCount > 0);
  
          matched = false;
@@ -1113,7 +1151,7 @@ index 87392d0..ffa5b3d 100644
          perspectiveScenes.clear();
          orthographicScenes.clear();
          workloads.clear();
-@@ -256,6 +768,55 @@ namespace RT64 {
+@@ -256,6 +766,55 @@ namespace RT64 {
          tileInterpolationUsed = false;
          lookAtInterpolationUsed = false;
          matched = true;
@@ -1169,7 +1207,7 @@ index 87392d0..ffa5b3d 100644
  
          thread_local std::unordered_map<uint32_t, ModifiedBuffers> workloadsModified;
          workloadsModified.clear();
-@@ -271,7 +832,7 @@ namespace RT64 {
+@@ -271,7 +830,7 @@ namespace RT64 {
              workloadMap.mapped = true;
  
              Workload &curWorkload = workloadQueue.workloads[workloads[w]];
@@ -1178,7 +1216,7 @@ index 87392d0..ffa5b3d 100644
              workloadMap.viewProjections.clear();
              workloadMap.viewProjections.resize(curWorkload.drawData.viewProjTransforms.size());
              workloadMap.transforms.clear();
-@@ -288,6 +849,13 @@ namespace RT64 {
+@@ -288,6 +847,13 @@ namespace RT64 {
              workloadMap.prevLookAtMapped.resize(prevWorkload.drawData.rspLookAt.size());
  
              buildTransformIdMap(curWorkload, curWorkload.transformIdMap, curWorkload.transformIgnoredIds);
@@ -1192,7 +1230,7 @@ index 87392d0..ffa5b3d 100644
  
              // Retrieve the matching maps for the current and previous workload.
              GameFrameMap::WorkloadMap &curWorkloadMap = frameMap.workloads[workloads[w]];
-@@ -331,10 +899,26 @@ namespace RT64 {
+@@ -331,10 +897,26 @@ namespace RT64 {
          thread_local std::vector<MatchCandidate> matchCandidates;
          thread_local std::vector<bool> curScenesMatched;
          thread_local std::vector<bool> prevScenesMatched;
@@ -1220,7 +1258,7 @@ index 87392d0..ffa5b3d 100644
                  const GameIndices::Projection curFirstProj = curScenes[i].projections[0];
                  const Workload &curWorkload = workloadQueue.workloads[curFirstProj.workloadIndex];
                  const FramebufferPair &curFbPair = curWorkload.fbPairs[curFirstProj.fbPairIndex];
-@@ -342,13 +926,16 @@ namespace RT64 {
+@@ -342,13 +924,16 @@ namespace RT64 {
                  const hlslpp::float4x4 &curViewTransform = curWorkload.drawData.viewTransforms[curProj.transformsIndex];
                  const hlslpp::float4x4 &curProjTransform = curWorkload.drawData.projTransforms[curProj.transformsIndex];
                  for (uint32_t j = 0; j < prevScenes.size(); j++) {
@@ -1238,7 +1276,7 @@ index 87392d0..ffa5b3d 100644
                  }
              }
  
-@@ -366,14 +953,37 @@ namespace RT64 {
+@@ -366,14 +951,37 @@ namespace RT64 {
                      continue;
                  }
  
@@ -1279,7 +1317,7 @@ index 87392d0..ffa5b3d 100644
  
          if (!workloadsModified.empty()) {
              thread_local std::vector<BufferUploader::Upload> uploads;
-@@ -398,7 +1008,8 @@ namespace RT64 {
+@@ -398,7 +1006,8 @@ namespace RT64 {
          }
      }
  
@@ -1289,7 +1327,7 @@ index 87392d0..ffa5b3d 100644
          if (curScene.projections.empty() || prevScene.projections.empty()) {
              return;
          }
-@@ -516,10 +1127,36 @@ namespace RT64 {
+@@ -516,10 +1125,36 @@ namespace RT64 {
          transformCheckSet.clear();
          tileCheckSet.clear();
          lookAtCheckSet.clear();
@@ -1328,7 +1366,7 @@ index 87392d0..ffa5b3d 100644
              for (auto prevIt = prevRange.first; prevIt != prevRange.second; prevIt++) {
                  const GameIndices::Projection &curProjIndices = curScene.projections[curIt.second.sceneProjIndex];
                  const Workload &curWorkload = workloadQueue.workloads[curProjIndices.workloadIndex];
-@@ -533,7 +1170,19 @@ namespace RT64 {
+@@ -533,7 +1168,19 @@ namespace RT64 {
                  const GameCall &prevCall = prevProj.gameCalls[prevIt->second.callIndex];
                  const uint32_t curWorldMatrixCount = (curCall.callDesc.maxWorldMatrix - curCall.callDesc.minWorldMatrix) + 1;
                  const uint32_t prevWorldMatrixCount = (prevCall.callDesc.maxWorldMatrix - prevCall.callDesc.minWorldMatrix) + 1;
@@ -1349,7 +1387,7 @@ index 87392d0..ffa5b3d 100644
                      for (uint32_t w = 0; w < curWorldMatrixCount; w++) {
                          const uint32_t curWorldMatrix = curCall.callDesc.minWorldMatrix + w;
                          const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curWorldMatrix];
-@@ -542,6 +1191,11 @@ namespace RT64 {
+@@ -542,6 +1189,11 @@ namespace RT64 {
                          const uint32_t prevGroupIndex = prevWorkload.drawData.worldTransformGroups[prevWorldMatrix];
                          const TransformGroup &prevGroup = prevWorkload.drawData.transformGroups[prevGroupIndex];
                          if ((curGroup.matrixId == prevGroup.matrixId) && ((curGroup.matrixId == G_EX_ID_AUTO) || ((curGroup.matrixId != G_EX_ID_IGNORE) && (curGroup.ordering == G_EX_ORDER_AUTO)))) {
@@ -1361,7 +1399,7 @@ index 87392d0..ffa5b3d 100644
                              transformCheckSet.emplace(curWorldMatrix, prevWorldMatrix);
                          }
                      }
-@@ -572,6 +1226,24 @@ namespace RT64 {
+@@ -572,6 +1224,24 @@ namespace RT64 {
                      lookAtCheckSet.emplace(curLookAtIndex, prevLookAtIndex);
                  }
              }
@@ -1386,7 +1424,7 @@ index 87392d0..ffa5b3d 100644
          }
  
          // Compute all the differences between transforms and insert them into a vector that will be sorted according to the differences.
-@@ -588,22 +1260,79 @@ namespace RT64 {
+@@ -588,22 +1258,79 @@ namespace RT64 {
  
              TransformMatchResult matchResult = computeTransformMatch(curTransform, firstCurViewProj, prevTransform, firstPrevViewProj, prevRigidBody);
              if (matchResult.valid) {
@@ -1473,7 +1511,7 @@ index 87392d0..ffa5b3d 100644
          }
  
          if (!modifiedBuffers.empty()) {
-@@ -720,6 +1449,11 @@ namespace RT64 {
+@@ -720,6 +1447,11 @@ namespace RT64 {
          const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curTransformIndex];
          const TransformGroup &curGroup = curWorkload.drawData.transformGroups[curGroupIndex];
          curTransformMap.rigidBody.updateLinear(prevTransform, curTransform, curGroup.positionInterpolation);
@@ -1485,7 +1523,7 @@ index 87392d0..ffa5b3d 100644
          curTransformMap.rigidBody.updateAngular(prevTransform, curTransform, curGroup.rotationInterpolation, curGroup.scaleInterpolation, curGroup.skewInterpolation);
          curTransformMap.rigidBody.updatePerspective(prevTransform, curTransform, curGroup.perspectiveInterpolation);
          curTransformMap.rigidBody.updateDecomposition(curTransform, curGroup.decompose);
-@@ -1039,4 +1773,4 @@ namespace RT64 {
+@@ -1039,4 +1771,4 @@ namespace RT64 {
          }
      }
      */
@@ -2232,23 +2270,23 @@ index e08b02c..2b23009 100644
 \ No newline at end of file
 +};
 diff --git a/src/hle/rt64_rdp.cpp b/src/hle/rt64_rdp.cpp
-index a10c11a..316ce46 100644
+index a10c11a..6d0031d 100644
 --- a/src/hle/rt64_rdp.cpp
 +++ b/src/hle/rt64_rdp.cpp
-@@ -5,6 +5,12 @@
+@@ -4,7 +4,12 @@
+ 
  #include "rt64_rdp.h"
  
++#include <algorithm>
  #include <cassert>
 +#include <cmath>
 +#include <cstring>
-+#if defined(_M_X64) || defined(__x86_64__)
-+#include <emmintrin.h>
-+#endif
++#include "common/rt64_rr64_simd.h"
 +// RR64_COMPAT_FAR_PRIM_DEPTH_INCLUDE
  
  #include "../include/rt64_extended_gbi.h"
  
-@@ -367,6 +373,45 @@ namespace RT64 {
+@@ -367,6 +372,45 @@ namespace RT64 {
      
      template<bool RGBA32 = false, bool TLUT = false>
      __forceinline void loadWord(uint8_t *TMEM, uint32_t tmemAddress, uint32_t tmemXorMask, const uint8_t *RDRAM, uint32_t textureAddress) {
@@ -2294,25 +2332,33 @@ index a10c11a..316ce46 100644
          // Only sample the first two bytes in TLUT mode.
          uint32_t offsetMask;
          if constexpr (TLUT) {
-@@ -461,6 +506,51 @@ namespace RT64 {
+@@ -456,11 +500,71 @@ namespace RT64 {
+             }
+         }
+ 
++        // RR64-SIMD: the two-word fast paths below previously existed only as
++        // SSE2 sequences on x86. They now use one byte shuffle per pair
++        // (SSSE3 pshufb under the AVX floor, TBL/REV on arm64), proven equal to
++        // both the SSE2 sequence and the scalar loadWord by the SIMD harness.
++        // RR64_SIMD=scalar restores the one-word scalar path for A/B checks.
++#if defined(RR64_SIMD_HAS_TMEM_SWIZZLE)
++        const bool vectorWords = RR64Simd::level() != RR64Simd::Level::Scalar;
++#endif
+         while (rowCount > 0) {
+             textureAddress = textureAddressRow;
              tmemAddress = tmemAddressRow;
              wordCount = wordsPerRow;
              while (wordCount > 0) {
-+#if defined(_M_X64) || defined(__x86_64__)
++#if defined(RR64_SIMD_HAS_TMEM_SWIZZLE)
 +                if constexpr (!RGBA32 && TLUT) {
 +                    // Two palette entries expand to two eight-byte TMEM
 +                    // words. Read exactly four source bytes, then replicate
 +                    // each converted halfword four times as the scalar path.
-+                    if (wordCount >= 2 && (textureAddress & 3u) == 0u &&
++                    if (vectorWords && wordCount >= 2 && (textureAddress & 3u) == 0u &&
 +                        tmemAddress <= RDP_TMEM_BYTES - 16u) {
 +                        uint32_t source;
 +                        std::memcpy(&source, RDRAM + textureAddress, sizeof(source));
-+                        __m128i bytes = _mm_cvtsi32_si128(static_cast<int32_t>(source));
-+                        bytes = _mm_or_si128(_mm_slli_epi16(bytes, 8), _mm_srli_epi16(bytes, 8));
-+                        bytes = _mm_shufflelo_epi16(bytes, _MM_SHUFFLE(2, 3, 0, 1));
-+                        bytes = _mm_unpacklo_epi16(bytes, bytes);
-+                        bytes = _mm_unpacklo_epi32(bytes, bytes);
-+                        _mm_storeu_si128(reinterpret_cast<__m128i *>(TMEM + tmemAddress), bytes);
++                        RR64Simd::tmemPaletteWordPair(source, TMEM + tmemAddress);
 +                        loadWordStep();
 +                        loadWordStep();
 +                        wordCount -= 2;
@@ -2320,33 +2366,45 @@ index a10c11a..316ce46 100644
 +                    }
 +                }
 +                if constexpr (!RGBA32 && !TLUT) {
-+                    // Two adjacent words share a vector conversion only when
-+                    // the first step cannot wrap TMEM or change the DXT bank.
-+                    // Keep the ordinary step logic, including a transition
-+                    // after the second word. Odd tails and unusual layouts
-+                    // continue through the original one-word implementation.
-+                    const bool contiguous = !BLOCK || (dxtCounter + dxtIncrement < DXTSwap);
-+                    if (wordCount >= 2 && (textureAddress & 3u) == 0u &&
-+                        tmemAddress <= RDP_TMEM_BYTES - 16u && contiguous) {
-+                        __m128i bytes = _mm_loadu_si128(reinterpret_cast<const __m128i *>(RDRAM + textureAddress));
-+                        bytes = _mm_or_si128(_mm_slli_epi16(bytes, 8), _mm_srli_epi16(bytes, 8));
-+                        bytes = _mm_shufflelo_epi16(bytes, _MM_SHUFFLE(2, 3, 0, 1));
-+                        bytes = _mm_shufflehi_epi16(bytes, _MM_SHUFFLE(2, 3, 0, 1));
-+                        if (tmemXorMask) {
-+                            bytes = _mm_shuffle_epi32(bytes, _MM_SHUFFLE(2, 3, 0, 1));
++                    // RR64-SIMD (tuning pass 2): copy the longest run of words
++                    // whose first run - 1 steps cannot wrap TMEM or change the
++                    // DXT bank in one call (32 bytes per AVX2 step), then apply
++                    // those steps arithmetically. The step after the last word
++                    // still goes through loadWordStep, so a TMEM wrap or bank
++                    // transition there is handled exactly as before. Within the
++                    // run the XOR mask is constant (it only changes on a row
++                    // step or a bank swap), so every word gets the same mapping
++                    // the one-word path applies. Runs shorter than two words,
++                    // unaligned sources and odd layouts use the original path.
++                    if (vectorWords && wordCount >= 2 && (textureAddress & 3u) == 0u) {
++                        uint32_t run = std::min(wordCount, (RDP_TMEM_BYTES - tmemAddress) / tmemAdvance);
++                        if constexpr (BLOCK) {
++                            if (dxtIncrement > 0) {
++                                // Steps k >= 1 with dxtCounter + k * dxtIncrement < DXTSwap.
++                                const uint32_t stepsWithoutSwap = (DXTSwap - 1u - dxtCounter) / dxtIncrement;
++                                run = std::min(run, stepsWithoutSwap + 1u);
++                            }
 +                        }
-+                        _mm_storeu_si128(reinterpret_cast<__m128i *>(TMEM + tmemAddress), bytes);
-+                        loadWordStep();
-+                        loadWordStep();
-+                        wordCount -= 2;
-+                        continue;
++
++                        if (run >= 2) {
++                            RR64Simd::tmemTexelWords(RDRAM + textureAddress, TMEM + tmemAddress, run, tmemXorMask != 0);
++                            textureAddress += textureAdvance * (run - 1u);
++                            tmemAddress = (tmemAddress + tmemAdvance * (run - 1u)) & tmemMask;
++                            if constexpr (BLOCK) {
++                                dxtCounter += dxtIncrement * (run - 1u);
++                            }
++
++                            loadWordStep();
++                            wordCount -= run;
++                            continue;
++                        }
 +                    }
 +                }
 +#endif
                  loadWord<RGBA32, TLUT>(TMEM, tmemAddress, tmemXorMask, RDRAM, textureAddress);
                  loadWordStep();
                  wordCount--;
-@@ -962,7 +1052,13 @@ namespace RT64 {
+@@ -962,7 +1066,13 @@ namespace RT64 {
          const float Fixed15ToFloat = 1.0f / 32767.0f;
          const float Fixed16ToFloat = 1.0f / 65535.0f;
          hlslpp::float2 &primDepth = primDepthStack[primDepthStackSize - 1];
@@ -2408,10 +2466,10 @@ index 3708220..381d3bd 100644
          std::set<uint64_t> dumpedSet;
  
 diff --git a/src/hle/rt64_rsp.cpp b/src/hle/rt64_rsp.cpp
-index ee2030b..704b87c 100644
+index ee2030b..27c3a5d 100644
 --- a/src/hle/rt64_rsp.cpp
 +++ b/src/hle/rt64_rsp.cpp
-@@ -3,8 +3,11 @@
+@@ -3,12 +3,17 @@
  //
  
  #include "rt64_rsp.h"
@@ -2419,11 +2477,17 @@ index ee2030b..704b87c 100644
  
 +#include <atomic>
  #include <cassert>
++#include <cstddef>
 +#include <cstdio>
  
  #include "../include/rt64_extended_gbi.h"
  #include "common/rt64_common.h"
-@@ -18,6 +21,27 @@
+ #include "common/rt64_math.h"
++#include "common/rt64_rr64_simd.h"
+ #include "gbi/rt64_f3d.h"
+ #include "shared/rt64_rsp_fog.h"
+ 
+@@ -18,6 +23,27 @@
  //#define LOG_SPECIAL_MATRIX_OPERATIONS
  
  namespace RT64 {
@@ -2451,7 +2515,20 @@ index ee2030b..704b87c 100644
      // RSP
  
      constexpr float DepthRange = 1024.0f;
-@@ -464,7 +488,7 @@ namespace RT64 {
+@@ -364,6 +390,12 @@ namespace RT64 {
+         modelViewProjChanged = changed;
+     }
+ 
++    // RR64-SIMD: the packet kernels read Vertex records as raw 16-byte rows.
++    static_assert(sizeof(RSP::Vertex) == 16, "RR64Simd packet kernels expect 16-byte RSP vertices.");
++    static_assert(offsetof(RSP::Vertex, y) == 0 && offsetof(RSP::Vertex, x) == 2 && offsetof(RSP::Vertex, z) == 6, "RR64Simd position layout.");
++    static_assert(offsetof(RSP::Vertex, t) == 8 && offsetof(RSP::Vertex, s) == 10, "RR64Simd texcoord layout.");
++    static_assert(sizeof(hlslpp::float4) == 16 && sizeof(hlslpp::float3) == 16 && sizeof(hlslpp::float4x4) == 64, "RR64Simd record layout.");
++
+     void RSP::setVertex(uint32_t address, uint32_t vtxCount, uint32_t dstIndex) {
+         if ((dstIndex >= RSP_MAX_VERTICES) || ((dstIndex + vtxCount) > RSP_MAX_VERTICES)) {
+             assert(false && "Vertex indices are not valid. DL is possibly corrupted.");
+@@ -464,7 +496,7 @@ namespace RT64 {
              curViewProjIndex = transformsIndex;
  
              uint32_t physicalAddress = projectionMatrixPhysicalAddressStack[projectionMatrixStackSize - 1];
@@ -2460,7 +2537,7 @@ index ee2030b..704b87c 100644
              drawData.viewTransforms.emplace_back(hlslpp::mul(extended.invViewMatrix, viewMatrixStack[projectionMatrixStackSize - 1]));
              drawData.projTransforms.emplace_back(hlslpp::mul(extended.invProjMatrix, projMatrixStack[projectionMatrixStackSize - 1]));
              drawData.viewProjTransforms.emplace_back(hlslpp::mul(extended.invViewProjMatrix, viewProjMatrixStack[projectionMatrixStackSize - 1]));
-@@ -503,6 +527,7 @@ namespace RT64 {
+@@ -503,6 +535,7 @@ namespace RT64 {
  
      template<bool addEmptyVelocity, uint32_t vertexSize>
      void RSP::setVertexCommon(uint32_t rdramAddress, uint32_t dstIndex, uint32_t dstMax) {
@@ -2468,7 +2545,7 @@ index ee2030b..704b87c 100644
          const int workloadCursor = state->ext.workloadQueue->writeCursor;
          Workload &workload = state->ext.workloadQueue->workloads[workloadCursor];
  
-@@ -543,7 +568,7 @@ namespace RT64 {
+@@ -543,7 +576,7 @@ namespace RT64 {
  
          if (addWorldTransform) {
              uint32_t physicalAddress = modelMatrixPhysicalAddressStack[modelMatrixStackSize - 1];
@@ -2477,7 +2554,7 @@ index ee2030b..704b87c 100644
              worldTransformGroups.emplace_back(extended.curModelMatrixIdGroupIndex);
              worldTransformSegmentedAddresses.emplace_back(modelMatrixSegmentedAddressStack[modelMatrixStackSize - 1]);
              worldTransformPhysicalAddresses.emplace_back(physicalAddress);
-@@ -622,7 +647,12 @@ namespace RT64 {
+@@ -622,7 +655,12 @@ namespace RT64 {
              curLightCount = 0;
          }
  
@@ -2491,7 +2568,7 @@ index ee2030b..704b87c 100644
          if (usesFog) {
              if (fogChanged) {
                  auto &rspFogVector = workload.drawData.rspFog;
-@@ -676,42 +706,86 @@ namespace RT64 {
+@@ -676,61 +714,88 @@ namespace RT64 {
          auto &posScreen = workload.drawData.posScreen;
          const auto &mvp = modelViewProjMatrix;
          const uint32_t globalIndex = workload.drawData.vertexCount();
@@ -2524,10 +2601,12 @@ index ee2030b..704b87c 100644
 +            velFloats.resize(total * 3, 0.0f);
 +            tcVelFloats.resize(total * 2, 0.0f);
 +        }
-+        // Stream storage is disjoint and fixed for this packet. Hoist its addresses
-+        // before byte-color stores, which otherwise inhibit pointer reuse.
-+        auto *posFloatsOutput = posFloats.data();
-+        auto *normColBytesOutput = normColBytes.data();
++        // RR64-SIMD: positions and colors for the whole packet in one kernel
++        // (4 records per step on SSE4.1/NEON, 8 on AVX2). Values are identical
++        // to the former per-vertex loop: int16 -> float is exact and the color
++        // bytes are only reordered, with alpha cleared when fog is suppressed.
++        RR64Simd::convertVertexAttributes(reinterpret_cast<const uint8_t *>(&vertices[dstIndex]), count, suppressFog,
++            posFloats.data() + size_t(globalIndex) * 3, normColBytes.data() + size_t(globalIndex) * 4);
          for (uint32_t i = dstIndex; i < dstMax; i++) {
 -            auto &v = vertices[i];
 -            posFloats.emplace_back(v.x);
@@ -2544,17 +2623,7 @@ index ee2030b..704b87c 100644
 -            lightCounts.emplace_back(curLightCount);
 -            lookAtIndices.emplace_back(curLookAtIndex);
 -            indices[i] = uint32_t(globalIndex) + (i - dstIndex);
-+            const auto &v = vertices[i];
-+            const uint32_t j = globalIndex + i - dstIndex;
-+            posFloatsOutput[j * 3] = v.x;
-+            posFloatsOutput[j * 3 + 1] = v.y;
-+            posFloatsOutput[j * 3 + 2] = v.z;
-+            normColBytesOutput[j * 4] = v.color.r;
-+            normColBytesOutput[j * 4 + 1] = v.color.g;
-+            normColBytesOutput[j * 4 + 2] = v.color.b;
-+            // Suppressed fog still uses zero shade alpha, as on the old path.
-+            normColBytesOutput[j * 4 + 3] = suppressFog ? 0 : v.color.a;
-+            indices[i] = j;
++            indices[i] = globalIndex + i - dstIndex;
              used[i] = false;
 -
 -            if constexpr (addEmptyVelocity) {
@@ -2569,6 +2638,14 @@ index ee2030b..704b87c 100644
          readExtendedVertexSegment<3, vertexSize>(rdramAddress, dstIndex, dstMax, globalIndex, G_EX_VERTEX_POSITION, posFloats);
          readExtendedVertexSegment<3, vertexSize>(rdramAddress, dstIndex, dstMax, globalIndex, G_EX_VERTEX_VELOCITY, velFloats);
  
+-        uint32_t floatIndex = globalIndex * 3;
+-        for (uint32_t i = dstIndex; i < dstMax; i++) {
+-            const hlslpp::float4 tfPos = hlslpp::mul(hlslpp::float4(posFloats[floatIndex + 0], posFloats[floatIndex + 1], posFloats[floatIndex + 2], 1.0f), mvp);
+-            const interop::RSPViewport &viewport = viewportStack[viewportStackSize - 1];
+-            posTransformed.emplace_back(tfPos);
+-            posScreen.emplace_back((tfPos.xyz / hlslpp::float3(tfPos.w, -tfPos.w, tfPos.w)) * viewport.scale + viewport.translate);
+-            floatIndex += 3;
+-        }
 +        // Allocate packet output once. Appending each vertex separately
 +        // repeatedly checks capacity and updates three vector lengths.
 +        // Extended input overrides have already completed before this point.
@@ -2579,33 +2656,22 @@ index ee2030b..704b87c 100644
 +        auto *screenOutput = posScreen.data() + globalIndex;
 +        auto *texcoordOutput = tcFloats.data() + globalIndex * 2;
 +        const interop::RSPViewport &viewport = viewportStack[viewportStackSize - 1];
-         uint32_t floatIndex = globalIndex * 3;
--        for (uint32_t i = dstIndex; i < dstMax; i++) {
-+        uint32_t i = dstIndex;
-+        // Independent vertices expose transform/division latency to the CPU.
-+        // Keep each vertex's arithmetic and camera basis exactly unchanged.
-+        for (; i + 1 < dstMax; i += 2) {
-+            const hlslpp::float4 a = hlslpp::mul(hlslpp::float4(posFloats[floatIndex], posFloats[floatIndex + 1], posFloats[floatIndex + 2], 1.0f), mvp);
-+            const hlslpp::float4 b = hlslpp::mul(hlslpp::float4(posFloats[floatIndex + 3], posFloats[floatIndex + 4], posFloats[floatIndex + 5], 1.0f), mvp);
-+            transformedOutput[0] = a;
-+            transformedOutput[1] = b;
-+            screenOutput[0] = (a.xyz / hlslpp::float3(a.w, -a.w, a.w)) * viewport.scale + viewport.translate;
-+            screenOutput[1] = (b.xyz / hlslpp::float3(b.w, -b.w, b.w)) * viewport.scale + viewport.translate;
-+            transformedOutput += 2;
-+            screenOutput += 2;
-+            floatIndex += 6;
-+        }
-+        for (; i < dstMax; i++) {
-             const hlslpp::float4 tfPos = hlslpp::mul(hlslpp::float4(posFloats[floatIndex + 0], posFloats[floatIndex + 1], posFloats[floatIndex + 2], 1.0f), mvp);
--            const interop::RSPViewport &viewport = viewportStack[viewportStackSize - 1];
--            posTransformed.emplace_back(tfPos);
--            posScreen.emplace_back((tfPos.xyz / hlslpp::float3(tfPos.w, -tfPos.w, tfPos.w)) * viewport.scale + viewport.translate);
-+            *transformedOutput++ = tfPos;
-+            *screenOutput++ = (tfPos.xyz / hlslpp::float3(tfPos.w, -tfPos.w, tfPos.w)) * viewport.scale + viewport.translate;
-             floatIndex += 3;
-         }
++        // RR64-SIMD: clip and screen positions for the packet. The kernels run
++        // hlslpp's own per-lane operation sequence (mul, madd, the divide by
++        // float3(w, -w, w), scale, translate) so both 16-byte records are
++        // bit-identical to the former hlslpp loop, which remains the scalar path
++        // (RR64_SIMD=scalar). AVX handles two vertices per register.
++        // interop::float3 is a 12-byte struct; the old expression converted it
++        // to hlslpp::float3 implicitly, and that conversion defines the padding
++        // lane. Convert the same way and pass the 16-byte hlslpp storage.
++        const hlslpp::float3 viewportScale = viewport.scale;
++        const hlslpp::float3 viewportTranslate = viewport.translate;
++        RR64Simd::transformVertices(posFloats.data() + size_t(globalIndex) * 3, count,
++            reinterpret_cast<const float *>(&mvp), reinterpret_cast<const float *>(&viewportScale),
++            reinterpret_cast<const float *>(&viewportTranslate), reinterpret_cast<float *>(transformedOutput),
++            reinterpret_cast<float *>(screenOutput));
  
-@@ -719,8 +793,8 @@ namespace RT64 {
+         if (usesTextureGen) {
              const float TextureSc = static_cast<float>(textureState.sc);
              const float TextureTc = static_cast<float>(textureState.tc);
              for (uint32_t i = dstIndex; i < dstMax; i++) {
@@ -2616,18 +2682,22 @@ index ee2030b..704b87c 100644
              }
          }
          else {
-@@ -728,8 +802,8 @@ namespace RT64 {
-             const int32_t TextureTc = (int32_t)(textureState.tc);
-             const double Divisor = 65536.0f * 32.0f;
-             for (uint32_t i = dstIndex; i < dstMax; i++) {
+-            const int32_t TextureSc = (int32_t)(textureState.sc);
+-            const int32_t TextureTc = (int32_t)(textureState.tc);
+-            const double Divisor = 65536.0f * 32.0f;
+-            for (uint32_t i = dstIndex; i < dstMax; i++) {
 -                tcFloats.emplace_back((float)((double)((vertices[i].s) * TextureSc) / Divisor));
 -                tcFloats.emplace_back((float)((double)((vertices[i].t) * TextureTc) / Divisor));
-+                *texcoordOutput++ = (float)((double)((vertices[i].s) * TextureSc) / Divisor);
-+                *texcoordOutput++ = (float)((double)((vertices[i].t) * TextureTc) / Divisor);
-             }
+-            }
++            // RR64-SIMD: (float)((double)(s * sc) / 2^21) evaluated as an int32
++            // multiply, one int -> float rounding and an exact power-of-two scale;
++            // identical for every int16 s/t and uint16 scale (harness: exhaustive).
++            RR64Simd::computeTexcoords(reinterpret_cast<const uint8_t *>(&vertices[dstIndex]), count,
++                int32_t(textureState.sc), int32_t(textureState.tc), texcoordOutput);
          }
      }
-@@ -988,8 +1062,24 @@ namespace RT64 {
+ 
+@@ -988,8 +1053,24 @@ namespace RT64 {
      }
  
      void RSP::setFog(int16_t mul, int16_t offset) {
@@ -2654,7 +2724,7 @@ index ee2030b..704b87c 100644
          fogChanged = true;
      }
      
-@@ -1050,6 +1140,7 @@ namespace RT64 {
+@@ -1050,6 +1131,7 @@ namespace RT64 {
      }
  
      void RSP::drawIndexedTri(uint32_t a, uint32_t b, uint32_t c, bool rawGlobalIndices) {
@@ -2662,7 +2732,7 @@ index ee2030b..704b87c 100644
          // Copy mode is not supported when drawing regular tris and crashes the hardware.
          const uint32_t cycleType = state->rdp->otherMode.cycleType();
          assert(cycleType != G_CYC_COPY);
-@@ -1166,6 +1257,124 @@ namespace RT64 {
+@@ -1166,6 +1248,124 @@ namespace RT64 {
          drawIndexedTri(a, b, c, false);
      }
  
@@ -2787,7 +2857,7 @@ index ee2030b..704b87c 100644
      void RSP::setViewportAlign(uint16_t ori, int16_t offx, int16_t offy) {
          extended.global.viewportOrigin = ori;
          extended.global.viewportOffsetX = offx;
-@@ -1216,9 +1425,12 @@ namespace RT64 {
+@@ -1216,9 +1416,12 @@ namespace RT64 {
              const int workloadCursor = state->ext.workloadQueue->writeCursor;
              Workload &workload = state->ext.workloadQueue->workloads[workloadCursor];
  
@@ -2803,7 +2873,7 @@ index ee2030b..704b87c 100644
                  if (proj && (matrix_id < workload.drawData.viewProjTransformGroups.size())) {
                      uint32_t groupIndex = workload.drawData.viewProjTransformGroups[matrix_id];
                      setGroupProperties(&workload.drawData.transformGroups[groupIndex], false);
-@@ -1310,3 +1522,4 @@ namespace RT64 {
+@@ -1310,3 +1513,4 @@ namespace RT64 {
          }
      }
  };
@@ -5522,6 +5592,20 @@ index e7895c3..7db2fad 100644
 -#endif
 \ No newline at end of file
 +#endif
+diff --git a/src/tools/texture_hasher/CMakeLists.txt b/src/tools/texture_hasher/CMakeLists.txt
+index 0591159..9a4c8ab 100644
+--- a/src/tools/texture_hasher/CMakeLists.txt
++++ b/src/tools/texture_hasher/CMakeLists.txt
+@@ -4,4 +4,8 @@ set(CMAKE_CXX_STANDARD 17)
+ 
+ include_directories("../../contrib")
+ 
+-add_executable(texture_hasher "texture_hasher.cpp")
++# RR64-SIMD: TMEMHasher (common/rt64_tmem_hasher.h) calls the RR64Simd palette
++# kernels, so this standalone tool compiles their source too; it does not link
++# the rt64 library.
++add_executable(texture_hasher "texture_hasher.cpp" "../../common/rt64_rr64_simd.cpp")
++target_include_directories(texture_hasher PRIVATE "../.." "../../contrib/hlslpp/include")
 diff --git a/src/tools/texture_packer/texture_packer.cpp b/src/tools/texture_packer/texture_packer.cpp
 index 1f5ccaf..abcb963 100644
 --- a/src/tools/texture_packer/texture_packer.cpp

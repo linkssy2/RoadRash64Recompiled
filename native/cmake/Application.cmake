@@ -146,9 +146,11 @@ target_include_directories(RoadRash64Recompiled PRIVATE
 
 target_link_directories(RoadRash64Recompiled PRIVATE ${RR64_SDL2_LIB_DIRS})
 
+# RR64-SIMD: the instruction floor (formerly -march=nehalem) comes from
+# cmake/Simd.cmake, shared with every library so inline headers agree.
+rr64_add_cpu_floor_check(RoadRash64Recompiled)
 if(MSVC)
     target_compile_options(RoadRash64Recompiled PRIVATE
-        /clang:-march=nehalem
         /clang:-fno-strict-aliasing
         /clang:-fms-extensions
     )
@@ -160,7 +162,7 @@ if(MSVC)
         "$<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS>"
         "$<$<NOT:$<CONFIG:Debug>>:/ENTRY:mainCRTStartup>")
 else()
-    target_compile_options(RoadRash64Recompiled PRIVATE -march=nehalem -fno-strict-aliasing -fms-extensions)
+    target_compile_options(RoadRash64Recompiled PRIVATE -fno-strict-aliasing -fms-extensions)
 endif()
 
 target_link_libraries(RoadRash64Recompiled PRIVATE
@@ -218,6 +220,7 @@ if(WIN32)
     enable_language(RC)
     target_sources(RoadRash64Recompiled PRIVATE assets/RoadRashIcon.rc)
     add_executable(RoadRash64DirectStart WIN32 src/rr64_direct_start.cpp assets/RoadRashIcon.rc)
+    rr64_add_cpu_floor_check(RoadRash64DirectStart)
     target_compile_features(RoadRash64DirectStart PRIVATE cxx_std_20)
     target_link_libraries(RoadRash64DirectStart PRIVATE User32.lib)
 endif()

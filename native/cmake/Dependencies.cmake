@@ -64,16 +64,16 @@ target_include_directories(RecompiledFuncs PRIVATE
     "${N64MODERN_RUNTIME_ROOT}/librecomp/include"
     "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
 )
+# RR64-SIMD: the instruction floor (formerly -march=nehalem here) and
+# -ffp-contract=off now come from cmake/Simd.cmake for every target.
 if(MSVC)
     target_compile_options(RecompiledFuncs PRIVATE
-        /clang:-march=nehalem
         /clang:-fno-strict-aliasing
         /clang:-Wno-unused-variable
         /clang:-Wno-implicit-function-declaration
     )
 else()
     target_compile_options(RecompiledFuncs PRIVATE
-        -march=nehalem
         -fno-strict-aliasing
         -Wno-unused-variable
         -Wno-implicit-function-declaration

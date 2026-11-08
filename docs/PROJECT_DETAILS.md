@@ -50,7 +50,7 @@ This 1.4.4 release supplies Windows x64, an experimental Linux x86-64 AppImage, 
 
 ## Requirements
 
-Both platforms need a CPU compatible with the build's Nehalem/SSE4-era instruction target; a broad hardware compatibility matrix has not been established for either.
+Both platforms need a CPU with AVX (Intel Sandy Bridge / AMD Bulldozer, 2011, or newer); AVX2 code paths are used automatically where the CPU has them. On an older CPU the game shows a message and exits. A broad hardware compatibility matrix has not been established for either platform. See [SIMD.md](SIMD.md).
 
 **Windows:** 64-bit Windows 10/11, and a GPU/driver supporting the selected RT64 D3D12 or Vulkan backend. Custom media decoding uses Windows Media Foundation.
 
