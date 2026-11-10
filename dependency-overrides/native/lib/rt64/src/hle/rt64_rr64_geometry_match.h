@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <limits>
 
+#include "common/rt64_rr64_simd.h"
+
 namespace RT64::RR64GeometryMatch {
     // RT64 still builds as C++17. Keep the view allocation-free without raising
     // its language requirement to use std::span.
@@ -53,18 +55,14 @@ namespace RT64::RR64GeometryMatch {
             return false;
         }
 
-        for (const float position : geometry.positions) {
-            if (!std::isfinite(position)) {
-                return false;
-            }
+        // RR64-SIMD: both scans are early-exit reductions over every position
+        // and index of a mesh; the kernels test 8 lanes per step with the same
+        // predicates (finite; first <= index < first + vertexCount in 64-bit).
+        if (!RR64Simd::allFinite(geometry.positions.data(), geometry.positions.size())) {
+            return false;
         }
-        for (const uint32_t index : geometry.triangleIndices) {
-            if ((index < geometry.firstVertex) ||
-                (uint64_t(index) - uint64_t(geometry.firstVertex) >= uint64_t(vertexCount))) {
-                return false;
-            }
-        }
-        return true;
+        return RR64Simd::indicesInRange(geometry.triangleIndices.data(), geometry.triangleIndices.size(),
+            geometry.firstVertex, uint64_t(vertexCount));
     }
 
     // Explicitly identified animated meshes can change finite local positions,
@@ -76,13 +74,9 @@ namespace RT64::RR64GeometryMatch {
             return false;
         }
 
-        for (std::size_t i = 0; i < current.triangleIndices.size(); i++) {
-            if ((current.triangleIndices[i] - current.firstVertex) !=
-                (previous.triangleIndices[i] - previous.firstVertex)) {
-                return false;
-            }
-        }
-        return true;
+        // RR64-SIMD: uint32 offset comparison, 8 lanes per step on AVX2.
+        return RR64Simd::offsetIndicesEqual(current.triangleIndices.data(), previous.triangleIndices.data(),
+            current.triangleIndices.size(), current.firstVertex, previous.firstVertex);
     }
 
     // A matching vertex count is insufficient: streamed meshes and LODs can
@@ -94,13 +88,9 @@ namespace RT64::RR64GeometryMatch {
         if (!compatibleTopology(current, previous)) {
             return false;
         }
-        for (std::size_t i = 0; i < current.positions.size(); i++) {
-            // Numeric equality intentionally treats signed zero as the same
-            // local position. NaNs and infinities were rejected above.
-            if (current.positions[i] != previous.positions[i]) {
-                return false;
-            }
-        }
-        return true;
+        // Numeric equality intentionally treats signed zero as the same
+        // local position. NaNs and infinities were rejected above.
+        // RR64-SIMD: ordered-equal compare, 8 lanes per step on AVX.
+        return RR64Simd::floatsEqual(current.positions.data(), previous.positions.data(), current.positions.size());
     }
 }

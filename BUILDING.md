@@ -92,6 +92,8 @@ cmake --build native/build --config Release --target RoadRash64Recompiled RoadRa
 
 The executable, frontend assets and required graphics/SDL DLLs are placed under `native/build/bin`. Run `RoadRash64Recompiled.exe` there and select your supported ROM. Keep the DLLs and assets with the EXE. `RoadRash64DirectStart.exe` uses the same configured ROM and settings.
 
+The default instruction floor is AVX with AVX2 selected at run time. For a personal build on an AVX2 machine, `-DRR64_X86_BASELINE=AVX2` compiles everything for x86-64-v3; that binary refuses to start on AVX-only CPUs. `cmake --build native/build --target RR64SimdHarness` builds the kernel bit-exactness check; see [docs/SIMD.md](docs/SIMD.md).
+
 ### Linux
 
 ```bash

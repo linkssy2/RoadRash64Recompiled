@@ -4,11 +4,15 @@ add_executable(RR64AuthoredFrameSmoke EXCLUDE_FROM_ALL
 add_executable(RR64FrameOverwriteSmoke EXCLUDE_FROM_ALL
     tests/rr64_frame_overwrite_smoke.cpp
 )
+# RR64-SIMD: the geometry and TMEM headers call RT64::RR64Simd kernels, so
+# these header-only smokes link the kernel source (and see hlslpp) as well.
 add_executable(RR64GeometryMatchSmoke EXCLUDE_FROM_ALL
     tests/rr64_geometry_match_smoke.cpp
+    "${RT64_ROOT}/src/common/rt64_rr64_simd.cpp"
 )
 target_include_directories(RR64GeometryMatchSmoke PRIVATE
     "${RT64_ROOT}/src"
+    "${RT64_ROOT}/src/contrib/hlslpp/include"
 )
 set_target_properties(RR64GeometryMatchSmoke PROPERTIES CXX_STANDARD 17)
 add_executable(RR64WorldMatchingSmoke EXCLUDE_FROM_ALL tests/rr64_world_matching_smoke.cpp
@@ -18,9 +22,6 @@ target_include_directories(RR64WorldMatchingSmoke PRIVATE "${RT64_ROOT}/src"
     "${RT64_ROOT}/src/contrib/dxc/inc")
 target_link_libraries(RR64WorldMatchingSmoke PRIVATE rt64)
 target_link_directories(RR64WorldMatchingSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
-if(MSVC)
-    target_compile_options(RR64WorldMatchingSmoke PRIVATE /clang:-march=nehalem)
-endif()
 add_executable(RR64HighlightCameraBoundarySmoke EXCLUDE_FROM_ALL
     tests/rr64_highlight_camera_boundary_smoke.cpp tests/rr64_matching_test_callbacks.cpp
     src/rr64_highlight_render_boundary.cpp src/rr64_shadow_tags.cpp)
@@ -30,9 +31,6 @@ target_include_directories(RR64HighlightCameraBoundarySmoke PRIVATE src
 target_compile_features(RR64HighlightCameraBoundarySmoke PRIVATE cxx_std_20)
 target_link_libraries(RR64HighlightCameraBoundarySmoke PRIVATE rt64)
 target_link_directories(RR64HighlightCameraBoundarySmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
-if(MSVC)
-    target_compile_options(RR64HighlightCameraBoundarySmoke PRIVATE /clang:-march=nehalem)
-endif()
 add_executable(RR64AuthoredCadenceSmoke EXCLUDE_FROM_ALL
     tests/rr64_authored_cadence_smoke.cpp
 )
@@ -51,9 +49,6 @@ target_include_directories(RR64ShadowTagsSmoke PRIVATE src "${RT64_ROOT}"
 target_compile_features(RR64ShadowTagsSmoke PRIVATE cxx_std_20)
 target_link_libraries(RR64ShadowTagsSmoke PRIVATE rt64)
 target_link_directories(RR64ShadowTagsSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
-if(MSVC)
-    target_compile_options(RR64ShadowTagsSmoke PRIVATE /clang:-march=nehalem)
-endif()
 add_executable(RR64InterpolationPressureSmoke EXCLUDE_FROM_ALL
     tests/rr64_interpolation_pressure_smoke.cpp
 )
@@ -90,8 +85,10 @@ endforeach()
 add_executable(RR64CoordinateConsistencySmoke EXCLUDE_FROM_ALL
     tests/rr64_coordinate_consistency_smoke.cpp
 )
-add_executable(RR64TMEMHashSmoke EXCLUDE_FROM_ALL tests/rr64_tmem_hash_smoke.cpp)
-target_include_directories(RR64TMEMHashSmoke PRIVATE "${RT64_ROOT}/src" "${RT64_ROOT}/src/contrib")
+add_executable(RR64TMEMHashSmoke EXCLUDE_FROM_ALL tests/rr64_tmem_hash_smoke.cpp
+    "${RT64_ROOT}/src/common/rt64_rr64_simd.cpp")
+target_include_directories(RR64TMEMHashSmoke PRIVATE "${RT64_ROOT}/src" "${RT64_ROOT}/src/contrib"
+    "${RT64_ROOT}/src/contrib/hlslpp/include")
 target_compile_definitions(RR64TMEMHashSmoke PRIVATE NOMINMAX)
 set_target_properties(RR64TMEMHashSmoke PROPERTIES CXX_STANDARD 17)
 foreach(RR64_PRESENTATION_TEST RR64AuthoredCadenceSmoke RR64CoordinateConsistencySmoke)
@@ -178,7 +175,7 @@ if(RR64_TEST_POWERSHELL)
     )
     if(MSVC)
         target_compile_options(RR64ActorRenderMathSmoke PRIVATE
-            /clang:-march=nehalem /clang:-fno-strict-aliasing
+            /clang:-fno-strict-aliasing
             /clang:-Wno-unused-variable /clang:-Wno-implicit-function-declaration)
     else()
         target_compile_options(RR64ActorRenderMathSmoke PRIVATE
