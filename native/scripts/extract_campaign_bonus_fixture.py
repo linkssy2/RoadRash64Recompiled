@@ -20,7 +20,7 @@ for path in a.generated.glob('funcs_*.c'):
         all_functions[m[1]] = m[0]
 hooks = []
 for line in a.config.read_text().splitlines():
-    if not any(h in line for h in ('rr64_campaign_', 'rr64_ai_bike_profile')) or line.lstrip().startswith('#'):
+    if not any(h in line for h in ('rr64_campaign_', 'rr64_coop_', 'rr64_ai_bike_profile')) or line.lstrip().startswith('#'):
         continue
     m = re.fullmatch(r'\s*\{\s*func\s*=\s*"(\w+)"\s*,\s*(?:before_vram\s*=\s*(0x[0-9A-Fa-f]+)\s*,\s*)?text\s*=\s*(".*")\s*\},?\s*', line)
     assert m, ('Audit changed campaign hook format', line)
@@ -40,8 +40,19 @@ for line in a.config.read_text().splitlines():
 full = ['func_80073658', 'func_80073728', 'func_80072E74', 'func_80072A14',
         'func_80073000', 'func_8005F420', 'func_8001A250', 'func_800488C4', 'func_80048544',
         'func_800516B8', 'func_8001A288', 'func_8001A2E8',
-        'func_8001A500', 'func_8001A52C', 'func_8001A590', 'func_8001A5D8']
+        'func_8001A500', 'func_8001A52C', 'func_8001A590', 'func_8001A5D8',
+        'func_80048484', 'func_80048564', 'func_80074200',
+        'func_8005C298', 'func_8005C320', 'func_80012E7C', 'func_80015C10']
 functions = {n: all_functions[n] for n in full}
+
+# Reproduce the shipped co-op defect with the same dispatcher and constructor,
+# removing only the camera repair while retaining two-human roster allocation.
+for name in ('func_80073728', 'func_8005C298'):
+    code = functions[name]
+    for h in hooks:
+        if 'rr64_coop_split_camera' in h['text']:
+            code = code.replace(h['text'], '')
+    functions['old_coop_'+name] = code.replace('void '+name+'(', 'void old_coop_'+name+'(')
 
 def slice_native(source, name, start, end, tail=''):
     code = all_functions[source]
@@ -63,6 +74,9 @@ def slice_native(source, name, start, end, tail=''):
 slice_native('func_80029DB8', 'bonus_native_route', '80029F68', '8002A0EC', 'L_8002A0EC:;')
 slice_native('func_80073054', 'bonus_native_postrace', '80073218', '80073468', 'L_80073468:;')
 slice_native('func_800516B8', 'bonus_native_ai_pool', '80051954', '800519E0', 'L_800519E0:;')
+# Run the original confirmed-Yes writes before native pause/abort dispatch;
+# menu rendering and input selection are outside this headless fixture.
+slice_native('func_8002E5CC', 'bonus_native_quit_yes', '8002E9EC', '8002EA18', ';')
 for source, address in [('8002C13C', '8002C3D8'), ('8002C520', '8002C718'),
                         ('800728B8', '8007290C'), ('80072930', '800729B4'),
                         ('8002DC30', '8002DE20'), ('8002DC30', '8002DE4C'),

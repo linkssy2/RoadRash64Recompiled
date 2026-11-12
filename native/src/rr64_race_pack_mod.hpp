@@ -21,5 +21,7 @@ void end_import() noexcept;
 // Only the native ROM initialization boundary may latch this preference. An
 // installed terrain/texture bank must never be removed from live guest memory.
 std::filesystem::path begin_session();
+// Release the import/toggle lock only when initialization failed before guest execution.
+void abort_session() noexcept;
 bool enabled_for_session() noexcept;
 } // namespace rr64::race_pack_mod

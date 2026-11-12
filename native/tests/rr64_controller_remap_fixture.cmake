@@ -30,9 +30,8 @@ add_executable(RR64ControllerRemapSmoke EXCLUDE_FROM_ALL
 target_compile_features(RR64ControllerRemapSmoke PRIVATE cxx_std_20)
 target_include_directories(RR64ControllerRemapSmoke PRIVATE "${CMAKE_CURRENT_BINARY_DIR}"
     "${_rr64_input_root}/include/recompinput"
-    $<TARGET_PROPERTY:recompinput,INCLUDE_DIRECTORIES> "${RR64_SDL2_INCLUDE_DIRS}")
-target_link_directories(RR64ControllerRemapSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
-target_link_libraries(RR64ControllerRemapSmoke PRIVATE ${RR64_SDL2_TARGET})
+    $<TARGET_PROPERTY:recompinput,INCLUDE_DIRECTORIES> "${RR64_SDL_INCLUDE_DIRS}")
+target_link_libraries(RR64ControllerRemapSmoke PRIVATE ${RR64_SDL_TARGET})
 # InputState also contains host services the fixture never calls.
 if(MSVC)
     target_compile_definitions(RR64ControllerRemapSmoke PRIVATE NOMINMAX)

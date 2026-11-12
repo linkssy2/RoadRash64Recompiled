@@ -11,8 +11,7 @@
 #include <mutex>
 #include <vector>
 
-#define SDL_MAIN_HANDLED
-#include "SDL.h"
+#include <SDL3/SDL.h>
 #include "opus.h"
 
 #include "rr64_netplay.hpp"
@@ -53,7 +52,13 @@ std::mutex g_settings_mutex;
 std::string g_microphone, g_open_microphone;
 std::vector<std::string> g_devices;
 unsigned g_gate_hold=0;
-SDL_AudioDeviceID g_capture_device = 0;
+// RR64-SDL3: capture runs through an audio stream bound to the recording
+// device (SDL3 has no queued capture / SDL_DequeueAudio). A named microphone
+// opens its physical device; System Default opens SDL's default recording
+// device, which SDL3 moves to the new default by itself when it changes.
+SDL_AudioStream* g_capture_stream = nullptr;
+SDL_AudioDeviceID g_capture_physical_device = 0; // 0 for System Default
+std::chrono::steady_clock::time_point g_next_presence_check{};
 OpusEncoder *g_encoder = nullptr;
 std::array<OpusDecoder *, netplay::kMaximumPlayers> g_decoders{};
 std::array<PlaybackState, netplay::kMaximumPlayers> g_playback{};
@@ -70,12 +75,44 @@ void clear_playback() {
 
 void close_capture() {
     g_gate_hold=0;
-    if (g_capture_device != 0) {
-        SDL_PauseAudioDevice(g_capture_device, 1);
-        SDL_ClearQueuedAudio(g_capture_device);
-        SDL_CloseAudioDevice(g_capture_device);
-        g_capture_device = 0;
+    if (g_capture_stream != nullptr) {
+        // Destroying a device stream also closes its logical device.
+        SDL_DestroyAudioStream(g_capture_stream);
+        g_capture_stream = nullptr;
     }
+    g_capture_physical_device = 0;
+}
+
+// SDL2 reported a vanished capture device as SDL_AUDIO_STOPPED. SDL3 keeps a
+// lost named device open as a silent "zombie", so check (at most once a
+// second) that the physical microphone is still listed.
+bool capture_device_present(std::chrono::steady_clock::time_point now) {
+    if (g_capture_physical_device == 0 || now < g_next_presence_check) {
+        return true;
+    }
+    g_next_presence_check = now + std::chrono::seconds(1);
+    int count = 0;
+    SDL_AudioDeviceID *devices = SDL_GetAudioRecordingDevices(&count);
+    bool present = false;
+    for (int i = 0; devices != nullptr && i < count; ++i) {
+        present = present || devices[i] == g_capture_physical_device;
+    }
+    SDL_free(devices);
+    return present;
+}
+
+SDL_AudioDeviceID find_recording_device(const std::string &name) {
+    int count = 0;
+    SDL_AudioDeviceID *devices = SDL_GetAudioRecordingDevices(&count);
+    SDL_AudioDeviceID found = 0;
+    for (int i = 0; devices != nullptr && i < count && found == 0; ++i) {
+        const char *device_name = SDL_GetAudioDeviceName(devices[i]);
+        if (device_name != nullptr && name == device_name) {
+            found = devices[i];
+        }
+    }
+    SDL_free(devices);
+    return found;
 }
 
 void reset_codecs() {
@@ -93,9 +130,9 @@ bool ensure_capture() {
     std::string selected;
     {std::lock_guard lock(g_settings_mutex);selected=g_microphone;}
     if(selected!=g_open_microphone){close_capture();g_open_microphone=selected;g_next_capture_attempt={};}
-    if(g_capture_device && SDL_GetAudioDeviceStatus(g_capture_device)==SDL_AUDIO_STOPPED)close_capture();
-    if(g_capture_device!=0) return true;
     const auto now=std::chrono::steady_clock::now();
+    if(g_capture_stream && !capture_device_present(now))close_capture();
+    if(g_capture_stream!=nullptr) return true;
     if(now<g_next_capture_attempt) return false;
     // Missing/busy devices should not trigger an expensive open every 5 ms.
     g_next_capture_attempt=now+std::chrono::seconds(1);
@@ -114,28 +151,40 @@ bool ensure_capture() {
         opus_encoder_ctl(g_encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
         opus_encoder_ctl(g_encoder, OPUS_SET_INBAND_FEC(1));
     }
-    if (g_capture_device != 0) {
+    if (g_capture_stream != nullptr) {
         return true;
     }
 
+    // The stream delivers 48 kHz mono S16 whatever the microphone's native
+    // format is, the conversion SDL2's capture queue did.
     SDL_AudioSpec desired{};
     desired.freq = kVoiceRate;
-    desired.format = AUDIO_S16SYS;
+    desired.format = SDL_AUDIO_S16;
     desired.channels = 1;
-    desired.samples = kFrameSamples;
-    desired.callback = nullptr;
-    SDL_AudioSpec obtained{};
-    g_capture_device = SDL_OpenAudioDevice(selected.empty()?nullptr:selected.c_str(), 1, &desired, &obtained, 0);
-    if (g_capture_device == 0) {
+    SDL_AudioDeviceID device = SDL_AUDIO_DEVICE_DEFAULT_RECORDING;
+    if (!selected.empty()) {
+        device = find_recording_device(selected);
+        if (device == 0) {
+            if (!g_capture_failure_reported) {
+                std::fprintf(stderr, "[RR64-VOICE] Microphone unavailable: %s is not connected.\n", selected.c_str());
+                g_capture_failure_reported = true;
+            }
+            return false;
+        }
+    }
+    g_capture_stream = SDL_OpenAudioDeviceStream(device, &desired, nullptr, nullptr);
+    if (g_capture_stream == nullptr) {
         if (!g_capture_failure_reported) {
             std::fprintf(stderr, "[RR64-VOICE] Microphone unavailable: %s\n", SDL_GetError());
             g_capture_failure_reported = true;
         }
         return false;
     }
+    g_capture_physical_device = selected.empty() ? 0 : device;
+    g_next_presence_check = now + std::chrono::seconds(1);
     g_capture_failure_reported = false;
     g_next_capture_attempt={};
-    SDL_PauseAudioDevice(g_capture_device, 0);
+    SDL_ResumeAudioStreamDevice(g_capture_stream);
     if (rr64::diagnostics::routine_enabled()) {
         std::fprintf(stderr, "[RR64-VOICE] Race microphone active at 48 kHz mono.\n");
     }
@@ -163,17 +212,21 @@ void capture_frames() {
     }
 
     constexpr std::uint32_t frame_bytes = kFrameSamples * sizeof(std::int16_t);
-    if (SDL_GetQueuedAudioSize(g_capture_device) > frame_bytes * 10u) {
+    const auto available = [] {
+        const int bytes = SDL_GetAudioStreamAvailable(g_capture_stream);
+        return bytes > 0 ? static_cast<std::uint32_t>(bytes) : 0u;
+    };
+    if (available() > frame_bytes * 10u) {
         // A suspended or overloaded process must not resume by transmitting
         // stale speech several hundred milliseconds late.
-        SDL_ClearQueuedAudio(g_capture_device);
+        SDL_ClearAudioStream(g_capture_stream);
         return;
     }
 
     std::array<std::int16_t, kFrameSamples> pcm{};
     std::array<std::uint8_t, netplay::kVoicePayloadCapacity> encoded{};
-    while (SDL_GetQueuedAudioSize(g_capture_device) >= frame_bytes) {
-        if (SDL_DequeueAudio(g_capture_device, pcm.data(), frame_bytes) != frame_bytes) {
+    while (available() >= frame_bytes) {
+        if (SDL_GetAudioStreamData(g_capture_stream, pcm.data(), static_cast<int>(frame_bytes)) != static_cast<int>(frame_bytes)) {
             break;
         }
         const float gain=g_input_gain.load();
@@ -316,13 +369,16 @@ void configure(recomp::config::Config &config){
     // Config enum keys persist the device name, not its changing SDL index.
     g_devices={""};
     std::vector<recomp::config::ConfigOptionEnumOption> choices{{0u,"system_default","System Default"}};
-    const int count=SDL_GetNumAudioDevices(1);
-    for(int i=0;i<count;++i){
-        const char *name=SDL_GetAudioDeviceName(i,1);
+    // RR64-SDL3: recording devices are listed by ID; the saved key stays the name.
+    int count=0;
+    SDL_AudioDeviceID *devices=SDL_GetAudioRecordingDevices(&count);
+    for(int i=0;devices!=nullptr && i<count;++i){
+        const char *name=SDL_GetAudioDeviceName(devices[i]);
         if(!name || !*name || std::find(g_devices.begin(),g_devices.end(),name)!=g_devices.end())continue;
         const auto index=static_cast<unsigned>(g_devices.size());g_devices.emplace_back(name);
         choices.emplace_back(index,"device:"+g_devices.back(),g_devices.back());
     }
+    SDL_free(devices);
     config.add_enum_option("rr64_microphone","Input Device",
         "Select your voice input. Connect microphones before opening the game; restart to refresh this list. System Default follows your operating system. If a saved device is unavailable at startup, select it again when reconnected.",choices,0u);
     config.add_bool_option("rr64_mic_mute","Mute Microphone","Stops microphone capture without muting other players.",false);

@@ -33,7 +33,7 @@ class PlayerPackageTest(unittest.TestCase):
             "SHA256SUMS.txt": b"old identity\n",
         }
         if platform == "windows":
-            files.update({"RoadRash64Recompiled.exe": b"MZ-game", "SDL2.dll": b"MZ-dll",
+            files.update({"RoadRash64Recompiled.exe": b"MZ-game", "SDL3.dll": b"MZ-dll",
                           "portable.txt": b"portable\n", "assets/badge.png": b"badge-pixels",
                           "music/README.txt": b"Custom music\n",
                           "tools/mk64-importer/rr64-mk64-importer.exe": b"MZ-importer"})
@@ -58,7 +58,7 @@ class PlayerPackageTest(unittest.TestCase):
         old_archive = (self.root / "old.zip").read_bytes()
         report = self.package(manifest)
         destination = self.root / "New"
-        for name in ("RoadRash64Recompiled.exe", "SDL2.dll", "assets/badge.png", "portable.txt",
+        for name in ("RoadRash64Recompiled.exe", "SDL3.dll", "assets/badge.png", "portable.txt",
                      "music/README.txt", "tools/mk64-importer/rr64-mk64-importer.exe"):
             self.assertEqual((destination / name).read_bytes(), original[name])
         self.assertEqual((destination / "docs/LICENSE").read_bytes(), original["LICENSE"])

@@ -49,6 +49,11 @@ void rr64_trace_lap_frame(unsigned char* memory);
 void rr64_trace_population(unsigned char* memory, unsigned phase);
 void rr64_trace_police_crash(unsigned char* memory, unsigned bike, unsigned site);
 void rr64_trace_traffic_target(unsigned char* memory, unsigned car, unsigned before_road);
+void rr64_trace_traffic_lifecycle(unsigned char* memory, unsigned car, unsigned phase);
+// Per-axle ground-source counters; printed only with existing population samples.
+// These describe residency/fallback admission, not a new terrain query or hit test.
+void rr64_trace_traffic_floor(unsigned char* memory, unsigned query, unsigned cell,
+                             unsigned native_state, int supplied_fallback);
 // Mark recovery before its progress update. The next frame sample records the
 // coherent resulting state; this hook itself emits no rows or snapshots.
 void rr64_trace_race_recovery(unsigned char* memory, unsigned actor);

@@ -102,4 +102,9 @@ bool enabled_for_session() noexcept {
     return started.load(std::memory_order_acquire)
         ? session_enabled.load(std::memory_order_acquire) : requested();
 }
+
+void abort_session() noexcept {
+    std::scoped_lock lock(settings_mutex);
+    started.store(false, std::memory_order_release);
+}
 } // namespace rr64::race_pack_mod

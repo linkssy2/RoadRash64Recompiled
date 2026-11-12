@@ -51,7 +51,7 @@ distributed compiler baseline; preserve the existing package for comparison.
 Upstream release status: https://gcc.gnu.org/gcc-16/.
 
 Linux development packages include build-essential, g++-12, cmake, ninja-build,
-pkg-config, git, Python 3.10+, libsdl2-dev (2.26+), libgtk-3-dev, libssl-dev,
+pkg-config, git, Python 3.10+, the SDL3 build headers listed in BUILDING.md (SDL3 itself is built from source and linked statically), libgtk-3-dev, libssl-dev,
 libvulkan-dev and zlib1g-dev. AppImage packaging also uses curl, ImageMagick and
 libfuse2. See BUILDING.md for ROM staging and code generation. For the native step:
 

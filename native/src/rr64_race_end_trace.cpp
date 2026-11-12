@@ -68,6 +68,11 @@ struct Physics {
     bool input_valid = false, rider_valid = false;
     WallObservation walls{};
 };
+struct TrafficFloor {
+    unsigned entity = 0, identity = 0;
+    // Resident, supplied fallback, unavailable; latest native state/cell.
+    std::array<std::array<unsigned, 5>, 2> axles{};
+};
 struct Snapshot {
     unsigned sequence = 0, source = 0, pending = 0, target = 0, caller = 0;
     unsigned ticks = 0, race_elapsed = 0, race_type = 0, humans = 0, racers = 0, total = 0, count = 0;
@@ -81,7 +86,8 @@ struct Snapshot {
     unsigned physics_sample = 0;
     unsigned traffic = 0, traffic_density = 0, traffic_interval = 0;
     unsigned event_entity = 0, event_detail = 0;
-    std::array<std::array<unsigned, 17>, rr64::traffic::capacity> cars{};
+    std::array<std::array<unsigned, 19>, rr64::traffic::capacity> cars{};
+    std::array<TrafficFloor, rr64::traffic::capacity> traffic_floors{};
 };
 
 // One guest-thread producer and one UI-thread consumer. Release/acquire pairs
@@ -93,6 +99,7 @@ std::atomic<bool> population_enabled{false};
 unsigned population_samples = 0, population_frames = 0;
 std::array<unsigned, engine::kMaximumRacers> police_states{};
 std::array<std::array<unsigned, 2>, rr64::traffic::capacity> traffic_targets{};
+std::array<TrafficFloor, rr64::traffic::capacity> traffic_floors{};
 std::atomic<bool> course_enabled{false}, course_limit_notice{false};
 constexpr unsigned course_period_frames = 30, course_sample_limit = 1200;
 unsigned course_frames = 0, course_samples = 0; // Process/session cap, not reset each race.
@@ -138,6 +145,16 @@ std::uint16_t half(unsigned char* memory, unsigned address) {
 }
 bool valid_pointer(unsigned pointer, unsigned size) {
     return (pointer & 3) == 0 && engine::valid_guest_range(pointer, size);
+}
+TrafficFloor* traffic_floor_record(unsigned car, unsigned identity) {
+    for (auto& entry : traffic_floors)
+        if (entry.entity == car) {
+            if (entry.identity != identity) entry = {car, identity};
+            return &entry;
+        }
+    for (auto& entry : traffic_floors)
+        if (!entry.entity) { entry = {car, identity}; return &entry; }
+    return nullptr;
 }
 bool terminal_mode(unsigned mode) {
     // Decimal 30 is multiplayer results (0x1E), not hexadecimal 0x30.
@@ -353,10 +370,21 @@ void print(const Snapshot& sample) {
                 floating(car[5]), floating(car[6]), car[7], floating(car[8]), floating(car[9]));
             std::fprintf(stderr, "[RR64-TRAFFIC-ROAD] sequence=%u entity=%08X kind=%u next_kind=%u flags=%04X lane=%.9g state=%u index=%u width=%.9g\n",
                 sample.sequence, car[0], car[10], car[11], car[12], floating(car[13]), car[14], car[15], floating(car[16]));
+            std::fprintf(stderr, "[RR64-TRAFFIC-LIFETIME] sequence=%u entity=%08X identity=%u retire=%u\n",
+                sample.sequence, car[0], car[17], car[18]);
         }
         if (sample.event_entity)
             std::fprintf(stderr, "[RR64-POPULATION-CAUSE] sequence=%u phase=%u entity=%08X site=%08X before_road_bits=%08X route_records=%u\n",
                 sample.sequence, sample.target, sample.event_entity, sample.caller, sample.event_detail, sample.course.count);
+        for (const auto& floor : sample.traffic_floors) {
+            if (!floor.entity) continue;
+            for (unsigned axle=0;axle<2;++axle) {
+                const auto& q=floor.axles[axle];
+                if (!(q[0] || q[1] || q[2])) continue;
+                std::fprintf(stderr,"[RR64-TRAFFIC-FLOOR] sequence=%u entity=%08X identity=%u axle=%u native_queries=%u fallback_queries=%u unavailable_queries=%u last_native_state=%u last_cell=%08X\n",
+                    sample.sequence,floor.entity,floor.identity,axle,q[0],q[1],q[2],q[3],q[4]);
+            }
+        }
         print_physics(sample);
         return;
     }
@@ -456,6 +484,7 @@ static void enqueue(unsigned char* memory, unsigned target_mode, unsigned return
     for (unsigned slot = 0; slot < sample.count; ++slot)
         sample.actors[slot] = capture_actor(memory, slot);
     if (reasons == Population) {
+        sample.traffic_floors = traffic_floors;
         sample.traffic = word(memory, 0x800A6528);
         sample.traffic_density = word(memory, 0x800D8560);
         sample.traffic_interval = word(memory, 0x800D84E8 + 0x14);
@@ -481,6 +510,8 @@ static void enqueue(unsigned char* memory, unsigned target_mode, unsigned return
             row[14] = word(memory, car + 0x3C);
             row[15] = word(memory, car + 0x28);
             row[16] = word(memory, car + 0x34);
+            row[17] = word(memory, car + 4);
+            row[18] = half(memory, car + 0x336);
         }
     }
     if (reasons == CoursePhysics || reasons == Population) {
@@ -496,7 +527,7 @@ extern "C" void rr64_trace_population(unsigned char* memory, unsigned phase) {
     if (!population_enabled.load(std::memory_order_relaxed) || !memory ||
         prediction::active() || population_samples >= 1200) return;
     if (!engine::is_live_race_mode(word(memory, engine::globals::main_mode))) {
-        police_states = {}; traffic_targets = {}; population_frames = 0;
+        police_states = {}; traffic_targets = {}; traffic_floors = {}; population_frames = 0;
         return;
     }
     if (half(memory, engine::globals::gameplay_pause_state)) return;
@@ -555,6 +586,46 @@ extern "C" void rr64_trace_traffic_target(unsigned char* memory, unsigned car, u
     if (!changed) return;
     ++population_samples;
     enqueue(memory, 4, 0x80076BB0, Population, 0, nullptr, car, before_road);
+}
+
+extern "C" void rr64_trace_traffic_lifecycle(unsigned char* memory, unsigned car, unsigned phase) {
+    if (!population_enabled.load(std::memory_order_relaxed) || !memory ||
+        prediction::active() || population_samples >= 1200 || (phase != 5 && phase != 6) ||
+        !valid_pointer(car, 0x338) ||
+        !engine::is_live_race_transition(word(memory, engine::globals::main_mode),
+                                        word(memory, engine::globals::pending_mode))) return;
+    const unsigned index = word(memory, car + 0x28);
+    if (index >= rr64::traffic::capacity || rr64::traffic::entity(memory, index) != car) return;
+    auto* floor=traffic_floor_record(car,word(memory,car+4));
+    if (floor && phase==5) *floor={car,word(memory,car+4)};
+    ++population_samples;
+    // Placement has finished at phase 5; phase 6 precedes native slot release.
+    enqueue(memory, phase, phase == 5 ? 0x8006BC40 : 0x800464B8, Population, 0, nullptr, car);
+    if (floor && phase==6) *floor={};
+}
+
+extern "C" void rr64_trace_traffic_floor(unsigned char* memory, unsigned query, unsigned cell,
+                                         unsigned native_state, int supplied_fallback) {
+    if (!population_enabled.load(std::memory_order_relaxed) || !memory ||
+        prediction::active() || population_samples >= 1200 ||
+        !engine::is_live_race_transition(word(memory,engine::globals::main_mode),
+                                        word(memory,engine::globals::pending_mode))) return;
+    const unsigned count=std::min(word(memory,0x800A6528),rr64::traffic::capacity);
+    // Native 75EA0 passes +238 at 75FB0 and +2A4 at 76084; +2A8 is its Y coordinate.
+    constexpr unsigned offsets[]={0x238u,0x2A4u};
+    for (unsigned axle=0;axle<2;++axle) {
+        if (query<offsets[axle]) continue;
+        const unsigned car=query-offsets[axle];
+        if (!valid_pointer(car,0x338)) continue;
+        const unsigned index=word(memory,car+0x28);
+        if (index>=count || rr64::traffic::entity(memory,index)!=car) continue;
+        if (auto* floor=traffic_floor_record(car,word(memory,car+4))) {
+            auto& q=floor->axles[axle];
+            saturating_add(q[native_state==5 ? 0 : supplied_fallback ? 1 : 2],1);
+            q[3]=native_state; q[4]=cell;
+        }
+        return;
+    }
 }
 
 extern "C" void rr64_trace_race_end(unsigned char* memory, unsigned target_mode,

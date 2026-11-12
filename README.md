@@ -1,7 +1,7 @@
-# Road Rash 64 Recompiled — 1.4.9
+# Road Rash 64 Recompiled — 1.5.0
 
 An unofficial PC recompilation. **Bring your own Road Rash 64 USA v1.0 ROM.**
-Windows and experimental native Linux builds.
+Windows and experimental native Linux builds. An x86-64 CPU with AVX support is required; AVX2 is optional.
 
 ## Start playing
 

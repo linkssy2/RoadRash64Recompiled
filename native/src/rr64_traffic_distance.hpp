@@ -4,6 +4,7 @@
 #include <cmath>
 
 namespace rr64::traffic {
+inline constexpr float maximum_spawn_extension = 650.0f;
 // Keep the stock cadence/allocator; move only its proposed route location.
 // Use half the remaining valid route headroom near the finish so an otherwise
 // valid spawn never becomes invalid solely because of the extension.
@@ -11,7 +12,7 @@ inline float spawn_distance(float original, float limit, int percent) {
     if (percent <= 0 || !std::isfinite(original) || !std::isfinite(limit) || original < 0 ||
         original >= limit)
         return original;
-    const float extension = 650.0f * std::clamp(percent, 0, 100) / 100.0f;
+    const float extension = maximum_spawn_extension * std::clamp(percent, 0, 100) / 100.0f;
     return std::min(limit, original + std::min(extension, (limit - original) * 0.5f));
 }
 

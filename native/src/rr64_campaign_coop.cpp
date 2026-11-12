@@ -96,8 +96,9 @@ extern "C" unsigned rr64_coop_mode(unsigned char *m, unsigned requested) {
         restore_course(m); selecting=false;
         campaign_coop::input_request.store(0);
     }
-    // Native campaign bust/repair menus assume there is only one human.
-    if (racing && current==0x17 && (requested==0x30 || requested==0x32))
+    // Pause > Quit also requests the repair menu; its native abort marker must
+    // escape this veto or the dispatcher restarts the current race instead.
+    if (racing && current==0x17 && (requested==0x30 || requested==0x32) && !half(m,0x800A183A))
         return word(m,0x800D7648) ? current : 0x19;
     if (racing && current==0x19 && requested==0x1A) {
         const unsigned state=word(m,result_actor(m)+0xE8);
@@ -154,6 +155,12 @@ extern "C" void rr64_coop_riders(unsigned char *m) {
     write_u32(m,partner+0x20,partner_bike<12 ? 5 : partner_bike<24 ? 6 : 8);
     const auto names=local_players::snapshot();
     for(unsigned i=0;i<12;++i) write_s8(m,partner+0xC+i,i<names[1].size() ? names[1][i] : 0);
+}
+extern "C" int rr64_coop_split_camera(unsigned char *m) {
+    if (!m || !racing || !active() || word(m,local_race::humans)!=2) return 0;
+    const unsigned mode=word(m,globals::main_mode);
+    // Camera setup belongs to race construction/results, never menus or replay draws.
+    return mode==0x18 || mode==0x19;
 }
 extern "C" unsigned rr64_coop_result_actor(unsigned char *m,unsigned original) {
     return m && racing && active() ? result_actor(m) : original;

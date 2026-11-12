@@ -1,5 +1,4 @@
 // Reuse the renderer-free RSP fixture, including actual GBI list traversal.
-#define SDL_MAIN_HANDLED
 #define main rr64_shadow_unused_triangle_main
 #include "rr64_rsp_triangle_batch_smoke.cpp"
 #undef main

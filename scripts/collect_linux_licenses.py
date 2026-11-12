@@ -28,9 +28,6 @@ def main():
         if str(path).startswith(str(BUILD / 'ffmpeg-install')):
             entry['sourcePackage'] = 'pinned FFmpeg (see ffmpeg-source.tar.gz)'
             continue
-        if str(path).startswith('/usr/local/') and 'SDL2' in path.name:
-            entry['sourcePackage'] = 'SDL2 2.30.3 (see SDL2-2.30.3.tar.gz)'
-            continue
         owner = None
         # Ubuntu can record an unmerged /lib path even though it resolves to /usr/lib.
         for candidate in [str(path), str(path).removeprefix('/usr')]:
@@ -56,9 +53,13 @@ def main():
     with (sources / 'ffmpeg-source.tar.gz').open('wb') as file:
         subprocess.run(['git', 'archive', '--format=tar.gz', '--prefix=ffmpeg/', 'HEAD'], cwd=ffmpeg, stdout=file, check=True)
     shutil.copy2(ffmpeg / 'COPYING.LGPLv2.1', notices / 'FFmpeg.LGPLv2.1')
-    sdl_archive = Path(os.environ.get('RR64_SDL_SOURCE_ARCHIVE', '/root/rr64-build-deps/SDL2-2.30.3.tar.gz'))
-    if not sdl_archive.exists(): raise RuntimeError('Supply exact SDL source archive')
-    shutil.copy2(sdl_archive, sources / 'SDL2-2.30.3.tar.gz')
+    # RR64-SDL3: SDL3 is linked statically into the executable (zlib licence);
+    # its exact source and notice still travel with the package.
+    for folder, archive in [('SDL3', 'SDL3-source.tar.gz')]:
+        tree = ROOT / 'native/lib' / folder
+        with (sources / archive).open('wb') as file:
+            subprocess.run(['git', 'archive', '--format=tar.gz', '--prefix=' + folder + '/', 'HEAD'], cwd=tree, stdout=file, check=True)
+        shutil.copy2(tree / 'LICENSE.txt', notices / (folder + '.LICENSE.txt'))
     for name in ['LICENSE', 'CREDITS.md', 'THIRD_PARTY_NOTICES.md']:
         shutil.copy2(ROOT / name, OUT / name)
     shutil.copy2(ROOT / 'native/CMakeLists.txt', OUT / 'native-CMakeLists.txt')
@@ -66,7 +67,8 @@ def main():
     (OUT / 'README.txt').write_text(
         'These sources and notices correspond to the libraries in the experimental Linux package.\n'
         'FFmpeg is a minimal shared LGPL build; exact configure options are in native-CMakeLists.txt.\n'
-        'SDL 2.30.3 was built with CMake Release, SDL_STATIC=OFF and SDL_TEST=OFF.\n'
+        'SDL3 3.4.16 is built from the pinned source by native/cmake/Sdl.cmake and linked statically\n'
+        '(SDL_LIBC=ON; no GPU/2D renderer/camera/tray subsystems, tests, examples or install rules).\n'
         'Ubuntu source packages include their original packaging/build instructions.\n'
         'No ROM, generated game source or personal saves are included.\n')
     files = sorted(p for p in OUT.rglob('*') if p.is_file() and p.name != 'SHA256SUMS.txt')

@@ -255,10 +255,57 @@ int main(int argc, char** argv) {
         race_end_trace::drain();
         text = output.read();
         require(occurrences(text, "phase=4 cars=") == 2, "resumed traffic captured");
+        engine::write_u32(memory.data(), 0x80300004, 42);
+        engine::write_u16(memory.data(), 0x80300336, 1);
+        const auto lifecycle_before = memory;
+        capturing = true;
+        rr64_trace_traffic_lifecycle(memory.data(), 0x80300000, 5);
+        for(unsigned i=0;i<100;++i)
+            rr64_trace_traffic_floor(memory.data(),0x80300238,0x80100200,5,0);
+        for(unsigned i=0;i<7;++i)
+            rr64_trace_traffic_floor(memory.data(),0x80300238,0x80100210,1,1);
+        for(unsigned i=0;i<9;++i)
+            rr64_trace_traffic_floor(memory.data(),0x803002A4,0x80100220,3,0);
+        rr64_trace_traffic_floor(memory.data(),0x803002A8,0,1,1); // Y coordinate, not a query.
+        rr64_trace_traffic_floor(memory.data(),0x80301238,0,1,1); // Unregistered owner.
+        rr64_trace_traffic_floor(nullptr,0x80300238,0,1,1);
+        {
+            prediction::ReplayScope replay;
+            rr64_trace_traffic_floor(memory.data(),0x80300238,0,1,1);
+        }
+        rr64_trace_traffic_lifecycle(memory.data(), 0x80300000, 6);
+        rr64_trace_traffic_lifecycle(memory.data(), 0x80300000, 7);
+        rr64_trace_traffic_lifecycle(memory.data(), 0x80301000, 5);
+        rr64_trace_traffic_lifecycle(nullptr, 0x80300000, 5);
+        capturing = false;
+        require(output.read() == text && memory == lifecycle_before, "lifecycle producer has no I/O or guest writes");
+        race_end_trace::drain();
+        text = output.read();
+        require(occurrences(text, "phase=5 cars=") == 1 && occurrences(text, "phase=6 cars=") == 1,
+                "only authenticated placement/release events captured");
+        require(text.find("identity=42 retire=1") != std::string::npos, "slot reuse identity and native retirement captured");
+        require(occurrences(text,"[RR64-TRAFFIC-FLOOR]")==2,
+                "floor observations coalesce into existing lifecycle samples");
+        require(text.find("identity=42 axle=0 native_queries=100 fallback_queries=7 unavailable_queries=0 last_native_state=1 last_cell=80100210")!=std::string::npos &&
+                text.find("identity=42 axle=1 native_queries=0 fallback_queries=0 unavailable_queries=9 last_native_state=3 last_cell=80100220")!=std::string::npos,
+                "both authenticated axles distinguish native, supplied and unavailable terrain");
+        engine::write_u32(memory.data(),0x80300004,43);
+        capturing=true;
+        rr64_trace_traffic_lifecycle(memory.data(),0x80300000,5);
+        rr64_trace_traffic_floor(memory.data(),0x803002A4,0x80100230,5,0);
+        rr64_trace_traffic_lifecycle(memory.data(),0x80300000,6);
+        capturing=false;
+        race_end_trace::drain();
+        const auto reused=output.read().substr(text.size());
+        require(reused.find("identity=43 axle=1 native_queries=1 fallback_queries=0 unavailable_queries=0")!=std::string::npos &&
+                reused.find("identity=42 axle=")==std::string::npos,
+                "reused car allocation starts fresh floor counters");
+        text=output.read();
         {
             prediction::ReplayScope replay;
             rr64_trace_police_crash(memory.data(), police_bike, 0);
             rr64_trace_traffic_target(memory.data(), 0x80300000, 0);
+            rr64_trace_traffic_lifecycle(memory.data(), 0x80300000, 5);
         }
         rr64_trace_traffic_target(nullptr, 0x80300000, 0);
         rr64_trace_traffic_target(memory.data(), 0xFFFFFFFC, 0);
@@ -266,7 +313,7 @@ int main(int argc, char** argv) {
         require(output.read() == text, "invalid and prediction decisions excluded");
         engine::write_float(memory.data(), 0x80300328, 0.f);
         const auto traffic_before = memory;
-        for (unsigned i = 4; i < 1200; ++i) {
+        for (unsigned i = 6; i < 1200; ++i) {
             rr64_trace_population(memory.data(), 2);
             race_end_trace::drain();
         }
@@ -287,6 +334,7 @@ int main(int argc, char** argv) {
     if (disabled) {
         rr64_trace_police_crash(memory.data(), 0x80240000, 0);
         rr64_trace_traffic_target(memory.data(), 0x80300000, 0);
+        rr64_trace_traffic_floor(reinterpret_cast<unsigned char*>(1),0x80300238,0,5,0);
         recover(memory.data(), 0x800D8570);
         observe(memory.data());
         race_end_trace::drain();

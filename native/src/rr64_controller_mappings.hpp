@@ -1,5 +1,5 @@
 #pragma once
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <string>
 
 /*
@@ -47,11 +47,20 @@ inline constexpr const char* rr64_controller_mappings[] = {
 inline bool rr64_register_controller_mappings() {
     bool success = true;
     const std::string platform = std::string("platform:") + SDL_GetPlatform() + ",";
+#if defined(__APPLE__)
+    // RR64-SDL3: SDL3 calls the platform "macOS"; SDL_GameControllerDB (and the
+    // rows above) still say "Mac OS X". SDL3's own database loader accepts
+    // both on macOS, so do the same here.
+    const std::string legacy_platform = "platform:Mac OS X,";
+#else
+    const std::string legacy_platform = platform;
+#endif
     for (const char* mapping : rr64_controller_mappings) {
         // AddMapping (unlike the database-file loader) does not filter platform.
         // USB GUIDs may be identical even though OS axis numbering differs.
-        if (std::string(mapping).find(platform) == std::string::npos) continue;
-        if (SDL_GameControllerAddMapping(mapping) < 0) success = false;
+        const std::string row(mapping);
+        if (row.find(platform) == std::string::npos && row.find(legacy_platform) == std::string::npos) continue;
+        if (SDL_AddGamepadMapping(mapping) < 0) success = false;
     }
     return success;
 }

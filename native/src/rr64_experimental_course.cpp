@@ -670,7 +670,8 @@ void load_stock() noexcept {
     loaded.store(-1, std::memory_order_release);
 }
 
-void initialize() {
+namespace {
+void reset_assets() {
     mk64_items::reset_audio();
     mk64_items::clear_audio_bank();
     mk64_items::reset_render_session();
@@ -696,9 +697,9 @@ void initialize() {
     selected = -1;
     loaded = -1;
     catalogue = Catalogue{};
-    const auto configured = race_pack_mod::begin_session();
-    if (configured.empty())
-        return;
+}
+
+void load_pack(const std::filesystem::path &configured) {
     const auto root = std::filesystem::weakly_canonical(configured);
     const auto metadata = read(root / "catalogue.json", 2 * 1024 * 1024);
     const auto manifest = Json::parse(metadata.begin(), metadata.end());
@@ -928,6 +929,23 @@ void initialize() {
                      "source_scale=%.6g, identity=%s\n",
                      catalogue.courses.size(), catalogue.texture_count, catalogue.source_to_world_scale,
                      race_pack::hex_digest(catalogue.digest).c_str());
+    }
+}
+} // namespace
+
+void initialize() {
+    reset_assets();
+    try {
+        const auto configured = race_pack_mod::begin_session();
+        if (!configured.empty())
+            load_pack(configured);
+    } catch (const std::exception &error) {
+        // A rejected optional pack must leave no partial assets or locked Mods controls.
+        reset_assets();
+        race_pack_mod::abort_session();
+        throw std::runtime_error(std::string("Unable to load the MK64 Race Pack.\n\n") +
+            error.what() + "\n\nOpen Settings > Mods > MK64 Race Pack and reimport your "
+            "Mario Kart 64 ROM, or disable this pack before starting the game.");
     }
 }
 } // namespace rr64::experimental_course

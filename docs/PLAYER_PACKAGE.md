@@ -51,7 +51,7 @@ python -B scripts/test_package_player.py
 
 | Location | Contents |
 | --- | --- |
-| Windows root | `README.md`, both EXEs, `SDL2.dll`, `dxcompiler.dll`, `dxil.dll`, `portable.txt`, and the four folders below. |
+| Windows root | `README.md`, both EXEs, `SDL3.dll`, `dxcompiler.dll`, `dxil.dll`, `portable.txt`, and the four folders below. (Packages built before the SDL3 port carry `SDL2.dll` instead.) |
 | `assets/` | Shipped UI artwork, achievement badges, fonts and their notices. Keep their runtime paths and verified bytes. |
 | `tools/mk64-importer/` | Complete frozen importer and its runtime. Its Python/NumPy files are required; they are not a development SDK. |
 | `music/` | The clean package includes only `README.txt`; players may add their own music. |

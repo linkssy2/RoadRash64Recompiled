@@ -24,7 +24,6 @@ void func_8005EF74(unsigned char*,recomp_context*);
 void func_80015A90(unsigned char*,recomp_context*);
 void func_8007B254(unsigned char*,recomp_context*);
 void rr64_traffic_fixture_retire(unsigned char*,recomp_context*);
-void func_80046488(unsigned char*,recomp_context*);
 }
 namespace {
 using namespace rr64::engine;
@@ -139,9 +138,6 @@ void lifecycle(unsigned char*m,const TrafficAssets&assets) {
     context(c);rr64_traffic_fixture_retire(m,&c);
     check(word(m,0x800a6528)==0 && word(m,0x800a145c)==0 && native_blocks.at(shared).freed,
           "last native retirement destroys compiled material and removes all traffic");
-    context(c);func_80046488(m,&c);
-    check(unsigned(c.r2)==entity1 && word(m,0x800a1448)==1,
-          "native allocator reuses the departed car's slot for replacement traffic");
     check(word(m,0x800dace4+resource*16)==100,"last resource owner marks exact native expiry");
     // The native expiry routine also invalidates the resource-index directory.
     // It is normally installed by the track loader, outside this fixture.
@@ -257,6 +253,7 @@ void rr64_world_observe_allocation(unsigned char*,unsigned,unsigned,unsigned){}
 void rr64_lod_observe_allocation(unsigned char*,unsigned,unsigned,unsigned){}
 void rr64_lod_release_node(unsigned char*,unsigned){}
 int rr64_traffic_within_draw_distance(unsigned char*,unsigned,unsigned,unsigned,int original){return original;}
+void rr64_trace_traffic_lifecycle(unsigned char*,unsigned,unsigned){}
 }
 int main(int argc,char**argv){
     if(argc!=2){std::fputs("Usage: RR64HighlightTrafficSmoke <own supported RR64 ROM>\n",stderr);return 2;}

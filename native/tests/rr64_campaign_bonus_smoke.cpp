@@ -37,6 +37,16 @@ void bonus_load_8002DE4C(unsigned char*, recomp_context*);
 void bonus_load_8002DE84(unsigned char*, recomp_context*);
 void bonus_load_80073994(unsigned char*, recomp_context*);
 void bonus_load_80073A34(unsigned char*, recomp_context*);
+void func_80048484(unsigned char*, recomp_context*);
+void func_80048544(unsigned char*, recomp_context*);
+void func_80048564(unsigned char*, recomp_context*);
+void func_80074200(unsigned char*, recomp_context*);
+void bonus_native_quit_yes(unsigned char*, recomp_context*);
+void func_8005C298(unsigned char*, recomp_context*);
+void func_8005C320(unsigned char*, recomp_context*);
+void func_80015C10(unsigned char*, recomp_context*);
+void old_coop_func_80073728(unsigned char*, recomp_context*);
+void old_coop_func_8005C298(unsigned char*, recomp_context*);
 }
 namespace {
 using namespace rr64::engine;
@@ -46,6 +56,9 @@ unsigned allocated_ai=0;
 unsigned expected_ai_tier=7;
 std::vector<unsigned> allocated_rows;
 bool online_active=false;
+bool old_coop_camera_path=false;
+bool coop_quit_routing=false, old_coop_quit_path=false, confirm_quit=false;
+std::set<unsigned> mode_io_stubs;
 unsigned confirmed_network_bike=~0u;
 unsigned word(unsigned char* m, unsigned a) { unsigned v=0; read_u32(m,a,v); return v; }
 unsigned half(unsigned char* m, unsigned a) { std::uint16_t v=0; read_u16(m,a,v); return v; }
@@ -56,7 +69,31 @@ std::vector<unsigned char> bytes(unsigned char* m,unsigned a,unsigned n) {
 }
 recomp_context context() { recomp_context c{}; c.r29=S32(0x807F0000); c.r31=0x12345678; return c; }
 void postrace_context(recomp_context& c) { c=context(); c.r19=1; c.r21=S32(profile); c.r22=S32(0x800D0000); }
+void render_layout(unsigned char* m) {
+    auto c=context(); c.r4=word(m,0x800A4F24); func_80015C10(m,&c);
 }
+void enter_native_mode(unsigned char* m,unsigned target) {
+    auto c=context(); c.r4=word(m,globals::main_mode); c.r5=target;
+    func_80048484(m,&c);
+    check(unsigned(c.r29)==0x807F0000,"native mode/camera dispatch must preserve stack");
+}
+}
+// Only device/world initialization and teardown are stubbed. The actual ROM
+// mode table chooses the real dispatcher, camera initializer and constructor.
+extern "C" void mode_io_stub(unsigned char*,recomp_context*) {}
+extern "C" recomp_func_t* get_function(std::int32_t address) {
+    switch(unsigned(address)) {
+    case 0x80073728: return old_coop_camera_path ? old_coop_func_80073728 : func_80073728;
+    case 0x8005C298: return old_coop_camera_path ? old_coop_func_8005C298 : func_8005C298;
+    case 0x8005C320: return func_8005C320;
+    }
+    check(mode_io_stubs.contains(unsigned(address)),"unexpected native mode callback");
+    return mode_io_stub;
+}
+extern "C" unsigned rr64_online_graphics_layout(unsigned layout) { return layout; }
+extern "C" void rr64_online_logical_viewports(unsigned char*) {}
+extern "C" void do_break(std::uint32_t) { check(false,"unexpected native graphics division trap"); }
+extern "C" void switch_error(const char*,std::uint32_t,std::uint32_t) { check(false,"unexpected native switch target"); }
 extern "C" void func_80072880(unsigned char*,recomp_context*) {}
 // Full startup scanning is exercised by RR64CampaignBonusSaveSmoke.
 extern "C" void func_800207DC(unsigned char*,recomp_context* c) { c->r2 = 0; }
@@ -65,6 +102,20 @@ extern "C" void func_80057FC0(unsigned char*,recomp_context*) {}
 extern "C" void func_80057FF8(unsigned char*,recomp_context*) {}
 extern "C" void func_80058CF0(unsigned char*,recomp_context*) {}
 extern "C" void func_8002FAB8(unsigned char*,recomp_context*) {}
+extern "C" void func_80021844(unsigned char*,recomp_context*) {}
+extern "C" void func_80021A3C(unsigned char*,recomp_context*) {}
+extern "C" void func_800585D4(unsigned char*,recomp_context*) {}
+extern "C" void func_80058D2C(unsigned char*,recomp_context*) {}
+extern "C" void func_8000B2D0(unsigned char*,recomp_context*) {}
+extern "C" void func_8001F9BC(unsigned char*,recomp_context*) {}
+extern "C" void func_800900D0(unsigned char*,recomp_context*) {}
+extern "C" void osViBlack_recomp(unsigned char*,recomp_context*) {}
+extern "C" void func_8002E5CC(unsigned char* m,recomp_context*) {
+    if (!confirm_quit) return;
+    auto c=context(); c.r5=1; c.r30=S32(0x800A0000);
+    bonus_native_quit_yes(m,&c);
+    confirm_quit=false;
+}
 extern "C" void func_800796F8(unsigned char*,recomp_context*) {}
 extern "C" void func_8006CB8C(unsigned char*,recomp_context*) {}
 extern "C" void func_8005F3B4(unsigned char*,recomp_context*) {}
@@ -95,7 +146,16 @@ extern "C" void func_80051E24(unsigned char* m,recomp_context* c) {
 extern "C" void rr64_local_options_reset_race() {}
 extern "C" void rr64_achievement_campaign_completed(unsigned char*) { ++completed; }
 extern "C" void rr64_achievement_campaign_level_advanced(unsigned char*,unsigned) { ++advanced; }
-extern "C" unsigned rr64_online_postrace_route_mode(unsigned char*,unsigned m) { mode=m; return m; }
+extern "C" unsigned rr64_online_postrace_route_mode(unsigned char* m,unsigned requested) {
+    if (coop_quit_routing) {
+        const unsigned abort=half(m,0x800A183A);
+        // Negative control removes only the new explicit-quit distinction.
+        if (old_coop_quit_path) write_u16(m,0x800A183A,0);
+        requested=rr64_coop_mode(m,requested);
+        if (old_coop_quit_path) write_u16(m,0x800A183A,abort);
+    }
+    mode=requested; return requested;
+}
 extern "C" void rr64_trace_race_end(unsigned char*,unsigned,unsigned) {}
 extern "C" void rr64_thrash_options_mode(unsigned) {}
 extern "C" void rr64_online_menu_mode_changed(unsigned) {}
@@ -117,6 +177,18 @@ int main(int argc,char** argv) {
     };
     seed(0x800A0000,0x7800); seed(0x80007000,0x400); seed(0x80004E80,0x30);
     seed(0x80000ED8,0x20); // Constants used by the actual native RNG.
+    seed(0x80004B80,4); seed(0x80005DF0,0x40); seed(0x8009DB8C,0x18);
+    write_u32(m,0x800B0808,320); write_u32(m,0x800B080C,240);
+    write_u32(m,0x8009DB80,~0u);
+    for(unsigned mode:{0x16u,0x17u,0x18u,0x19u,0x1Cu,0x1Du,0x1Eu})
+        mode_io_stubs.insert(word(m,0x800A1BDC+mode*24+4)); // Native teardown.
+    for(unsigned mode:{0x19u,0x1Du,0x1Eu})
+        mode_io_stubs.insert(word(m,0x800A1BDC+mode*24)); // World/results IO.
+    mode_io_stubs.insert(0x8006B72C); // Native no-op camera callback.
+    for(unsigned mode:{0x16u,0x30u,0x39u}) {
+        mode_io_stubs.insert(word(m,0x800A1BDC+mode*24)); // Loading/repair screen IO.
+        mode_io_stubs.insert(word(m,0x800A4FF0+mode*4));
+    }
     write_u32(m,0x800A6524,0x80600000); write_u32(m,0x800A64E8,0x80610000);
     write_u32(m,profile+0x20,1); write_u32(m,profile+0x14,25);
     write_u32(m,profile+0x50,0x11111111); write_u32(m,profile+0x54,0x00010002);
@@ -503,10 +575,80 @@ int main(int argc,char** argv) {
         write_u32(m,0x800A1810,0x23);
         write_u32(m,0x8009F5DC,level==5?26:1); write_u32(m,0x8009F404,9);
         check(rr64_coop_mode(m,0x1B)==0x16,"native campaign resumes after confirmation");
-        c=context(); func_80073728(m,&c);
+        // The actual mode dispatcher invokes the camera before the constructor.
+        // Replay the shipped defect, then the repaired path from identical state.
+        write_u32(m,globals::main_mode,0x16);
+        write_u32(m,local_race::humans,level%4+1);
+        auto old_camera=memory;
+        old_coop_camera_path=true;
+        enter_native_mode(old_camera.data(),0x18); render_layout(old_camera.data());
+        old_coop_camera_path=false;
+        check(word(old_camera.data(),local_race::humans)==2 && word(old_camera.data(),0x8009DB88)==1,
+              "negative control must reproduce two humans on one viewport");
+        enter_native_mode(m,0x18); render_layout(m);
+        check(word(m,0x800A4F24)==1 && word(m,0x8009DB88)==2,
+              "co-op constructor must select two native viewports after human allocation");
+        check(word(m,0x800B74A8)==320 && word(m,0x800B74AC)==120,
+              "co-op must use native two-player viewport dimensions");
+        auto camera_reference=memory;
+        c=context(); func_8005C320(camera_reference.data(),&c);
+        check(bytes(m,0x800A50D8,0x18)==bytes(camera_reference.data(),0x800A50D8,0x18) &&
+              bytes(m,0x800A5158,0x40)==bytes(camera_reference.data(),0x800A5158,0x40),
+              "co-op must initialize the same camera arrays as native local multiplayer");
+        check(bytes(m,profile,0xF8)==bytes(old_camera.data(),profile,0xF8),
+              "camera repair must not modify campaign profile");
         check(word(m,0x800A6578)==2,"native constructor keeps two humans");
         check(word(m,actor+0x18)==(level==5?25:12) && word(m,actor+0x118+0x18)==(level==5?26:1),"native constructor keeps separate bike models");
         check(word(m,0x800A656C)<=14,"native constructor bounds total roster");
+        // Native Quit shares the wreck destination, but also sets an abort
+        // marker. A vetoed transition makes the dispatcher reload this race.
+        for(unsigned survivors:{0u,1u,2u}) for(unsigned path=0;path<4;++path) {
+            auto quit_memory=memory; auto* q=quit_memory.data();
+            write_u32(q,globals::main_mode,0x17); write_u32(q,globals::pending_mode,0x17);
+            write_u32(q,0x800D7648,survivors);
+            write_u16(q,globals::pause_menu_state,1); write_u16(q,globals::gameplay_pause_state,1);
+            write_u16(q,0x800A183A,0); write_u16(q,0x800A7490,0);
+            write_u16(q,0x800A1838,0); write_u32(q,0x800A2150,0);
+            // 0=shipped co-op rule, 1=repair, 2=solo control, 3=cancel control.
+            old_coop_quit_path=path==0; coop_quit_routing=true; confirm_quit=path!=3;
+            rr64::campaign_coop::enabled.store(path!=2);
+            auto quit_context=context(); func_80074200(q,&quit_context);
+            check(!confirm_quit,"native pause must consume the confirmation");
+            if(path==3) {
+                check(word(q,globals::pending_mode)==0x17 && !half(q,0x800A183A),
+                      "unconfirmed Quit must not leave or reload the race");
+            } else {
+                const unsigned expected_request=path==0 ? (survivors ? 0x17 : 0x19) : 0x30;
+                check(word(q,globals::pending_mode)==expected_request && half(q,0x800A183A)==1,
+                      "confirmed Quit must retain the native failure destination and abort marker");
+                quit_context=context(); func_80048564(q,&quit_context);
+                const unsigned expected_destination=path==0 ? (survivors ? 0x16 : 0x19) : 0x30;
+                // The original dispatcher queues loading/repair via transition
+                // mode 0x39; results has no such intermediate screen.
+                const unsigned expected_mode=expected_destination==0x19 ? 0x19 : 0x39;
+                check(word(q,globals::main_mode)==expected_mode && !half(q,0x800A183A),
+                      "native dispatch must exit the race instead of restarting or awarding it");
+                if(expected_mode==0x39)
+                    check(word(q,0x800A214C)==expected_destination,"native transition must target repair, not the race loader");
+            }
+            check(bytes(q,profile,0xF8)==bytes(m,profile,0xF8),"quit routing must not alter campaign progress or money");
+            old_coop_quit_path=coop_quit_routing=false;
+            rr64::campaign_coop::enabled.store(true);
+        }
+        write_u32(m,globals::main_mode,0x17); // Running race inherits its setup cameras.
+        enter_native_mode(m,0x19); render_layout(m);
+        check(word(m,0x800A4F24)==1 && word(m,0x8009DB88)==2,
+              "campaign results callback must retain both co-op cameras");
+        online_active=true;
+        c=context(); func_8005C298(m,&c); render_layout(m);
+        check(word(m,0x8009DB88)==1,"online session must exclude active co-op camera repair");
+        online_active=false;
+        write_u32(m,globals::main_mode,0x1A);
+        c=context(); func_8005C298(m,&c); render_layout(m);
+        check(word(m,0x8009DB88)==1,"campaign award/menu presentation must stay single view");
+        write_u32(m,globals::main_mode,0x19);
+        c=context(); func_8005C298(m,&c); render_layout(m);
+        check(word(m,0x8009DB88)==2,"return to co-op results must restore two views");
         write_u32(m,actor+0xE8,0x80620000); write_u32(m,actor+0x118+0xE8,0x80620100);
         write_u16(m,0x8062004C,1); write_u16(m,0x80620050,0);
         write_u16(m,0x8062014C,0); write_u16(m,0x8062014E,0); write_u16(m,0x80620150,1);
@@ -524,6 +666,23 @@ int main(int argc,char** argv) {
         check(bytes(m,profile,0xF8)==bytes(expected.data(),profile,0xF8),"team award must equal exactly one native payout and qualification");
         rr64_coop_mode(m,0x20);
     }
+    // Disabled and online co-op must leave the single-player camera untouched;
+    // ordinary multiplayer keeps the native one/two/four-view policy.
+    for(bool online:{false,true}) {
+        online_active=online;
+        rr64::campaign_coop::enabled.store(true);
+        for(unsigned humans=1;humans<=4;++humans) {
+            write_u32(m,local_race::humans,humans);
+            write_u32(m,globals::main_mode,0x18);
+            c=context(); func_8005C298(m,&c); render_layout(m);
+            check(word(m,0x8009DB88)==1,"inactive co-op must preserve solo camera");
+            write_u32(m,globals::main_mode,0x1C);
+            enter_native_mode(m,0x1D); render_layout(m);
+            check(word(m,0x8009DB88)==(humans==1?1:humans==2?2:4),
+                  "ordinary multiplayer camera policy must remain native");
+        }
+    }
+    online_active=false; rr64::campaign_coop::enabled.store(false);
     check(bytes(m,0x800A68C8,0x740C-0x68C8)==original_tables,"shared campaign route tables mutated");
     std::printf("{\"passed\":true,\"checks\":%u,\"nativeDonors\":%u,\"nativeAiCases\":%u,\"ordinaryAiCases\":%u,\"restrictedStockPools\":%u,\"nativePrizeCases\":%u,\"nativeEndingCases\":%u,\"gameLaunched\":false}\n",checks,donors,ai_cases,ordinary_ai_cases,restricted_stock_pools,prize_cases,ending_cases);
 }
