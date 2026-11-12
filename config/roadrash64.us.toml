@@ -54,6 +54,11 @@ hook = [
     { func = "func_8003A758", before_vram = 0x8003A844, text = "rr64_ground_alignment_timing(rdram, ctx);" },
     # Offline campaign co-op retains native construction and a single prize.
     { func = "func_80073728", before_vram = 0x8007384C, text = "rr64_coop_roster(rdram);" },
+    # Campaign camera setup runs before construction resets the human count.
+    # Rebuild both native cameras once the co-op roster is ready; preserve caller registers.
+    { func = "func_80073728", before_vram = 0x80073850, text = "if (rr64_coop_split_camera(rdram)) { recomp_context camera = *ctx; camera.f_odd = &camera.f0.u32h; func_8005C320(rdram, &camera); }" },
+    # Results use the campaign camera callback again; retain the two-player layout.
+    { func = "func_8005C298", text = "if (rr64_coop_split_camera(rdram)) { func_8005C320(rdram, ctx); return; }" },
     { func = "func_80073728", before_vram = 0x800738E4, text = "rr64_coop_riders(rdram);" },
     { func = "func_80073540", before_vram = 0x8007361C, text = "ctx->r4 = (int32_t)rr64_coop_result_state(rdram,ctx->r4);" },
     { func = "func_80072E74", before_vram = 0x80072EB0, text = "ctx->r16 = (int32_t)rr64_coop_result_actor(rdram,ctx->r16);" },
@@ -405,6 +410,9 @@ hook = [
     { func = "func_80076290", text = "unsigned rr64_target_before_road = 0; if (rr64_online_traffic_owned()) return;" },
     { func = "func_80076290", before_vram = 0x80076AEC, text = "rr64_target_before_road = MEM_W(0x328, ctx->r19);" },
     { func = "func_80076290", before_vram = 0x80076BB0, text = "rr64_trace_traffic_target(rdram, (unsigned)ctx->r19, rr64_target_before_road);" },
+    # Bounded opt-in population evidence: final placement and native release.
+    { func = "func_8006BA88", before_vram = 0x8006BC40, text = "rr64_trace_traffic_lifecycle(rdram, (unsigned)ctx->r19, 5);" },
+    { func = "func_800464B8", text = "rr64_trace_traffic_lifecycle(rdram, (unsigned)ctx->r4, 6);" },
     { func = "func_80047668", before_vram = 0x80047760, text = "rr64_online_traffic_model(ctx);" },
     { func = "func_8006AFFC", before_vram = 0x8006B6B4, text = "rr64_engine_capture_race_update_boundary(rdram, 1);" },
     { func = "func_8006AFFC", before_vram = 0x8006B6FC, text = "rr64_engine_capture_race_update_boundary(rdram, 2); rr64_highlights_capture(rdram);" },

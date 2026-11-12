@@ -1,4 +1,3 @@
-#define SDL_MAIN_HANDLED
 #include "recompinput/profiles.h"
 #include "recompinput/input_binding.h"
 #include "recompinput/input_state.h"
@@ -45,30 +44,30 @@ static void check(bool result, const char* label) {
     ++checks;
     if (!result) { std::fprintf(stderr,"FAIL %u: %s (%s)\n",checks,label,SDL_GetError()); std::exit(1); }
 }
-struct Pad { SDL_GameController* controller; SDL_Joystick* joystick; SDL_JoystickID id; };
+struct Pad { SDL_Gamepad* controller; SDL_Joystick* joystick; SDL_JoystickID id; };
 static Pad pad(unsigned product) {
-    SDL_VirtualJoystickDesc d{}; d.version=SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
-    d.type=SDL_JOYSTICK_TYPE_GAMECONTROLLER; d.naxes=SDL_CONTROLLER_AXIS_MAX; d.nbuttons=SDL_CONTROLLER_BUTTON_MAX;
+    // RR64-SDL3: SDL_INIT_INTERFACE sets the struct version; attach returns an instance ID.
+    SDL_VirtualJoystickDesc d; SDL_INIT_INTERFACE(&d);
+    d.type=SDL_JOYSTICK_TYPE_GAMEPAD; d.naxes=SDL_GAMEPAD_AXIS_COUNT; d.nbuttons=SDL_GAMEPAD_BUTTON_COUNT;
     d.vendor_id=0x1209; d.product_id=static_cast<Uint16>(product);
-    d.axis_mask=(1u<<SDL_CONTROLLER_AXIS_MAX)-1; d.button_mask=(1u<<SDL_CONTROLLER_BUTTON_MAX)-1;
+    d.axis_mask=(1u<<SDL_GAMEPAD_AXIS_COUNT)-1; d.button_mask=(1u<<SDL_GAMEPAD_BUTTON_COUNT)-1;
     d.name="RR64 controller remap fixture";
-    const int index=SDL_JoystickAttachVirtualEx(&d); check(index>=0,"attach virtual SDL controller");
-    auto* c=SDL_GameControllerOpen(index); check(c!=nullptr,"open SDL controller");
-    auto* j=SDL_GameControllerGetJoystick(c); auto id=SDL_JoystickInstanceID(j);
+    const SDL_JoystickID index=SDL_AttachVirtualJoystick(&d); check(index!=0,"attach virtual SDL controller");
+    auto* c=SDL_OpenGamepad(index); check(c!=nullptr,"open SDL controller");
+    auto* j=SDL_GetGamepadJoystick(c); auto id=SDL_GetJoystickID(j);
     recompinput::add_controller_state(id,c); recompinput::poll_inputs(); return {c,j,id};
 }
 static void unplug(Pad& p) {
-    int index=-1;
-    for(int i=0;i<SDL_NumJoysticks();++i) if(SDL_JoystickGetDeviceInstanceID(i)==p.id) index=i;
-    check(index>=0,"find virtual device to detach");
+    // RR64-SDL3: detach takes the instance ID directly (SDL2 needed a device index).
+    check(p.id!=0,"find virtual device to detach");
     recompinput::remove_controller_state(p.id);
-    check(SDL_JoystickDetachVirtual(index)==0,"detach virtual controller");
-    SDL_GameControllerClose(p.controller); p={}; recompinput::poll_inputs();
+    check(SDL_DetachVirtualJoystick(p.id),"detach virtual controller");
+    SDL_CloseGamepad(p.controller); p={}; recompinput::poll_inputs();
 }
-static void axis(Pad& p, SDL_GameControllerAxis a, bool down, bool scan=false) {
+static void axis(Pad& p, SDL_GamepadAxis a, bool down, bool scan=false) {
     // SDL's virtual raw trigger starts at -32768; mapped controller value is 0..32767.
-    check(SDL_JoystickSetVirtualAxis(p.joystick,a,down?32767:-32768)==0,"set virtual trigger");
-    SDL_JoystickUpdate(); recompinput::poll_inputs();
+    check(SDL_SetJoystickVirtualAxis(p.joystick,a,down?32767:-32768),"set virtual trigger");
+    SDL_UpdateJoysticks(); recompinput::poll_inputs();
     if(scan) { SDL_Event e{}; while(SDL_PollEvent(&e)) fixture_input_event(&e); }
 }
 static unsigned buttons(int slot=0) {
@@ -87,7 +86,7 @@ static bool choose(int slot,int profile,recompinput::InputDevice device=recompin
     return recompinput::profiles::select_input_profile_for_player(slot,profile,device);
 #endif
 }
-static void bind_axis(int slot,Pad& p,recompinput::GameInput input,SDL_GameControllerAxis a) {
+static void bind_axis(int slot,Pad& p,recompinput::GameInput input,SDL_GamepadAxis a) {
     using namespace recompinput;
     SDL_Event stale; while(SDL_PollEvent(&stale)) {}
     binding::start_scanning(slot,input,0,InputDevice::Controller);
@@ -98,92 +97,92 @@ static void bind_axis(int slot,Pad& p,recompinput::GameInput input,SDL_GameContr
     axis(p,a,false); binding::stop_skipping_events();
 }
 static void verify_swap(Pad& p,int slot=0) {
-    axis(p,SDL_CONTROLLER_AXIS_TRIGGERLEFT,true);
+    axis(p,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,true);
     check((buttons(slot)&0x2010)==0x10,"LT now drives N64 R only");
-    axis(p,SDL_CONTROLLER_AXIS_TRIGGERLEFT,false);
-    axis(p,SDL_CONTROLLER_AXIS_TRIGGERRIGHT,true);
+    axis(p,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,false);
+    axis(p,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,true);
     check((buttons(slot)&0x2010)==0x2000,"RT now drives N64 Z only");
-    axis(p,SDL_CONTROLLER_AXIS_TRIGGERRIGHT,false);
+    axis(p,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,false);
 }
 static void verify_saved_c_bindings() {
     using namespace recompinput;
     const int sp=profiles::get_sp_controller_profile_index();
     const auto right=profiles::get_input_binding(sp,GameInput::C_RIGHT,0);
-    check(right==InputField::controller_analog(SDL_CONTROLLER_AXIS_LEFTY,false),
+    check(right==InputField::controller_analog(SDL_GAMEPAD_AXIS_LEFTY,false),
           "saved SP C-right left-stick-axis customization survives config loading");
     // These are the exact values the former startup migration overwrote.
     for (const auto& binding : {
-            std::pair{GameInput::C_LEFT,SDL_CONTROLLER_BUTTON_Y},
-            std::pair{GameInput::C_RIGHT,SDL_CONTROLLER_BUTTON_B},
-            std::pair{GameInput::C_UP,SDL_CONTROLLER_BUTTON_RIGHTSTICK},
-            std::pair{GameInput::C_DOWN,SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}}) {
+            std::pair{GameInput::C_LEFT,SDL_GAMEPAD_BUTTON_NORTH},
+            std::pair{GameInput::C_RIGHT,SDL_GAMEPAD_BUTTON_EAST},
+            std::pair{GameInput::C_UP,SDL_GAMEPAD_BUTTON_RIGHT_STICK},
+            std::pair{GameInput::C_DOWN,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER}}) {
         check(profiles::get_input_binding(sp,binding.first,1)==InputField::controller_digital(binding.second),
               "exact former startup-migration secondary binding survives loading");
     }
 }
-static void press(Pad& pad,SDL_GameControllerButton button,bool down) {
-    check(SDL_JoystickSetVirtualButton(pad.joystick,button,down)==0,"set virtual controller button");
-    SDL_JoystickUpdate(); recompinput::poll_inputs();
+static void press(Pad& pad,SDL_GamepadButton button,bool down) {
+    check(SDL_SetJoystickVirtualButton(pad.joystick,button,down),"set virtual controller button");
+    SDL_UpdateJoysticks(); recompinput::poll_inputs();
 }
 static void verify_default_c_actions(Pad& pad) {
     using namespace recompinput;
-    press(pad,SDL_CONTROLLER_BUTTON_RIGHTSTICK,true);
+    press(pad,SDL_GAMEPAD_BUTTON_RIGHT_STICK,true);
     check(profiles::get_action_input(0,GameInput::RR64_SPOKE_JAM),"fresh R3 still drives the dedicated spoke-jam action");
     check((buttons()&0x000f)==0,"fresh R3 does not also cycle weapons or send a C-button");
-    press(pad,SDL_CONTROLLER_BUTTON_RIGHTSTICK,false);
-    press(pad,SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,true);
+    press(pad,SDL_GAMEPAD_BUTTON_RIGHT_STICK,false);
+    press(pad,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,true);
     check(profiles::get_action_input(0,GameInput::RR64_WEAPON_TRICK),"fresh RB still drives the dedicated trick action");
     check((buttons()&0x000f)==0,"fresh RB does not also send a C attack");
-    press(pad,SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,false);
-    for(auto button:{SDL_CONTROLLER_BUTTON_Y,SDL_CONTROLLER_BUTTON_B}) {
+    press(pad,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,false);
+    for(auto button:{SDL_GAMEPAD_BUTTON_NORTH,SDL_GAMEPAD_BUTTON_EAST}) {
         press(pad,button,true);
         check((buttons()&0x000f)==0,"fresh face buttons do not duplicate right-stick C actions");
         press(pad,button,false);
     }
-    const struct { SDL_GameControllerAxis axis; Sint16 value; unsigned button; } directions[] = {
-        {SDL_CONTROLLER_AXIS_RIGHTX,-32768,0x2}, {SDL_CONTROLLER_AXIS_RIGHTX,32767,0x1},
-        {SDL_CONTROLLER_AXIS_RIGHTY,-32768,0x8}, {SDL_CONTROLLER_AXIS_RIGHTY,32767,0x4}};
+    const struct { SDL_GamepadAxis axis; Sint16 value; unsigned button; } directions[] = {
+        {SDL_GAMEPAD_AXIS_RIGHTX,-32768,0x2}, {SDL_GAMEPAD_AXIS_RIGHTX,32767,0x1},
+        {SDL_GAMEPAD_AXIS_RIGHTY,-32768,0x8}, {SDL_GAMEPAD_AXIS_RIGHTY,32767,0x4}};
     for(const auto& direction:directions) {
-        SDL_JoystickSetVirtualAxis(pad.joystick,direction.axis,direction.value); SDL_JoystickUpdate();
+        SDL_SetJoystickVirtualAxis(pad.joystick,direction.axis,direction.value); SDL_UpdateJoysticks();
         check((buttons()&0x000f)==direction.button,"fresh right-stick direction reaches exactly its native C-button");
-        SDL_JoystickSetVirtualAxis(pad.joystick,direction.axis,0); SDL_JoystickUpdate();
+        SDL_SetJoystickVirtualAxis(pad.joystick,direction.axis,0); SDL_UpdateJoysticks();
     }
 }
 static void verify_custom_c_actions(Pad& pad) {
-    const SDL_GameControllerButton button[]={SDL_CONTROLLER_BUTTON_Y,SDL_CONTROLLER_BUTTON_B,
-        SDL_CONTROLLER_BUTTON_RIGHTSTICK,SDL_CONTROLLER_BUTTON_RIGHTSHOULDER};
+    const SDL_GamepadButton button[]={SDL_GAMEPAD_BUTTON_NORTH,SDL_GAMEPAD_BUTTON_EAST,
+        SDL_GAMEPAD_BUTTON_RIGHT_STICK,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER};
     const unsigned native[]={0x2,0x1,0x8,0x4};
     for(unsigned i=0;i<4;++i) {
         press(pad,button[i],true);
         check((buttons()&0x000f)==native[i],"saved secondary customization reaches its native C action");
         press(pad,button[i],false);
     }
-    SDL_JoystickSetVirtualAxis(pad.joystick,SDL_CONTROLLER_AXIS_LEFTY,-32768); SDL_JoystickUpdate();
+    SDL_SetJoystickVirtualAxis(pad.joystick,SDL_GAMEPAD_AXIS_LEFTY,-32768); SDL_UpdateJoysticks();
     check((buttons()&0x000f)==0x1,"saved left-stick-up customization reaches C-right");
-    SDL_JoystickSetVirtualAxis(pad.joystick,SDL_CONTROLLER_AXIS_LEFTY,0); SDL_JoystickUpdate();
+    SDL_SetJoystickVirtualAxis(pad.joystick,SDL_GAMEPAD_AXIS_LEFTY,0); SDL_UpdateJoysticks();
 }
 int main(int argc,char** argv) {
     using namespace recompinput;
     check(argc==3,"mode and isolated config path supplied");
     const std::string mode=argv[1]; const std::filesystem::path file=argv[2];
-    SDL_SetMainReady(); SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,"1");
-    check(SDL_Init(SDL_INIT_GAMECONTROLLER)==0,"SDL input only initialization");
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,"1");
+    check(SDL_Init(SDL_INIT_GAMEPAD),"SDL input only initialization");
     PlayerState.single_player_mode=true;
     const bool reader=mode=="read";
     profiles::load_controls_config(reader ? file : std::filesystem::path(file.string()+".missing"));
     Pad one=pad(1),two=pad(2);
-    axis(one,SDL_CONTROLLER_AXIS_TRIGGERLEFT,false); axis(one,SDL_CONTROLLER_AXIS_TRIGGERRIGHT,false);
-    axis(two,SDL_CONTROLLER_AXIS_TRIGGERLEFT,false); axis(two,SDL_CONTROLLER_AXIS_TRIGGERRIGHT,false);
+    axis(one,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,false); axis(one,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,false);
+    axis(two,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,false); axis(two,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,false);
     if(mode=="defaults") {
         verify_default_c_actions(one); // Fresh pre-assignment SP profile.
         const int reset=profiles::add_input_profile("reset_fixture","Reset fixture",InputDevice::Controller,true);
         profiles::reset_profile_bindings(reset,InputDevice::Controller);
         assign(0,one,reset);
         verify_default_c_actions(one); // Newly created assigned/custom profile.
-        profiles::set_input_binding(reset,GameInput::C_UP,1,InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK));
+        profiles::set_input_binding(reset,GameInput::C_UP,1,InputField::controller_digital(SDL_GAMEPAD_BUTTON_RIGHT_STICK));
         profiles::reset_input_binding(reset,InputDevice::Controller,GameInput::C_UP);
         verify_default_c_actions(one); // Reset one action clears old secondaries.
-        profiles::set_input_binding(reset,GameInput::C_LEFT,1,InputField::controller_digital(SDL_CONTROLLER_BUTTON_Y));
+        profiles::set_input_binding(reset,GameInput::C_LEFT,1,InputField::controller_digital(SDL_GAMEPAD_BUTTON_NORTH));
         profiles::reset_profile_bindings(reset,InputDevice::Controller);
         verify_default_c_actions(one); // Full reset uses the same safe defaults.
         std::printf("PASS remap defaults: %u checks\n",checks); SDL_Quit(); return 0;
@@ -218,13 +217,13 @@ int main(int argc,char** argv) {
     profiles::add_controller(profiles::get_guid_from_sdl_controller(two.controller),other);
     assign(0,one,base); assign(1,two,other);
     check(choose(0,custom),"select custom profile through explicit UI API");
-    bind_axis(0,one,GameInput::Z,SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
-    bind_axis(0,one,GameInput::R,SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+    bind_axis(0,one,GameInput::Z,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    bind_axis(0,one,GameInput::R,SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
     verify_swap(one);
-    axis(two,SDL_CONTROLLER_AXIS_TRIGGERLEFT,true);
+    axis(two,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,true);
     check((buttons(1)&0x2010)==0x2000,"other device retains its original LT binding");
     check((buttons(0)&0x2010)==0,"other device does not drive player one");
-    axis(two,SDL_CONTROLLER_AXIS_TRIGGERLEFT,false);
+    axis(two,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,false);
     std::printf("PASS immediate actual frontend scanner -> SDL polling -> N64 LT/RT swap\n");
     if(mode=="write") {
         // Write a deliberately known association through the existing registry
@@ -236,11 +235,11 @@ int main(int argc,char** argv) {
         profiles::add_controller(a,custom); profiles::add_controller(b,base);
 #endif
         const int sp=profiles::get_sp_controller_profile_index();
-        profiles::set_input_binding(sp,GameInput::C_RIGHT,0,InputField::controller_analog(SDL_CONTROLLER_AXIS_LEFTY,false));
-        profiles::set_input_binding(sp,GameInput::C_LEFT,1,InputField::controller_digital(SDL_CONTROLLER_BUTTON_Y));
-        profiles::set_input_binding(sp,GameInput::C_RIGHT,1,InputField::controller_digital(SDL_CONTROLLER_BUTTON_B));
-        profiles::set_input_binding(sp,GameInput::C_UP,1,InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSTICK));
-        profiles::set_input_binding(sp,GameInput::C_DOWN,1,InputField::controller_digital(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER));
+        profiles::set_input_binding(sp,GameInput::C_RIGHT,0,InputField::controller_analog(SDL_GAMEPAD_AXIS_LEFTY,false));
+        profiles::set_input_binding(sp,GameInput::C_LEFT,1,InputField::controller_digital(SDL_GAMEPAD_BUTTON_NORTH));
+        profiles::set_input_binding(sp,GameInput::C_RIGHT,1,InputField::controller_digital(SDL_GAMEPAD_BUTTON_EAST));
+        profiles::set_input_binding(sp,GameInput::C_UP,1,InputField::controller_digital(SDL_GAMEPAD_BUTTON_RIGHT_STICK));
+        profiles::set_input_binding(sp,GameInput::C_DOWN,1,InputField::controller_digital(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
         check(profiles::save_controls_config(file),"save real profile JSON");
         nlohmann::json encoded; { std::ifstream in(file); in>>encoded; }
         auto invalid=encoded.at("controllers").front();
@@ -254,25 +253,25 @@ int main(int argc,char** argv) {
     if(mode=="stale") {
         binding::start_scanning(0,GameInput::Z,0,InputDevice::Controller);
         profiles::set_input_profile_for_player(0,base,InputDevice::Controller);
-        binding::set_scanned_input(InputField::controller_analog(SDL_CONTROLLER_AXIS_TRIGGERRIGHT));
-        check(profiles::get_input_binding(base,GameInput::Z,0).input_id==SDL_CONTROLLER_AXIS_TRIGGERLEFT+1,
+        binding::set_scanned_input(InputField::controller_analog(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+        check(profiles::get_input_binding(base,GameInput::Z,0).input_id==SDL_GAMEPAD_AXIS_LEFT_TRIGGER+1,
               "stale scanner cannot overwrite a newly assigned profile");
         profiles::set_input_profile_for_player(0,custom,InputDevice::Controller);
         binding::start_scanning(0,GameInput::Z,0,InputDevice::Controller);
         slots[0].controller=two.controller;
-        binding::set_scanned_input(InputField::controller_analog(SDL_CONTROLLER_AXIS_TRIGGERLEFT));
-        check(profiles::get_input_binding(custom,GameInput::Z,0).input_id==SDL_CONTROLLER_AXIS_TRIGGERRIGHT+1,
+        binding::set_scanned_input(InputField::controller_analog(SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+        check(profiles::get_input_binding(custom,GameInput::Z,0).input_id==SDL_GAMEPAD_AXIS_RIGHT_TRIGGER+1,
               "stale scanner cannot write after a physical controller swap with same profile");
         slots[0].controller=one.controller;
         check(!binding::is_binding(),"invalidated scan is cancelled");
-        binding::set_scanned_input(InputField::controller_analog(SDL_CONTROLLER_AXIS_TRIGGERLEFT));
-        check(profiles::get_input_binding(custom,GameInput::Z,0).input_id==SDL_CONTROLLER_AXIS_TRIGGERRIGHT+1,
+        binding::set_scanned_input(InputField::controller_analog(SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+        check(profiles::get_input_binding(custom,GameInput::Z,0).input_id==SDL_GAMEPAD_AXIS_RIGHT_TRIGGER+1,
               "late events after cancellation cannot change the prior binding");
         binding::start_scanning(0,GameInput::Z,0,InputDevice::Controller);
         unplug(one); // Deliberately keep its closed handle in the slot until reconciliation.
-        binding::set_scanned_input(InputField::controller_analog(SDL_CONTROLLER_AXIS_TRIGGERLEFT));
+        binding::set_scanned_input(InputField::controller_analog(SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
         check(!binding::is_binding(),"queued event after device closure safely cancels scanning");
-        check(profiles::get_input_binding(custom,GameInput::Z,0).input_id==SDL_CONTROLLER_AXIS_TRIGGERRIGHT+1,
+        check(profiles::get_input_binding(custom,GameInput::Z,0).input_id==SDL_GAMEPAD_AXIS_RIGHT_TRIGGER+1,
               "removed controller cannot commit a queued binding");
         binding::start_scanning(0,GameInput::Z,0,InputDevice::Controller);
         check(!binding::is_binding(),"closed handle cannot start a new scan");
@@ -296,11 +295,11 @@ int main(int argc,char** argv) {
           "custom profile survives controller reassignment");
     verify_swap(one);
     unplug(one); slots[0]={}; slots.recount(); one=pad(1);
-    axis(one,SDL_CONTROLLER_AXIS_TRIGGERLEFT,false); axis(one,SDL_CONTROLLER_AXIS_TRIGGERRIGHT,false);
+    axis(one,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,false); axis(one,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,false);
     check(players::select_player_device(0,one.controller),"reassign reconnected controller");
     check(profiles::get_input_profile_for_player(0,InputDevice::Controller)==custom,"custom profile survives reconnect");
     verify_swap(one);
-    Pad twin=pad(2); axis(twin,SDL_CONTROLLER_AXIS_TRIGGERLEFT,false); axis(twin,SDL_CONTROLLER_AXIS_TRIGGERRIGHT,false);
+    Pad twin=pad(2); axis(twin,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,false); axis(twin,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,false);
     assign(2,twin,other);
     check(choose(2,custom),"second same-GUID pad selects separate session layout");
     check(profiles::get_input_profile_for_player(1,InputDevice::Controller)==other,"same GUID selection does not replace other slot");
@@ -308,9 +307,9 @@ int main(int argc,char** argv) {
     playerassignment::commit_player_assignment();
     check(profiles::get_input_profile_for_player(1,InputDevice::Controller)==other &&
           profiles::get_input_profile_for_player(2,InputDevice::Controller)==custom,"assignment commit preserves separate same-GUID sessions");
-    axis(two,SDL_CONTROLLER_AXIS_TRIGGERLEFT,true);
+    axis(two,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,true);
     check((buttons(1)&0x2010)==0x2000,"same-GUID first pad keeps default controls");
-    axis(two,SDL_CONTROLLER_AXIS_TRIGGERLEFT,false); verify_swap(twin,2);
+    axis(two,SDL_GAMEPAD_AXIS_LEFT_TRIGGER,false); verify_swap(twin,2);
 #ifndef OLD_ASSOCIATION
     check(!choose(-1,custom) && !choose(4,custom),"invalid player selection rejected");
     check(!choose(0,-1) && !choose(0,profiles::get_input_profile_count()),"missing layout rejected");

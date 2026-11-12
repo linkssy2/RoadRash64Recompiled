@@ -13,7 +13,7 @@ This project exists because of the original Road Rash 64 development team and th
 | [BanjoRecomp](https://github.com/BanjoRecomp/BanjoRecomp) | BanjoRecomp contributors | Generic frontend SVG icon provenance recorded in this project |
 | [Plume](https://github.com/renderbag/plume) | renderbag and contributors | Graphics abstraction |
 | [RmlUi](https://github.com/mikke89/RmlUi) | RmlUi contributors | User-interface rendering/layout |
-| [SDL](https://github.com/libsdl-org/SDL) | SDL authors and contributors | Windows, input, audio and controller support |
+| [SDL](https://github.com/libsdl-org/SDL) | SDL authors and contributors | Windows, input, audio and controller support (SDL3) |
 | [Opus](https://opus-codec.org/) | Xiph.Org and the authors named in the Opus license | Experimental proximity-voice codec |
 | [FreeType](https://freetype.org/) | FreeType Project | Font rasterization; portions of this software use FreeType under the FreeType License |
 | [lunasvg / plutovg](https://github.com/sammycage/lunasvg) | Samuel Ugochukwu and contributors | SVG/vector support |
@@ -47,6 +47,14 @@ shutdown diagnosis and AppImage packaging work in PR #4. The contributor disclos
 substantial Claude AI assistance and reported Fedora and Steam Deck testing. This
 experimental integration carries later Road Rash fixes and additional packaging
 changes; that earlier testing does not establish acceptance of this binary.
+
+## SIMD and SDL3 contributions
+
+[ClickClick5](https://github.com/ClickClick5) contributed the SIMD renderer work in
+[PR #41](https://github.com/linkssy2/RoadRash64Recompiled/pull/41) and the SDL3
+migration in [PR #42](https://github.com/linkssy2/RoadRash64Recompiled/pull/42).
+Both changes are integrated in this development source. Windows and Linux
+builds and focused SIMD/controller checks have passed; in-game testing remains.
 
 ## Optional MK64 course import
 

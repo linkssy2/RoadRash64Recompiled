@@ -23,6 +23,11 @@ multiplayer selector, reserve two humans before actor allocation, and redirect
 native award readers to the best finished human. Original campaign arithmetic,
 save serialization, chapter advancement and endings remain in use.
 
+The campaign camera callback normally selects one viewport. Co-op initializes
+the native two-player cameras after its human roster is ready and retains them
+when entering race results. Menus keep their original camera; highlights still
+borrow one full-screen camera temporarily and restore the race layout.
+
 The selector temporarily borrows the campaign course state and native shop's
 scratch bike entry. The course descriptor, level and track are restored on
 confirmation or cancellation. The two-player roster stays within 14 actors.
@@ -39,6 +44,12 @@ including a busted owner with a qualifying partner. It compares the resulting
 profile against exactly one original payout. Existing campaign bike/save, local
 options and audio checks are also run. Build identities and results live in root
 `analysis/biggame-coop-20261013/`.
+
+The November 8 regression also runs the original mode dispatcher, camera
+initializers and viewport calculation. Its negative control reproduces two
+humans sharing one view; the repaired path yields the native two-player layout
+for all six campaign chapters. See `analysis/issues-32-35-36-38/issue38-implementation.md`
+at the workspace root for verification limits.
 
 The owner tested the feature candidate successfully. Before relying on a campaign save, verify both controllers and
 previews, a normal finish, each player's bust/wreck while the other continues,

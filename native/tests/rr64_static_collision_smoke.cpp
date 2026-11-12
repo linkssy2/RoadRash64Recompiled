@@ -1,8 +1,8 @@
 #include "rr64_engine_layout.hpp"
 #include "rr64_online_terrain.hpp"
-#include "rr64_traffic_roster.hpp"
 #include "rr64_prediction_replay.hpp"
 #include "rr64_netplay.hpp"
+#include "rr64_traffic_lifetime.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -23,13 +24,18 @@ extern "C" void func_8001BD50(unsigned char*, recomp_context*);
 extern "C" void func_80034370(unsigned char*, recomp_context*);
 extern "C" void func_80014604(unsigned char*, recomp_context*);
 extern "C" void func_80014DE4(unsigned char*, recomp_context*);
-extern "C" void func_80075EA0(unsigned char*, recomp_context*);
-extern "C" void rr64_traffic_retirement_decision(unsigned char*, recomp_context*);
+extern "C" void rr64_trace_traffic_floor(unsigned char*,unsigned,unsigned,unsigned,int) {}
+extern "C" void rr64_trace_traffic_lifecycle(unsigned char*,unsigned,unsigned) {}
+extern "C" void func_80075EA0(unsigned char*,recomp_context*);
+extern "C" void func_80046488(unsigned char*,recomp_context*);
+extern "C" void func_800464B8(unsigned char*,recomp_context*);
+extern "C" void rr64_native_traffic_floor_retire(unsigned char*,recomp_context*);
 namespace {
 std::vector<unsigned char> rom, captured;
 unsigned failures = 0, responses = 0;
 unsigned actor_kind=2, body_offset=0x28;
 bool imported=false;
+bool highlights=false;
 rr64::netplay::PhysicsRules rules{};
 unsigned imported_header=0x2000000;
 constexpr unsigned grid=0x80100000, objects=0x80120000, terrain=0x80200000,
@@ -263,7 +269,8 @@ void results_collision(){
 }
 void results_floors(){
     struct Floor { unsigned hit,height,surface;bool operator==(const Floor&)const=default; };
-    const auto floor=[](std::vector<unsigned char>& m,Vec point,unsigned query=0x80400000){
+    const auto floor=[](std::vector<unsigned char>& m,Vec point){
+        constexpr unsigned query=0x80400000;
         std::memset(m.data()+query-kRdramBegin,0,0x6c);
         auto c=context();c.f_odd=&c.f0.u32h;c.r4=guest_address(query);
         func_80014604(m.data(),&c);
@@ -280,75 +287,6 @@ void results_floors(){
             auto resident=image(s,true);const auto expected=floor(resident,point);
             if(!expected.hit)continue;
             ++supported;
-            if (supported == 1) {
-                constexpr unsigned car = 0x80410000;
-                unsigned traffic_checks = 0;
-                for (unsigned mode : {0x9u, 0x12u, 0x17u, 0x1cu, 0x1du, 0x14u}) {
-                    auto traffic = image(s, false); prepare(traffic);
-                    write_u32(traffic.data(), globals::main_mode, mode);
-                    write_u32(traffic.data(), globals::pending_mode, mode);
-                    for (unsigned slot = 0; slot < rr64::traffic::capacity; ++slot) {
-                        write_u32(traffic.data(), car + 0x28, slot);
-                        write_u32(traffic.data(), rr64::traffic::table(traffic.data()) + slot * 4, car);
-                        for (unsigned offset : {0x238u, 0x2a4u}) {
-                            check(!floor(traffic, point, car + offset).hit,
-                                  "unloaded traffic axle retains native retirement signal in every slot");
-                            ++traffic_checks;
-                        }
-                        write_u32(traffic.data(), rr64::traffic::table(traffic.data()) + slot * 4, 0);
-                    }
-                    check(floor(traffic, point) == expected, "riders keep off-screen floor support");
-                    check(floor(traffic, point, car + 0x238) == expected,
-                          "unregistered axle-shaped address is not classified as traffic");
-                    write_u32(traffic.data(), car + 0x28, 20);
-                    write_u32(traffic.data(), rr64::traffic::table(traffic.data()) + 20 * 4, car);
-                    check(floor(traffic, point, car + 0x238) == expected,
-                          "traffic owner authentication rejects out-of-bounds roster index");
-                    write_u32(traffic.data(), car + 0x28, 0);
-                    write_u32(traffic.data(), rr64::traffic::table(traffic.data()), car);
-                    copy(traffic, terrain, s.source, s.bytes);
-                    write_u32(traffic.data(), grid + s.cell * 16, terrain);
-                    write_s8(traffic.data(), grid + s.cell * 16 + 12, 5);
-                    for (unsigned offset : {0x238u, 0x2a4u})
-                        check(floor(traffic, point, car + offset) == expected,
-                              "resident traffic axle keeps exact native floor height and surface");
-                    for (unsigned kind = 0; kind < 6; ++kind) {
-                        const unsigned original_car = word(captured, 0x800d76e0);
-                        check(valid_guest_range(original_car, 0x360), "captured native traffic template is valid");
-                        if (!valid_guest_range(original_car, 0x360)) continue;
-                        for (bool resident : {true, false}) {
-                            std::copy_n(captured.data() + original_car - kRdramBegin, 0x360,
-                                        traffic.data() + car - kRdramBegin);
-                            write_u32(traffic.data(), car, kind);
-                            write_u32(traffic.data(), car + 0x28, 0);
-                            write_u16(traffic.data(), car + 0x334, 1);
-                            write_u32(traffic.data(), 0x800a652c, 3);
-                            vector(traffic, car + 0xd0, point);
-                            write_s8(traffic.data(), grid + s.cell * 16 + 12, resident ? 5 : 1);
-                            for (unsigned offset : {0x238u, 0x2a4u}) {
-                                auto c = context(); c.f_odd = &c.f0.u32h; c.r4 = guest_address(car + offset);
-                                func_80014604(traffic.data(), &c);
-                            }
-                            auto c = context(); c.f_odd = &c.f0.u32h; c.r4 = guest_address(car);
-                            func_80075EA0(traffic.data(), &c);
-                            unsigned short retired = 0, active = 0;
-                            read_u16(traffic.data(), car + 0x336, retired);
-                            check(retired == !resident, "real native axle routine requests retirement only after terrain eviction");
-                            c.r19 = guest_address(car);
-                            rr64_traffic_retirement_decision(traffic.data(), &c);
-                            read_u16(traffic.data(), car + 0x334, active);
-                            check(active == resident, "native retirement decision deactivates departed traffic");
-                            check(word(traffic, 0x800a652c) == (kind == 4 && !resident ? 2u : 3u),
-                                  "native police-car capacity is released exactly once");
-                            rr64_traffic_retirement_decision(traffic.data(), &c);
-                            check(word(traffic, 0x800a652c) == (kind == 4 && !resident ? 2u : 3u),
-                                  "repeating retirement does not decrement police capacity again");
-                        }
-                    }
-                }
-                std::cout << "traffic_retirement axle_checks=" << traffic_checks
-                          << " modes=6 slots=20 native_ground_cases=72 vehicle_types=6\n";
-            }
             for(unsigned mode:{0xbu,0x14u,0x19u,0x1eu}){
                 auto fixed=image(s,false);prepare(fixed);
                 write_u32(fixed.data(),globals::main_mode,mode);write_u32(fixed.data(),globals::pending_mode,mode);
@@ -369,6 +307,172 @@ void results_floors(){
     check(supported!=0,"authored terrain supplies actual result floor contacts");
     std::cout<<"results_floor supported_points="<<supported<<" result_modes=4\n";
 }
+void traffic_lifetimes(){
+    constexpr unsigned cars=0x80340000, car_stride=0x360, human=0x800D8570,
+                       progress=0x80350000, count=0x800A6528, free_head=0x800A1438,
+                       allocated=0x800A1448;
+    const auto half=[](auto& m,unsigned a){std::uint16_t v=0;read_u16(m.data(),a,v);return v;};
+    const auto initialize_car=[&](auto& m,unsigned car,unsigned index,Vec point,float route){
+        std::memset(m.data()+car-kRdramBegin,0,car_stride);
+        write_u32(m.data(),car+0x28,index);write_float(m.data(),car+0x24,route);
+        write_float(m.data(),car+0x2C,2);write_float(m.data(),car+0x4C,2);
+        write_float(m.data(),car+0x104,1);vector(m,car+0xD0,point);
+        write_u16(m.data(),car+0x334,1);
+        for(unsigned offset:{0x238u,0x2A4u}){
+            auto c=context();c.f_odd=&c.f0.u32h;c.r4=guest_address(car+offset);
+            func_80014604(m.data(),&c);
+            vector(m,car+offset,{point[0]*4,point[1]*4,point[2]*4});
+        }
+    };
+    const auto query=[&](auto& m,unsigned car){
+        auto c=context();c.f_odd=&c.f0.u32h;c.r4=guest_address(car);
+        func_80075EA0(m.data(),&c);return half(m,car+0x336)==0;
+    };
+    // Locate a real authored floor under both native axle queries, without
+    // inventing collision geometry or stubbing the floor result.
+    Source selected{};Vec point{};bool found=false;
+    for(unsigned cell:{1096u,1271u,1272u,1341u,1342u}){
+        const auto s=source(cell);if(!s.bytes)continue;
+        auto resident=image(s,true);
+        for(float dx:{125.f,20.f,240.f})for(float dy:{125.f,20.f,240.f})for(float z:{150.f,75.f,25.f}){
+            if(found)continue;
+            const Vec p{float(cell/70)*250-8750+dx,float(cell%70)*250-8750+dy,z};
+            initialize_car(resident,cars,0,p,1000);
+            if(query(resident,cars)){selected=s;point=p;found=true;}
+        }
+        if(found)break;
+    }
+    check(found,"native traffic fixture has an authored floor beneath both axles");if(!found)return;
+    auto base=image(selected,false);prepare(base);
+    write_u32(base.data(),free_head,cars);write_u32(base.data(),allocated,0);write_u32(base.data(),count,0);
+    for(unsigned i=0;i<20;++i)write_u32(base.data(),cars+i*car_stride+0x35C,i==19?0:cars+(i+1)*car_stride);
+    for(unsigned i=0;i<20;++i){
+        auto c=context();func_80046488(base.data(),&c);
+        const unsigned car=unsigned(c.r2);check(car==cars+i*car_stride,"native car allocator follows its bounded free list");
+        initialize_car(base,car,i,point,2000);
+        write_u32(base.data(),rr64::traffic::table(base.data())+i*4,car);write_u32(base.data(),count,i+1);
+    }
+    auto full=context();func_80046488(base.data(),&full);
+    check(!full.r2 && word(base,allocated)==20 && word(base,count)==20,"native 20-car capacity remains unchanged");
+    const auto set_human=[&](auto& m,unsigned slot,float local){
+        const unsigned a=human+slot*0x118,p=progress+slot*0x64;
+        write_u32(m.data(),a+8,slot%4);write_u16(m.data(),a+0x24,1);write_u16(m.data(),a+0x26,0);
+        write_u32(m.data(),a+0xE8,p);write_u16(m.data(),p+0x48,1);write_u32(m.data(),p+0x4C,0);
+        write_u16(m.data(),p+0x50,0);write_float(m.data(),p+0x20,local);
+        write_float(m.data(),p+8,0);write_float(m.data(),p+0xC,0);
+    };
+    const auto window=[](auto& m,unsigned view,unsigned counter,unsigned cell){
+        write_u32(m.data(),0x800A7704+view*4,counter);
+        const unsigned record=0x800DDEB0+((counter-1)%3)*0x3F0+view*0xFC;
+        write_u32(m.data(),record,grid+cell*16);write_u32(m.data(),record+0xF8,1);
+    };
+    write_u32(base.data(),0x8009DB88,1);window(base,0,1,0);
+    write_u32(base.data(),0x800A656C,1);set_human(base,0,1000);
+    write_float(base.data(),0x800D762C,10000);write_float(base.data(),0x800D7630,10000);
+    const auto allowed=[&](auto& m){
+        const bool front=rr64::traffic::allow_floor_fallback(m.data(),cars+0x238);
+        check(front==rr64::traffic::allow_floor_fallback(m.data(),cars+0x2A4),"both axles share one traffic lifetime decision");
+        return front;
+    };
+    check(rr64::traffic::floor_owner(base.data(),cars+0x238)==cars &&
+          rr64::traffic::floor_owner(base.data(),cars+0x2A4)==cars,"both traffic axle owners authenticate");
+    check(!rr64::traffic::floor_owner(base.data(),cars+0x23C),"ordinary query is not a traffic axle");
+    for(float route:{2000.f,std::nextafter(2000.f,std::numeric_limits<float>::infinity())}){
+        auto m=base;write_float(m.data(),cars+0x24,route);
+        check(allowed(m),"fresh birth at full native plus extended reach survives float rounding");
+        prepare(m);check(query(m,cars),"fresh unloaded birth receives actual native floor support");
+    }
+    for(float route:{999.f,2001.f,10001.f}){
+        auto m=base;write_float(m.data(),cars+0x24,route);
+        check(!allowed(m),"departed, beyond-reach and beyond-finish traffic cannot retain permanent floors");
+    }
+    auto departed=base;write_float(departed.data(),cars+0x24,500);
+    for(unsigned counter:{1u,2u,3u,4u}){
+        auto m=departed;window(m,0,counter,selected.cell);
+        check(allowed(m),"all three rotating native viewport records protect nearby traffic");
+    }
+    {
+        auto m=departed;write_u32(m.data(),0x8009DB88,2);window(m,1,2,selected.cell);
+        check(allowed(m),"a separated second local viewport retains its traffic");
+        window(m,1,2,1);check(!allowed(m),"traffic departed from every local view can retire");
+    }
+    {
+        auto m=departed;write_u32(m.data(),0x800A656C,14);set_human(m,13,0);
+        check(allowed(m),"late-slot eligible human protects upcoming traffic");
+        write_u16(m.data(),human+13*0x118+0x26,1);check(!allowed(m),"AI progress cannot protect an upcoming car");
+        write_u16(m.data(),human+13*0x118+0x26,0);write_u16(m.data(),progress+13*0x64+0x50,1);
+        check(!allowed(m),"finished human does not preserve upcoming traffic");
+        write_u16(m.data(),progress+13*0x64+0x50,0);write_u32(m.data(),progress+13*0x64+0x4C,1);
+        check(!allowed(m),"excluded human does not preserve upcoming traffic");
+    }
+    {
+        auto m=base;set_human(m,0,9500);write_float(m.data(),cars+0x24,500);
+        check(!allowed(m),"upcoming birth grace must not wrap backward around the finish");
+        write_float(m.data(),progress+0x20,9990);write_float(m.data(),progress+8,1);write_float(m.data(),progress+0xC,20);
+        check(allowed(m),"native end-crossing progress is compared in local lap coordinates");
+    }
+    for(unsigned damage=0;damage<7;++damage){
+        auto m=departed;
+        if(damage==0)write_u32(m.data(),0x8009DB88,0);
+        if(damage==1)write_u32(m.data(),0x800A7704,0);
+        if(damage==2)write_u32(m.data(),0x800DDEB0+0xF8,0);
+        if(damage==3)write_u32(m.data(),0x800DDEB0+0xF8,32);
+        if(damage==4)write_u32(m.data(),0x800DDEB0,grid+1);
+        if(damage==5)write_u32(m.data(),0x800DDEB0,grid+4900*16);
+        if(damage==6)write_float(m.data(),cars+0xD0,std::numeric_limits<float>::quiet_NaN());
+        check(allowed(m),"incomplete or malformed native streaming evidence fails open");
+    }
+    for(unsigned axle:{0x238u,0x2A4u}){
+        auto m=departed;
+        vector(m,cars+axle,{-34990,-34990,0});write_s8(m.data(),grid+12,5);
+        check(allowed(m),"either genuinely resident axle protects the whole vehicle");
+        vector(m,cars+axle,{point[0]*4,point[1]*4,point[2]*4});
+        check(!allowed(m),"stale resident axle protects only until its coordinates leave that cell");
+    }
+    for(unsigned invalid=0;invalid<4;++invalid){
+        auto m=departed;
+        if(invalid==0)write_u32(m.data(),count,21);
+        if(invalid==1)write_u32(m.data(),cars+0x28,20);
+        if(invalid==2)write_u32(m.data(),rr64::traffic::table(m.data()),cars+car_stride);
+        if(invalid==3)write_u32(m.data(),human+0xE8,0);
+        check(allowed(m),"invalid membership or human progress cannot delete a car");
+    }
+    for(unsigned exclusion=0;exclusion<4;++exclusion){
+        auto m=departed;prepare(m);
+        if(exclusion==0){write_u32(m.data(),globals::main_mode,0x19);write_u32(m.data(),globals::pending_mode,0x19);}
+        if(exclusion==1)highlights=true;
+        if(exclusion==2){rules.active=rules.connected=rules.authoritative=true;rules.phase=rr64::netplay::Phase::Race;}
+        if(exclusion==3){
+            rr64::prediction::ReplayScope scope;
+            check(rr64::online_terrain::bind_replay(m.data(),rom),"private traffic floor binds its own bank");
+            check(query(m,cars),"private prediction preserves original floor support");
+        }else check(query(m,cars),"results/highlights/online preserve original floor support");
+        highlights=false;rules={};
+    }
+    // Native floor -> native active clear -> real free/reallocation. The
+    // compacted roster setup mirrors the consumer tested in HighlightTrafficSmoke.
+    auto cycling=base;prepare(cycling);
+    for(unsigned birth=0;birth<64;++birth){
+        const unsigned index=birth%20,car=rr64::traffic::entity(cycling.data(),index);
+        write_float(cycling.data(),car+0x24,500);
+        check(!query(cycling,car),"departed unloaded car loses both native floor support");
+        auto c=context();c.r19=guest_address(car);rr64_native_traffic_floor_retire(cycling.data(),&c);
+        check(!half(cycling,car+0x334),"native floor-loss branch retires the car");
+        c=context();c.r4=guest_address(car);func_800464B8(cycling.data(),&c);
+        check(word(cycling,allocated)==19 && word(cycling,car+0x28)==~0u,"native release returns allocation and invalidates owner");
+        const unsigned tail=rr64::traffic::entity(cycling.data(),19);
+        if(index!=19){write_u32(cycling.data(),rr64::traffic::table(cycling.data())+index*4,tail);write_u32(cycling.data(),tail+0x28,index);}
+        write_u32(cycling.data(),count,19);
+        check(!rr64::traffic::floor_owner(cycling.data(),car+0x238),"released stale axle cannot retain traffic ownership");
+        if(index!=19)check(rr64::traffic::floor_owner(cycling.data(),tail+0x238)==tail,"compacted live member retains authenticated ownership");
+        c=context();func_80046488(cycling.data(),&c);check(unsigned(c.r2)==car,"native allocator reuses retired slot");
+        initialize_car(cycling,car,19,point,2000);
+        write_u32(cycling.data(),rr64::traffic::table(cycling.data())+19*4,car);write_u32(cycling.data(),count,20);
+        check(query(cycling,car) && word(cycling,allocated)==20,"replacement births retain floor while pool remains capped at20");
+    }
+    grids_unchanged(base,cycling);
+    std::cout<<"traffic_lifetime native_allocations=84 reused_slots=64 capacity=20 two_axles=1 scope_exclusions=4\n";
+}
 }
 namespace recomp{std::span<const std::uint8_t> get_rom(){return rom;}}
 namespace rr64::netplay{PhysicsRules get_physics_rules(){return rules;}}
@@ -384,6 +488,7 @@ extern "C" void func_8004E754(unsigned char*,recomp_context*){std::abort();}
 // Stock floor cases: only the unrelated camera observer/imported indexing are
 // boundaries; original floor arithmetic and production terrain bank are real.
 extern "C" void rr64_highlight_camera_floor_cell(unsigned char*,void*){}
+extern "C" int rr64_highlights_presenting(){return highlights;}
 extern "C" void rr64_experimental_course_floor_indices(unsigned char*,void*){}
 extern "C" void rr64_experimental_course_floor_subindices(unsigned char*,void*){}
 extern "C" int rr64_experimental_course_floor_cell_allowed(unsigned){return 1;}
@@ -458,5 +563,6 @@ int main(int argc,char** argv){
     combined_bank_and_imported_scope();
     results_collision();
     results_floors();
+    traffic_lifetimes();
     std::cout<<"Static collision smoke: cases="<<cases<<" contacts="<<contact_cases<<" failures="<<failures<<'\n';return failures?1:0;
 }

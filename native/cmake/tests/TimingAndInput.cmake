@@ -81,9 +81,8 @@ add_executable(RR64ControllerSmoke EXCLUDE_FROM_ALL tests/rr64_controller_smoke.
 target_compile_features(RR64ControllerSmoke PRIVATE cxx_std_20)
 target_include_directories(RR64ControllerSmoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/RecompFrontend/recompinput/include/recompinput"
-    $<TARGET_PROPERTY:recompinput,INCLUDE_DIRECTORIES> "${RR64_SDL2_INCLUDE_DIRS}")
-target_link_directories(RR64ControllerSmoke PRIVATE ${RR64_SDL2_LIB_DIRS})
-target_link_libraries(RR64ControllerSmoke PRIVATE ${RR64_SDL2_TARGET})
+    $<TARGET_PROPERTY:recompinput,INCLUDE_DIRECTORIES> "${RR64_SDL_INCLUDE_DIRS}")
+target_link_libraries(RR64ControllerSmoke PRIVATE ${RR64_SDL_TARGET})
 include(tests/rr64_controller_remap_fixture.cmake)
 add_executable(RR64LocalRaceOptionsSmoke EXCLUDE_FROM_ALL tests/rr64_local_race_options_smoke.cpp src/rr64_campaign_coop.cpp src/rr64_local_race_options.cpp src/rr64_thrash_options.cpp src/rr64_custom_cop.cpp src/rr64_custom_cop_runtime.cpp)
 include(tests/rr64_mk64_item_options_fixture.cmake)

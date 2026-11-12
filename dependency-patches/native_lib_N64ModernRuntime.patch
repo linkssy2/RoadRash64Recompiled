@@ -1,5 +1,5 @@
 diff --git a/librecomp/include/librecomp/game.hpp b/librecomp/include/librecomp/game.hpp
-index 7f1533e..28334ec 100644
+index 7f1533ec875e62049fd92541abf711a75ac21774..28334ec4b75decdd1060a4c18b053322b34a937f 100644
 --- a/librecomp/include/librecomp/game.hpp
 +++ b/librecomp/include/librecomp/game.hpp
 @@ -96,6 +96,10 @@ namespace recomp {
@@ -14,7 +14,7 @@ index 7f1533e..28334ec 100644
      /**
       * The following arguments contain mandatory callbacks that need to be registered (i.e., can't be `nullptr`):
 diff --git a/librecomp/include/librecomp/mods.hpp b/librecomp/include/librecomp/mods.hpp
-index 37556bd..13fb34b 100644
+index 37556bda999144ac8b33c6c937af18a5c4db98ac..13fb34b24e3b946a84a45dc398d8aef66846e7ce 100644
 --- a/librecomp/include/librecomp/mods.hpp
 +++ b/librecomp/include/librecomp/mods.hpp
 @@ -277,6 +277,17 @@ namespace recomp {
@@ -66,7 +66,7 @@ index 37556bd..13fb34b 100644
          void scan_mods();
          void close_mods();
 diff --git a/librecomp/src/ai.cpp b/librecomp/src/ai.cpp
-index 0195f2b..8c82d68 100644
+index 0195f2b082c6aafd0abd727d6f236c63f291ea2c..8c82d68206da481fb3f67dd2a82fa4c186d5d647 100644
 --- a/librecomp/src/ai.cpp
 +++ b/librecomp/src/ai.cpp
 @@ -1,6 +1,4 @@
@@ -77,7 +77,7 @@ index 0195f2b..8c82d68 100644
  #include <ultramodern/ultramodern.hpp>
  
 diff --git a/librecomp/src/cont.cpp b/librecomp/src/cont.cpp
-index 7ad6c21..69d43e2 100644
+index 7ad6c21e4965473483fcece1771e82b81a76979c..69d43e2b226577503c93058dc7344303cd7e992f 100644
 --- a/librecomp/src/cont.cpp
 +++ b/librecomp/src/cont.cpp
 @@ -1,4 +1,8 @@
@@ -137,7 +137,7 @@ index 7ad6c21..69d43e2 100644
      }
  }
 diff --git a/librecomp/src/heap.cpp b/librecomp/src/heap.cpp
-index f84ac71..2c7bcb2 100644
+index f84ac71497570388bce15945a4e4ec4fabf7c3f6..2c7bcb2a8853e0be2a1b9a17799711b14e88a42c 100644
 --- a/librecomp/src/heap.cpp
 +++ b/librecomp/src/heap.cpp
 @@ -3,6 +3,7 @@
@@ -160,7 +160,7 @@ index f84ac71..2c7bcb2 100644
      o1heapInit(&rdram[heap_offset], heap_size);
  }
 diff --git a/librecomp/src/mods.cpp b/librecomp/src/mods.cpp
-index 0f7de83..9dc5aec 100644
+index 0f7de8310dc2de055d9d2e0c8b7f6dc4fc708677..9dc5aecde21039d8c61e7f38939c705f9299b90c 100644
 --- a/librecomp/src/mods.cpp
 +++ b/librecomp/src/mods.cpp
 @@ -10,6 +10,7 @@
@@ -315,7 +315,7 @@ index 0f7de83..9dc5aec 100644
                  ModLoadError load_error = load_mod(mod, load_error_param);
  
 diff --git a/librecomp/src/pak.cpp b/librecomp/src/pak.cpp
-index 0be1513..32d232b 100644
+index 0be1513e8cbb7af88013be0a518c37bdbf35aa29..32d232b2a6c1dd5099518ca070c1d0bff3129ea3 100644
 --- a/librecomp/src/pak.cpp
 +++ b/librecomp/src/pak.cpp
 @@ -1,51 +1,479 @@
@@ -823,10 +823,18 @@ index 0be1513..32d232b 100644
 +    _return<s32>(ctx, valid_pfs(rdram, pfs) ? kPfsOk : kPfsErrNoPack);
  }
 diff --git a/librecomp/src/recomp.cpp b/librecomp/src/recomp.cpp
-index 1200f77..77a9e03 100644
+index 1200f7702e4d34e55e62cf209521639553d311b2..212dd63de7eb8789116f1a30b4d6041b11c7ac6a 100644
 --- a/librecomp/src/recomp.cpp
 +++ b/librecomp/src/recomp.cpp
-@@ -102,6 +102,26 @@ void recomp::mods::register_embedded_mod(const std::string &mod_id, std::span<co
+@@ -14,6 +14,7 @@
+ #include <cinttypes>
+ #include <cuchar>
+ #include <charconv>
++#include <exception>
+ 
+ #include "recomp.h"
+ #include "librecomp/overlays.hpp"
+@@ -102,6 +103,26 @@ void recomp::mods::register_embedded_mod(const std::string &mod_id, std::span<co
      mod_context->register_embedded_mod(mod_id, mod_bytes);
  }
  
@@ -853,7 +861,7 @@ index 1200f77..77a9e03 100644
  void recomp::mods::register_deprecated_mod(const std::string& mod_id, recomp::mods::DeprecationStatus deprecation_status, const Version& maximum_version) {
      std::lock_guard<std::mutex> lock(mod_context_mutex);
      mod_context->register_deprecated_mod(mod_id, deprecation_status, maximum_version);
-@@ -243,6 +263,19 @@ const recomp::Version& recomp::get_project_version() {
+@@ -243,6 +264,19 @@ const recomp::Version& recomp::get_project_version() {
      return project_version;
  }
  
@@ -873,7 +881,36 @@ index 1200f77..77a9e03 100644
  bool recomp::Version::from_string(const std::string& str, Version& out) {
      std::array<size_t, 2> period_indices;
      size_t cur_pos = 0;
-@@ -841,12 +874,12 @@ void recomp::start(
+@@ -706,15 +740,26 @@ bool wait_for_game_started(uint8_t* rdram, recomp_context* context) {
+         case GameStatus::Running:
+             {
+                 if (!recomp::load_stored_rom(current_game.value())) {
++                    game_status.store(GameStatus::None);
++                    if (exited.load()) return true;
+                     ultramodern::error_handling::message_box("Error opening stored ROM! Please restart this program.");
++                    return false;
+                 }
+ 
+                 auto find_it = game_roms.find(current_game.value());
+                 const recomp::GameEntry& game_entry = find_it->second;
+ 
+                 init(rdram, context, game_entry.entrypoint_address);
+-                if (game_entry.on_init_callback) {
+-                    game_entry.on_init_callback(rdram, context);
++                try {
++                    if (game_entry.on_init_callback) {
++                        game_entry.on_init_callback(rdram, context);
++                    }
++                } catch (const std::exception& error) {
++                    // Initialization errors return to the launcher before any guest thread starts.
++                    game_status.store(GameStatus::None);
++                    if (exited.load()) return true;
++                    ultramodern::error_handling::message_box(error.what());
++                    return false;
+                 }
+ 
+                 uint32_t mod_ram_used = 0;
+@@ -841,12 +886,12 @@ void recomp::start(
      uint8_t* rdram;
      bool alloc_failed;
  #ifdef _WIN32
@@ -891,7 +928,7 @@ index 1200f77..77a9e03 100644
              VirtualFree(rdram, 0, MEM_RELEASE);
          }
 diff --git a/ultramodern/include/ultramodern/config.hpp b/ultramodern/include/ultramodern/config.hpp
-index 2f22456..5d3a7c0 100644
+index 2f224562550a1d46f59e7ae74563fef8a38e2b94..5d3a7c0e686e1c4b3a01393f4cfb40a3bbaa8efc 100644
 --- a/ultramodern/include/ultramodern/config.hpp
 +++ b/ultramodern/include/ultramodern/config.hpp
 @@ -36,6 +36,8 @@ namespace ultramodern {
@@ -921,7 +958,7 @@ index 2f22456..5d3a7c0 100644
  
          NLOHMANN_JSON_SERIALIZE_ENUM(ultramodern::renderer::Antialiasing, {
 diff --git a/ultramodern/src/audio.cpp b/ultramodern/src/audio.cpp
-index 3198be0..919c935 100644
+index 3198be0e771a431917dc7ff635b5f2190789f203..919c935e51379d837398e2053e9f4ca48d900a9b 100644
 --- a/ultramodern/src/audio.cpp
 +++ b/ultramodern/src/audio.cpp
 @@ -1,5 +1,6 @@
@@ -960,7 +997,7 @@ index 3198be0..919c935 100644
 +    return audio_remaining_bytes_for_game(actual_buffered_frames, sample_rate);
  }
 diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
-index 090cc42..be71747 100644
+index 090cc426b28ef4f113444717e6898fa2c43a0587..be7174717f5702acfff7ad5d2ac83f15100e2883 100644
 --- a/ultramodern/src/events.cpp
 +++ b/ultramodern/src/events.cpp
 @@ -1,3 +1,5 @@
@@ -1209,7 +1246,7 @@ index 090cc42..be71747 100644
  
  void ultramodern::init_events(RDRAM_ARG ultramodern::renderer::WindowHandle window_handle) {
 diff --git a/ultramodern/src/input.cpp b/ultramodern/src/input.cpp
-index a170407..0146a59 100644
+index a1704079266f5408cc82867a7aa6a581c5560a97..0146a596600572ef9a693784faa2fc9a32fc6329 100644
 --- a/ultramodern/src/input.cpp
 +++ b/ultramodern/src/input.cpp
 @@ -72,7 +72,7 @@ static void __osContGetInitData(u8* pattern, OSContStatus *data) {
@@ -1222,7 +1259,7 @@ index a170407..0146a59 100644
          else {
              // Mark controller as not connected
 diff --git a/ultramodern/src/mesgqueue.cpp b/ultramodern/src/mesgqueue.cpp
-index 961de3d..b71ab9e 100644
+index 961de3d718f3b4f4eb6d21f2a265324c8bcaa0ab..b71ab9e678f273da67dfc733e768a6da9844274c 100644
 --- a/ultramodern/src/mesgqueue.cpp
 +++ b/ultramodern/src/mesgqueue.cpp
 @@ -1,51 +1,144 @@
@@ -1408,7 +1445,7 @@ index 961de3d..b71ab9e 100644
      return received ? 0 : -1;
  }
 diff --git a/ultramodern/src/threads.cpp b/ultramodern/src/threads.cpp
-index 812c556..87e9c14 100644
+index 812c556144d41b1c37f4407d1c4f29c0e6c08453..87e9c14224721fd9fb2d202414f13fcdbbfb844b 100644
 --- a/ultramodern/src/threads.cpp
 +++ b/ultramodern/src/threads.cpp
 @@ -240,7 +240,10 @@ extern "C" void osStartThread(RDRAM_ARG PTR(OSThread) t_) {
@@ -1424,7 +1461,7 @@ index 812c556..87e9c14 100644
  }
  
 diff --git a/ultramodern/src/timer.cpp b/ultramodern/src/timer.cpp
-index 276301b..124fc50 100644
+index 276301b889f5eed14762ccadd403217dca608734..124fc50a1fe103d096c1ac6cf7c5837b734f0132 100644
 --- a/ultramodern/src/timer.cpp
 +++ b/ultramodern/src/timer.cpp
 @@ -1,3 +1,4 @@

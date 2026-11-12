@@ -15,6 +15,7 @@ unsigned rr64_coop_bike_count(unsigned slot, unsigned original);
 unsigned rr64_coop_bike_entry(unsigned char *, unsigned slot, unsigned original);
 void rr64_coop_roster(unsigned char *);
 void rr64_coop_riders(unsigned char *);
+int rr64_coop_split_camera(unsigned char *);
 unsigned rr64_coop_result_actor(unsigned char *, unsigned original);
 unsigned rr64_coop_result_state(unsigned char *, unsigned original);
 int rr64_coop_spectating(void);

@@ -1,7 +1,8 @@
 #include "rr64_online_terrain.hpp"
 #include "rr64_engine_layout.hpp"
-#include "rr64_traffic_roster.hpp"
 #include "rr64_prediction_rules.hpp"
+#include "rr64_race_end_trace.hpp"
+#include "rr64_traffic_lifetime.hpp"
 #ifdef RR64_EXPERIMENTAL_COURSE
 #include "rr64_experimental_course.hpp"
 #endif
@@ -15,6 +16,7 @@
 
 namespace recomp { std::span<const std::uint8_t> get_rom(); }
 extern "C" void func_8001BDF8(unsigned char*, recomp_context*);
+extern "C" int rr64_highlights_presenting();
 
 namespace {
 using namespace rr64::engine;
@@ -76,8 +78,7 @@ bool live_source(const Bank& b) {
     return rom.data() == b.rom.data() && rom.size() == b.rom.size() &&
            source_header() == b.header;
 }
-bool enabled(unsigned char* m) {
-    const auto rules = rr64::prediction::physics_rules();
+bool enabled(unsigned char* m, const rr64::netplay::PhysicsRules& rules) {
     const unsigned mode = word(m, globals::main_mode);
     if (!is_live_race_mode(mode) && !is_race_results_mode(mode)) return false;
     // Offline actors can leave the camera's native streaming window on stock
@@ -90,6 +91,7 @@ bool enabled(unsigned char* m) {
     return rules.active && rules.connected && rules.authoritative &&
            (rr64::prediction::active() || rules.phase == rr64::netplay::Phase::Race);
 }
+bool enabled(unsigned char* m) { return enabled(m,rr64::prediction::physics_rules()); }
 bool valid(const Bank& b, unsigned char* m) {
     return m && (m == b.mapping || rr64::prediction::active()) &&
            valid_guest_range(b.allocation, b.allocation_bytes()) &&
@@ -352,15 +354,28 @@ extern "C" void rr64_online_terrain_query_begin(unsigned char* m, void* opaque) 
 }
 
 extern "C" void rr64_online_terrain_lookup(unsigned char* m, void* opaque) {
-    if (!m || !opaque || !enabled(m)) return;
+    if (!m || !opaque) return;
+    const auto rules=rr64::prediction::physics_rules();
+    if (!enabled(m,rules)) return;
     auto& c=*static_cast<recomp_context*>(opaque);
+    // Observe the source decision at every exit without issuing another floor query.
+    struct FloorTrace {
+        unsigned char* memory;
+        unsigned query, cell, native_state;
+        bool supplied=false;
+        ~FloorTrace() { rr64_trace_traffic_floor(memory,query,cell,native_state,supplied); }
+    } trace{m,unsigned(c.r8),unsigned(c.r4),unsigned(c.r5)};
     if (c.r5==5) return;
+    // Traffic retains native retirement outside all local streaming windows.
+    // Results, highlights and online/private prediction keep their existing
+    // support; their camera history must not become a new simulation input.
+    if (!rr64::prediction::active() && !rules.active &&
+        is_live_race_transition(word(m,globals::main_mode),word(m,globals::pending_mode)) &&
+        !rr64_highlights_presenting() &&
+        !rr64::traffic::allow_floor_fallback(m,unsigned(c.r8))) return;
     const auto b=current_bank();
     if (!b || !valid(*b,m)) return;
     const unsigned record=unsigned(c.r4),query=unsigned(c.r8);
-    // Cars retire through failed axle queries on unloaded cells (75EA0/77294).
-    // Supplying permanent floors here exhausts the twenty-car replacement pool.
-    if (rr64::traffic::owns_ground_query(m, query)) return;
     if (record<b->grid || (record-b->grid)%16 || (record-b->grid)/16>=cells ||
         !valid_guest_range(query,0x6c)) return;
     const unsigned index=(record-b->grid)/16;
@@ -375,6 +390,7 @@ extern "C" void rr64_online_terrain_lookup(unsigned char* m, void* opaque) {
     }
     clear_caches(m,query);
     c.r4=guest_address(a+descriptor_offset);c.r5=5;
+    trace.supplied=true;
 }
 
 extern "C" void rr64_online_terrain_collision_begin(unsigned char* m, void* opaque) noexcept(false) {

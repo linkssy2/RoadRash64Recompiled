@@ -1,3 +1,35 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0789c20..b215310 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -29,13 +29,13 @@ endif()
+ 
+ # Enable SDL Vulkan support
+ if(PLUME_SDL_VULKAN_ENABLED)
+-    if (NOT TARGET SDL2::SDL2)
+-        find_package(SDL2 REQUIRED)
+-    else()
+-        set(SDL2_INCLUDE_DIRS "$<TARGET_PROPERTY:SDL2::SDL2,INTERFACE_INCLUDE_DIRECTORIES>")
++    # RR64-SDL3: SDL3 from the parent build (SDL3_LIBRARIES) or an installed one.
++    if (NOT SDL3_LIBRARIES)
++        find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
++        set(SDL3_LIBRARIES SDL3::SDL3)
+     endif()
+ 
+-    message(STATUS "Plume - Building with SDL2_INCLUDE_DIRS: ${SDL2_INCLUDE_DIRS}")
++    message(STATUS "Plume - Building with SDL3: ${SDL3_LIBRARIES}")
+ endif()
+ 
+ # Enable D3D12 Agility SDK support
+@@ -91,7 +91,7 @@ endif()
+ 
+ if(PLUME_SDL_VULKAN_ENABLED)
+     target_compile_definitions(plume PUBLIC PLUME_SDL_VULKAN_ENABLED)
+-    target_include_directories(plume PUBLIC ${SDL2_INCLUDE_DIRS})
++    target_link_libraries(plume PUBLIC ${SDL3_LIBRARIES})
+ endif()
+ 
+ if(PLUME_D3D12_AGILITY_SDK_ENABLED)
 diff --git a/plume_d3d12.cpp b/plume_d3d12.cpp
 index 2cdcf18..6d3dfb1 100644
 --- a/plume_d3d12.cpp
@@ -100,10 +132,34 @@ index 4827452..abd3a2f 100644
          UINT swapChainFlags = 0;
  
          D3D12SwapChain(D3D12CommandQueue *commandQueue, const RenderSwapChainDesc &desc);
+diff --git a/plume_render_interface_types.h b/plume_render_interface_types.h
+index 9dcfedf..05ca9b2 100644
+--- a/plume_render_interface_types.h
++++ b/plume_render_interface_types.h
+@@ -30,7 +30,7 @@
+ #endif
+ 
+ #ifdef PLUME_SDL_VULKAN_ENABLED
+-#include <SDL_vulkan.h>
++#include <SDL3/SDL_vulkan.h>
+ #endif
+ 
+ namespace plume {
 diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
-index f1dd503..d6fc087 100644
+index f1dd503..477adb7 100644
 --- a/plume_vulkan.cpp
 +++ b/plume_vulkan.cpp
+@@ -2097,8 +2097,8 @@ namespace plume {
+         }
+ #   elif defined(PLUME_SDL_VULKAN_ENABLED)
+         VulkanInterface *renderInterface = commandQueue->device->renderInterface;
+-        SDL_bool sdlRes = SDL_Vulkan_CreateSurface(desc.renderWindow, renderInterface->instance, &surface);
+-        if (sdlRes == SDL_FALSE) {
++        // RR64-SDL3: SDL3 takes an allocator argument and returns bool.
++        if (!SDL_Vulkan_CreateSurface(desc.renderWindow, renderInterface->instance, nullptr, &surface)) {
+             fprintf(stderr, "SDL_Vulkan_CreateSurface failed with error %s.\n", SDL_GetError());
+             return;
+         }
 @@ -2174,11 +2174,10 @@ namespace plume {
              return;
          }
@@ -166,6 +222,33 @@ index f1dd503..d6fc087 100644
      }
  
      void VulkanSwapChain::releaseImageViews() {
+@@ -4502,18 +4505,14 @@ namespace plume {
+ 
+ #   if PLUME_SDL_VULKAN_ENABLED
+         // Push the extensions specified by SDL as required.
+-        // SDL2 has this awkward requirement for the window to pull the extensions from. 
+-        // This can be removed when upgrading to SDL3.
+-        if (sdlWindow != nullptr) {
+-            uint32_t sdlVulkanExtensionCount = 0;
+-            if (SDL_Vulkan_GetInstanceExtensions(sdlWindow, &sdlVulkanExtensionCount, nullptr)) {
+-                std::vector<char *> sdlVulkanExtensions;
+-                sdlVulkanExtensions.resize(sdlVulkanExtensionCount);
+-                if (SDL_Vulkan_GetInstanceExtensions(sdlWindow, &sdlVulkanExtensionCount, (const char **)(sdlVulkanExtensions.data()))) {
+-                    for (char *sdlVulkanExtension : sdlVulkanExtensions) {
+-                        requiredExtensions.insert(sdlVulkanExtension);
+-                    }
+-                }
++        // RR64-SDL3: SDL3 reports them without a window; the window parameter
++        // is kept so the creation API is unchanged.
++        (void)(sdlWindow);
++        Uint32 sdlVulkanExtensionCount = 0;
++        const char * const *sdlVulkanExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlVulkanExtensionCount);
++        if (sdlVulkanExtensions != nullptr) {
++            for (Uint32 i = 0; i < sdlVulkanExtensionCount; i++) {
++                requiredExtensions.insert(sdlVulkanExtensions[i]);
+             }
+         }
+ #   endif
 diff --git a/plume_vulkan.h b/plume_vulkan.h
 index 0a1edbe..ee3d2a3 100644
 --- a/plume_vulkan.h

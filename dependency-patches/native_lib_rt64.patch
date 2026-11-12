@@ -1,8 +1,32 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 79dfc38..2a7a16f 100644
+index 79dfc38..8d8ba9c 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -313,6 +313,7 @@ set (SOURCES
+@@ -284,16 +284,14 @@ function(build_ray_shader TARGETOBJ SHADERNAME)
+     build_shader(${TARGETOBJ} ${SHADERNAME} "${DXC_RT_OPTS}" ${ARGN})
+ endfunction()
+ 
+-# Point cmake at src/contrib/mupen64plus-win32-deps/SDL2-2.26.3 for SDL2 on windows, look for an installed package on other systems
+-if (WIN32)
+-    set(SDL2_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}/src/contrib/mupen64plus-win32-deps/SDL2-2.26.3/include")
+-    set(SDL2_LIBRARIES "SDL2" "SDL2main")
+-    link_directories("${PROJECT_SOURCE_DIR}/src/contrib/mupen64plus-win32-deps/SDL2-2.26.3/lib/x64")
+-else()
+-    find_package(SDL2 REQUIRED)
++# RR64-SDL3: RT64 is written against SDL3. The parent build provides it as
++# SDL3_LIBRARIES (SDL3.dll on Windows); a standalone RT64 build uses an
++# installed SDL3.
++if (NOT SDL3_LIBRARIES)
++    find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
++    set(SDL3_LIBRARIES SDL3::SDL3)
+ endif()
+-
+-message(STATUS "${SDL2_INCLUDE_DIRS} ${SDL2_LIBRARIES}")
++message(STATUS "RT64 SDL: ${SDL3_LIBRARIES}")
+ 
+ add_compile_definitions(
+     HLSL_CPU
+@@ -313,11 +311,13 @@ set (SOURCES
      "${PROJECT_SOURCE_DIR}/src/common/rt64_emulator_configuration.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_enhancement_configuration.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_filesystem_zip.cpp"
@@ -10,7 +34,22 @@ index 79dfc38..2a7a16f 100644
      "${PROJECT_SOURCE_DIR}/src/common/rt64_load_types.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_mapped_file.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_math.cpp"
-@@ -412,6 +413,7 @@ set (SOURCES
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_profiling_timer.cpp"
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_replacement_database.cpp"
++    "${PROJECT_SOURCE_DIR}/src/common/rt64_rr64_simd.cpp"
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_thread.cpp"
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_timer.cpp"
+     "${PROJECT_SOURCE_DIR}/src/common/rt64_user_configuration.cpp"
+@@ -366,7 +366,7 @@ set (SOURCES
+     "${PROJECT_SOURCE_DIR}/src/hle/rt64_workload.cpp"
+     "${PROJECT_SOURCE_DIR}/src/hle/rt64_workload_queue.cpp"
+ 
+-    "${PROJECT_SOURCE_DIR}/src/imgui/imgui_impl_sdl2_custom.cpp"
++    "${PROJECT_SOURCE_DIR}/src/imgui/imgui_impl_sdl3_custom.cpp"
+ 
+     "${PROJECT_SOURCE_DIR}/src/render/rt64_buffer_uploader.cpp"
+     "${PROJECT_SOURCE_DIR}/src/render/rt64_framebuffer_renderer.cpp"
+@@ -412,10 +412,11 @@ set (SOURCES
      "${PROJECT_SOURCE_DIR}/src/contrib/implot/implot_demo.cpp"
      "${PROJECT_SOURCE_DIR}/src/contrib/implot/implot_items.cpp"
      "${PROJECT_SOURCE_DIR}/src/contrib/miniz/miniz.c"
@@ -18,6 +57,20 @@ index 79dfc38..2a7a16f 100644
  )
  
  include_directories(
+-    "${SDL2_INCLUDE_DIRS}"
++    "$<TARGET_PROPERTY:SDL3::Headers,INTERFACE_INCLUDE_DIRECTORIES>"
+     "${PROJECT_SOURCE_DIR}/src"
+     "${PROJECT_SOURCE_DIR}/src/contrib"
+     "${PROJECT_SOURCE_DIR}/src/contrib/plume"
+@@ -479,7 +480,7 @@ endif()
+ target_link_directories(rt64 PRIVATE ${PROJECT_SOURCE_DIR}/src/contrib/dxc)
+ 
+ if (NOT ANDROID)
+-    target_link_libraries(rt64 ${SDL2_LIBRARIES})
++    target_link_libraries(rt64 ${SDL3_LIBRARIES})
+ endif()
+ 
+ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
 diff --git a/include/rt64_extended_gbi.h b/include/rt64_extended_gbi.h
 index d387090..b651649 100644
 --- a/include/rt64_extended_gbi.h
@@ -392,19 +445,29 @@ index 15d8332..d84a1e4 100644
      struct Timer {
          static void initialize();
 diff --git a/src/common/rt64_tmem_hasher.h b/src/common/rt64_tmem_hasher.h
-index 8c6af2b..8744b64 100644
+index 8c6af2b..d5637e4 100644
 --- a/src/common/rt64_tmem_hasher.h
 +++ b/src/common/rt64_tmem_hasher.h
-@@ -4,6 +4,8 @@
+@@ -4,6 +4,10 @@
  
  #pragma once
  
 +#include <array>
 +
++#include "common/rt64_rr64_simd.h"
++
  // Referenced from zstd.
  
  static unsigned bitScanForward64(uint64_t val) {
-@@ -72,10 +74,29 @@ namespace RT64 {
+@@ -66,21 +70,45 @@ namespace RT64 {
+             const uint32_t tmemMask = halfTMEM ? TMEMMask16 : TMEMMask8;
+             const uint32_t tmemAddress = (loadTile.tmem << 3) & tmemMask;
+             uint64_t tlutBitset[4] = {};
++            alignas(32) std::array<uint8_t, 256> ci8Seen{};
++            bool ci8Marked = false;
+             auto hashUpdate = [&](const uint8_t *tmemBytes, uint32_t byteCount) {
+                 XXH3_64bits_update(&xxh3, tmemBytes, byteCount);
+ 
                  // Version 5 parses every byte individually if TLUT is enabled to determine the TLUT bytes that can be hashed.
                  if ((version >= 5) && usesTLUT) {
                      if (loadTile.siz == G_IM_SIZ_4b) {
@@ -436,7 +499,29 @@ index 8c6af2b..8744b64 100644
 +                        tlutBitset[0] = used;
                      }
                      else {
-                         for (uint32_t i = 0; i < byteCount; i++) {
+-                        for (uint32_t i = 0; i < byteCount; i++) {
+-                            tlutBitset[tmemBytes[i] >> 6U] |= (1ULL << (tmemBytes[i] & 0x3FU));
+-                        }
++                        // RR64-SIMD: mark a 256-entry presence table with plain
++                        // stores and pack it into tlutBitset once, below. The old
++                        // `bits[b >> 6] |= ...` serialized on read-modify-writes of
++                        // the same word for neighboring palette indices.
++                        RR64Simd::markBytesPresent(tmemBytes, byteCount, ci8Seen.data());
++                        ci8Marked = true;
+                     }
+                 }
+             };
+@@ -141,6 +169,10 @@ namespace RT64 {
+                 }
+             }
+ 
++            if (ci8Marked) {
++                RR64Simd::packBytesPresent(ci8Seen.data(), tlutBitset);
++            }
++
+             // If TLUT is active, we also hash the corresponding palette bytes.
+             if (usesTLUT) {
+                 const bool CI4 = (loadTile.siz == G_IM_SIZ_4b);
 diff --git a/src/common/rt64_user_configuration.h b/src/common/rt64_user_configuration.h
 index 4857f22..ade30a1 100644
 --- a/src/common/rt64_user_configuration.h
@@ -539,8 +624,64 @@ index cf05674..223ab7f 100644
 -};
 \ No newline at end of file
 +};
+diff --git a/src/gui/rt64_inspector.cpp b/src/gui/rt64_inspector.cpp
+index 6ceb97f..1e5cf02 100644
+--- a/src/gui/rt64_inspector.cpp
++++ b/src/gui/rt64_inspector.cpp
+@@ -15,7 +15,7 @@
+ // Volk must be included before the ImGui Vulkan backend.
+ #include "plume_vulkan.h"
+ 
+-#include "imgui/imgui_impl_sdl2_custom.h"
++#include "imgui/imgui_impl_sdl3_custom.h"
+ #include "imgui/backends/imgui_impl_vulkan.h"
+ 
+ #if defined(_WIN32)
+@@ -77,7 +77,7 @@ namespace RT64 {
+         ImGui::StyleColorsDark();
+ 
+         if (sdlWindow != nullptr) {
+-            ImGui_ImplSDL2_InitForOther(sdlWindow);
++            ImGui_ImplSDL3_InitForOther(sdlWindow);
+         }
+         else {
+ #       ifdef _WIN32
+@@ -162,7 +162,7 @@ namespace RT64 {
+         }
+ 
+         if (sdlWindow != nullptr) {
+-            ImGui_ImplSDL2_Shutdown();
++            ImGui_ImplSDL3_Shutdown();
+         }
+         else {
+ #       ifdef _WIN32
+@@ -186,7 +186,7 @@ namespace RT64 {
+         frameMutex.lock();
+         
+         if (sdlWindow != nullptr) {
+-            ImGui_ImplSDL2_NewFrame();
++            ImGui_ImplSDL3_NewFrame();
+         }
+         else {
+ #       ifdef _WIN32
+@@ -258,12 +258,12 @@ namespace RT64 {
+     bool Inspector::handleSdlEvent(SDL_Event *event) {
+         assert((sdlWindow != nullptr) && "SDL Events shouldn't be handled if SDL was not used.");
+ 
+-        bool processed = ImGui_ImplSDL2_ProcessEvent(event);
++        bool processed = ImGui_ImplSDL3_ProcessEvent(event);
+         if (processed) {
+-            if ((event->type == SDL_KEYDOWN) || (event->type == SDL_KEYUP)) {
++            if ((event->type == SDL_EVENT_KEY_DOWN) || (event->type == SDL_EVENT_KEY_UP)) {
+                 return ImGui::GetIO().WantCaptureKeyboard;
+             }
+-            else if ((event->type == SDL_MOUSEMOTION) || (event->type == SDL_MOUSEBUTTONDOWN) || (event->type == SDL_MOUSEBUTTONUP) || (event->type == SDL_MOUSEWHEEL)) {
++            else if ((event->type == SDL_EVENT_MOUSE_MOTION) || (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) || (event->type == SDL_EVENT_MOUSE_BUTTON_UP) || (event->type == SDL_EVENT_MOUSE_WHEEL)) {
+                 return ImGui::GetIO().WantCaptureMouse;
+             }
+         }
 diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
-index 785de27..83b5eae 100644
+index 785de27..d99e5bd 100644
 --- a/src/hle/rt64_application.cpp
 +++ b/src/hle/rt64_application.cpp
 @@ -3,6 +3,7 @@
@@ -578,12 +719,246 @@ index 785de27..83b5eae 100644
              swapChainDesc.enablePresentWait = true;
          }
  
+@@ -595,8 +601,8 @@ namespace RT64 {
+             }
+         }
+ 
+-        if (event->type == SDL_KEYDOWN) {
+-            switch (event->key.keysym.scancode) {
++        if (event->type == SDL_EVENT_KEY_DOWN) {
++            switch (event->key.scancode) {
+             case SDL_SCANCODE_F1:
+                 processDeveloperShortcut(DeveloperShortcut::Inspector);
+                 return true;
+diff --git a/src/hle/rt64_application_window.cpp b/src/hle/rt64_application_window.cpp
+index 08f83e5..8f0e7ec 100644
+--- a/src/hle/rt64_application_window.cpp
++++ b/src/hle/rt64_application_window.cpp
+@@ -5,8 +5,9 @@
+ #include "rt64_application_window.h"
+ 
+ #include <cassert>
++#include <cmath>
+ #include <stdio.h>
+-#include <SDL.h>
++#include <SDL3/SDL.h>
+ 
+ #if defined(_WIN32)
+ #   include <Windows.h>
+@@ -63,9 +64,18 @@ namespace RT64 {
+             if ((sdlWindow == nullptr) && SDL_WasInit(SDL_INIT_VIDEO)) {
+                 // We'd normally install the event filter here, but Mupen does not set its own event filter
+                 // until much later. Instead, we delegate this to the first time a screen update is sent.
+-                // FIXME: We attempt to get the first window created by SDL2. This can be improved later
++                // FIXME: We attempt to get the first window created by SDL. This can be improved later
+                 // by actually passing the SDL_Window handle through as a parameter.
+-                sdlWindow = SDL_GetWindowFromID(1);
++                // RR64-SDL3: SDL3 window IDs share a counter with displays, so
++                // the first window is no longer guaranteed to be ID 1; take the
++                // first entry of SDL_GetWindows() instead.
++                int windowCount = 0;
++                SDL_Window **windows = SDL_GetWindows(&windowCount);
++                if ((windows != nullptr) && (windowCount > 0)) {
++                    sdlWindow = windows[0];
++                }
++
++                SDL_free(windows);
+             }
+ 
+             if (sdlWindow == nullptr) {
+@@ -106,53 +116,50 @@ namespace RT64 {
+ #   elif defined(__ANDROID__)
+         static_assert(false && "Android unimplemented");
+ #   elif defined(__linux__) || defined(__APPLE__)
+-        if (SDL_VideoInit(nullptr) != 0) {
+-            printf("Failed to init SDL2 video: %s\n", SDL_GetError());
+-            assert(false && "Failed to init SDL2 video");
++        if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
++            printf("Failed to init SDL3 video: %s\n", SDL_GetError());
++            assert(false && "Failed to init SDL3 video");
+             return;
+         }
+-        SDL_DisplayMode dm;
+-        if (SDL_GetDesktopDisplayMode(0, &dm) != 0) {
+-            printf("Failed to get SDL2 desktop display mode: %s\n", SDL_GetError());
+-            assert(false && "Failed to get SDL2 desktop display mode");
++        const SDL_DisplayMode *dm = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
++        if (dm == nullptr) {
++            printf("Failed to get SDL3 desktop display mode: %s\n", SDL_GetError());
++            assert(false && "Failed to get SDL3 desktop display mode");
+             return;
+         }
+-        bounds.left = (dm.w - Width) / 2;
+-        bounds.top = (dm.h - Height) / 2;
++        bounds.left = (dm->w - Width) / 2;
++        bounds.top = (dm->h - Height) / 2;
+         bounds.width = Width;
+         bounds.height = Height;
+ #   else
+         static_assert(false && "Unimplemented");
+ #   endif
+-        uint32_t createFlags = SDL_WINDOW_RESIZABLE;
+-#   if defined(__APPLE__)
+-        createFlags |= SDL_WINDOW_METAL;
+-#   endif
+-
+         // Create window.
+-        uint32_t flags = SDL_WINDOW_RESIZABLE;
++        SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
+         # if defined(__APPLE__)
+         flags |= SDL_WINDOW_METAL;
+         # elif defined(RT64_SDL_WINDOW_VULKAN)
+         flags |= SDL_WINDOW_VULKAN;
+         #endif
+-        sdlWindow = SDL_CreateWindow(windowTitle, bounds.left, bounds.top, bounds.width, bounds.height, flags);
++        // RR64-SDL3: SDL_CreateWindow no longer takes a position.
++        sdlWindow = SDL_CreateWindow(windowTitle, int(bounds.width), int(bounds.height), flags);
+         assert((sdlWindow != nullptr) && "Failed to open window with SDL");
++        SDL_SetWindowPosition(sdlWindow, int(bounds.left), int(bounds.top));
+ 
+-        // Get native window handles from the window.
+-        SDL_SysWMinfo wmInfo;
+-        SDL_VERSION(&wmInfo.version);
+-        SDL_GetWindowWMInfo(sdlWindow, &wmInfo);
++        // Get native window handles from the window (RR64-SDL3: window properties replace SDL_SysWMinfo).
++        const SDL_PropertiesID windowProps = SDL_GetWindowProperties(sdlWindow);
+ #   if defined(_WIN32)
+-        windowHandle = wmInfo.info.win.window;
++        windowHandle = (HWND)(SDL_GetPointerProperty(windowProps, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+ #   elif defined(RT64_SDL_WINDOW_VULKAN)
++        (void)(windowProps);
+         windowHandle = sdlWindow;
+ #   elif defined(__ANDROID__)
+         static_assert(false && "Android unimplemented");
+ #   elif defined(__linux__)
+-        windowHandle.display = wmInfo.info.x11.display;
+-        windowHandle.window = wmInfo.info.x11.window;
++        windowHandle.display = (Display *)(SDL_GetPointerProperty(windowProps, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr));
++        windowHandle.window = (Window)(SDL_GetNumberProperty(windowProps, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
+ #   elif defined(__APPLE__)
++        (void)(windowProps);
+         windowHandle.window = sdlWindow;
+         SDL_MetalView view = SDL_Metal_CreateView(sdlWindow);
+         windowHandle.view = SDL_Metal_GetLayer(view);
+@@ -230,10 +237,13 @@ namespace RT64 {
+ #   elif defined(__APPLE__)
+         windowWrapper->toggleFullscreen();
+ #   elif defined(RT64_SDL_WINDOW_VULKAN)
++        // RR64-SDL3: a null fullscreen mode selects borderless desktop
++        // fullscreen, the SDL3 equivalent of SDL_WINDOW_FULLSCREEN_DESKTOP.
+         if (newFullScreen) {
+-            SDL_SetWindowFullscreen(windowHandle, SDL_WINDOW_FULLSCREEN_DESKTOP);
++            SDL_SetWindowFullscreenMode(windowHandle, nullptr);
++            SDL_SetWindowFullscreen(windowHandle, true);
+         } else {
+-            SDL_SetWindowFullscreen(windowHandle, 0);
++            SDL_SetWindowFullscreen(windowHandle, false);
+         }
+         fullScreen = newFullScreen;
+ #   endif
+@@ -280,20 +290,20 @@ namespace RT64 {
+             refreshRate++;
+         }
+ #   elif defined(RT64_SDL_WINDOW_VULKAN)
+-        int displayIndex = SDL_GetWindowDisplayIndex(windowHandle);
+-        if (displayIndex < 0) {
+-            fprintf(stderr, "SDL_GetWindowDisplayIndex failed. Error: %s.\n", SDL_GetError());
++        SDL_DisplayID displayId = SDL_GetDisplayForWindow(windowHandle);
++        if (displayId == 0) {
++            fprintf(stderr, "SDL_GetDisplayForWindow failed. Error: %s.\n", SDL_GetError());
+             return;
+         }
+ 
+-        SDL_DisplayMode displayMode = {};
+-        int modeResult = SDL_GetCurrentDisplayMode(displayIndex, &displayMode);
+-        if (modeResult != 0) {
++        const SDL_DisplayMode *displayMode = SDL_GetCurrentDisplayMode(displayId);
++        if (displayMode == nullptr) {
+             fprintf(stderr, "SDL_GetCurrentDisplayMode failed. Error: %s.\n", SDL_GetError());
+             return;
+         }
+ 
+-        refreshRate = displayMode.refresh_rate;
++        // RR64-SDL3: refresh_rate is a float (e.g. 59.94); round like the Win32 path's fix-up does.
++        refreshRate = uint32_t(std::lround(displayMode->refresh_rate));
+ #   elif defined(__linux__)
+         // Sourced from: https://stackoverflow.com/a/66865623
+         XRRScreenResources *screenResources = XRRGetScreenResources(windowHandle.display, windowHandle.window);
+@@ -348,7 +358,10 @@ namespace RT64 {
+         newWindowLeft = rect.left;
+         newWindowTop = rect.top;
+ #   elif defined(RT64_SDL_WINDOW_VULKAN)
+-        SDL_GetWindowPosition(windowHandle, &newWindowLeft, &newWindowTop);
++        int sdlLeft = 0, sdlTop = 0;
++        SDL_GetWindowPosition(windowHandle, &sdlLeft, &sdlTop);
++        newWindowLeft = sdlLeft;
++        newWindowTop = sdlTop;
+ #   elif defined(__linux__)
+         XWindowAttributes attributes;
+         XGetWindowAttributes(windowHandle.display, windowHandle.window, &attributes);
+@@ -406,11 +419,11 @@ namespace RT64 {
+         }
+     }
+ 
+-    int ApplicationWindow::sdlEventFilter(void *userdata, SDL_Event *event) {
++    bool SDLCALL ApplicationWindow::sdlEventFilter(void *userdata, SDL_Event *event) {
+         // Run it through the listener's event filter. If it's processed by the listener, the event should be filtered.
+         ApplicationWindow *appWindow = reinterpret_cast<ApplicationWindow *>(userdata);
+         if (appWindow->listener->sdlEventFilter(event)) {
+-            return 0;
++            return false;
+         }
+ 
+         // Pass to the event filter that was stored if it exists. Let the original filter determine the result.
+@@ -419,7 +432,7 @@ namespace RT64 {
+         }
+         // The event should not be filtered.
+         else {
+-            return 1;
++            return true;
+         }
+     }
+ };
+diff --git a/src/hle/rt64_application_window.h b/src/hle/rt64_application_window.h
+index 73f8222..5af7f6c 100644
+--- a/src/hle/rt64_application_window.h
++++ b/src/hle/rt64_application_window.h
+@@ -12,13 +12,11 @@
+ #include "plume_apple.h"
+ #endif
+ 
+-#include "SDL.h"
+-#include "SDL_events.h"
+-#include "SDL_system.h"
+-#include "SDL_syswm.h"
+-#include "SDL_video.h"
++// RR64-SDL3: SDL3 has no SDL_syswm.h; native handles come from window
++// properties (rt64_application_window.cpp).
++#include <SDL3/SDL.h>
+ 
+-// Remove macros defined by x11 from a header included by SDL_syswm.h.
++// Remove macros X11 defines, in case a platform header pulled X11 in.
+ #undef None
+ #undef Status
+ #undef LockMask
+@@ -73,7 +71,7 @@ namespace RT64 {
+         uint32_t getRefreshRate() const;
+         bool detectWindowMoved();
+         void sdlCheckFilterInstallation();
+-        static int sdlEventFilter(void *userdata, SDL_Event *event);
++        static bool SDLCALL sdlEventFilter(void *userdata, SDL_Event *event);
+ 
+ #   ifdef _WIN32
+         void windowMessage(UINT message, WPARAM wParam, LPARAM lParam);
 diff --git a/src/hle/rt64_game_frame.cpp b/src/hle/rt64_game_frame.cpp
-index 87392d0..ffa5b3d 100644
+index 87392d0..554bacb 100644
 --- a/src/hle/rt64_game_frame.cpp
 +++ b/src/hle/rt64_game_frame.cpp
-@@ -5,11 +5,521 @@
+@@ -3,13 +3,521 @@
+ //
+ 
  #include "common/rt64_math.h"
++#include "common/rt64_rr64_simd.h"
  
  #include "rt64_game_frame.h"
 +#include "rt64_rr64_pipeline_diagnostics.h"
@@ -781,12 +1156,9 @@ index 87392d0..ffa5b3d 100644
 +            if (!mesh.valid) { continue; }
 +            mesh.topologyHash = XXH3_64bits(mesh.topology.data(), mesh.topology.size() * sizeof(uint32_t));
 +            positionBits.resize(mesh.positionCount);
-+            for (size_t i = 0; i < mesh.positionCount; i++) {
-+                if (!std::isfinite(mesh.positions[i])) { mesh.valid = false; break; }
-+                uint32_t bits = 0;
-+                if (mesh.positions[i] != 0.0f) { std::memcpy(&bits, &mesh.positions[i], sizeof(bits)); }
-+                positionBits[i] = bits;
-+            }
++            // RR64-SIMD: finite check plus signed-zero canonicalization, 8 lanes
++            // per step. Same result and the same early rejection as the loop.
++            if (!RR64Simd::canonicalizePositionBits(mesh.positions, positionBits.data(), mesh.positionCount)) { mesh.valid = false; }
 +            if (mesh.valid) {
 +                mesh.geometryHash = XXH3_64bits_withSeed(positionBits.data(), positionBits.size() * sizeof(uint32_t), mesh.topologyHash);
 +            }
@@ -1104,7 +1476,7 @@ index 87392d0..ffa5b3d 100644
      // GameFrame
      
      bool GameFrame::areFramebufferPairsCompatible(const WorkloadQueue &workloadQueue, const GameIndices::FramebufferPair &first, const GameIndices::FramebufferPair &second) {
-@@ -77,6 +587,8 @@ namespace RT64 {
+@@ -77,6 +585,8 @@ namespace RT64 {
          assert(indicesCount > 0);
  
          matched = false;
@@ -1113,7 +1485,7 @@ index 87392d0..ffa5b3d 100644
          perspectiveScenes.clear();
          orthographicScenes.clear();
          workloads.clear();
-@@ -256,6 +768,55 @@ namespace RT64 {
+@@ -256,6 +766,55 @@ namespace RT64 {
          tileInterpolationUsed = false;
          lookAtInterpolationUsed = false;
          matched = true;
@@ -1169,7 +1541,7 @@ index 87392d0..ffa5b3d 100644
  
          thread_local std::unordered_map<uint32_t, ModifiedBuffers> workloadsModified;
          workloadsModified.clear();
-@@ -271,7 +832,7 @@ namespace RT64 {
+@@ -271,7 +830,7 @@ namespace RT64 {
              workloadMap.mapped = true;
  
              Workload &curWorkload = workloadQueue.workloads[workloads[w]];
@@ -1178,7 +1550,7 @@ index 87392d0..ffa5b3d 100644
              workloadMap.viewProjections.clear();
              workloadMap.viewProjections.resize(curWorkload.drawData.viewProjTransforms.size());
              workloadMap.transforms.clear();
-@@ -288,6 +849,13 @@ namespace RT64 {
+@@ -288,6 +847,13 @@ namespace RT64 {
              workloadMap.prevLookAtMapped.resize(prevWorkload.drawData.rspLookAt.size());
  
              buildTransformIdMap(curWorkload, curWorkload.transformIdMap, curWorkload.transformIgnoredIds);
@@ -1192,7 +1564,7 @@ index 87392d0..ffa5b3d 100644
  
              // Retrieve the matching maps for the current and previous workload.
              GameFrameMap::WorkloadMap &curWorkloadMap = frameMap.workloads[workloads[w]];
-@@ -331,10 +899,26 @@ namespace RT64 {
+@@ -331,10 +897,26 @@ namespace RT64 {
          thread_local std::vector<MatchCandidate> matchCandidates;
          thread_local std::vector<bool> curScenesMatched;
          thread_local std::vector<bool> prevScenesMatched;
@@ -1220,7 +1592,7 @@ index 87392d0..ffa5b3d 100644
                  const GameIndices::Projection curFirstProj = curScenes[i].projections[0];
                  const Workload &curWorkload = workloadQueue.workloads[curFirstProj.workloadIndex];
                  const FramebufferPair &curFbPair = curWorkload.fbPairs[curFirstProj.fbPairIndex];
-@@ -342,13 +926,16 @@ namespace RT64 {
+@@ -342,13 +924,16 @@ namespace RT64 {
                  const hlslpp::float4x4 &curViewTransform = curWorkload.drawData.viewTransforms[curProj.transformsIndex];
                  const hlslpp::float4x4 &curProjTransform = curWorkload.drawData.projTransforms[curProj.transformsIndex];
                  for (uint32_t j = 0; j < prevScenes.size(); j++) {
@@ -1238,7 +1610,7 @@ index 87392d0..ffa5b3d 100644
                  }
              }
  
-@@ -366,14 +953,37 @@ namespace RT64 {
+@@ -366,14 +951,37 @@ namespace RT64 {
                      continue;
                  }
  
@@ -1279,7 +1651,7 @@ index 87392d0..ffa5b3d 100644
  
          if (!workloadsModified.empty()) {
              thread_local std::vector<BufferUploader::Upload> uploads;
-@@ -398,7 +1008,8 @@ namespace RT64 {
+@@ -398,7 +1006,8 @@ namespace RT64 {
          }
      }
  
@@ -1289,7 +1661,7 @@ index 87392d0..ffa5b3d 100644
          if (curScene.projections.empty() || prevScene.projections.empty()) {
              return;
          }
-@@ -516,10 +1127,36 @@ namespace RT64 {
+@@ -516,10 +1125,36 @@ namespace RT64 {
          transformCheckSet.clear();
          tileCheckSet.clear();
          lookAtCheckSet.clear();
@@ -1328,7 +1700,7 @@ index 87392d0..ffa5b3d 100644
              for (auto prevIt = prevRange.first; prevIt != prevRange.second; prevIt++) {
                  const GameIndices::Projection &curProjIndices = curScene.projections[curIt.second.sceneProjIndex];
                  const Workload &curWorkload = workloadQueue.workloads[curProjIndices.workloadIndex];
-@@ -533,7 +1170,19 @@ namespace RT64 {
+@@ -533,7 +1168,19 @@ namespace RT64 {
                  const GameCall &prevCall = prevProj.gameCalls[prevIt->second.callIndex];
                  const uint32_t curWorldMatrixCount = (curCall.callDesc.maxWorldMatrix - curCall.callDesc.minWorldMatrix) + 1;
                  const uint32_t prevWorldMatrixCount = (prevCall.callDesc.maxWorldMatrix - prevCall.callDesc.minWorldMatrix) + 1;
@@ -1349,7 +1721,7 @@ index 87392d0..ffa5b3d 100644
                      for (uint32_t w = 0; w < curWorldMatrixCount; w++) {
                          const uint32_t curWorldMatrix = curCall.callDesc.minWorldMatrix + w;
                          const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curWorldMatrix];
-@@ -542,6 +1191,11 @@ namespace RT64 {
+@@ -542,6 +1189,11 @@ namespace RT64 {
                          const uint32_t prevGroupIndex = prevWorkload.drawData.worldTransformGroups[prevWorldMatrix];
                          const TransformGroup &prevGroup = prevWorkload.drawData.transformGroups[prevGroupIndex];
                          if ((curGroup.matrixId == prevGroup.matrixId) && ((curGroup.matrixId == G_EX_ID_AUTO) || ((curGroup.matrixId != G_EX_ID_IGNORE) && (curGroup.ordering == G_EX_ORDER_AUTO)))) {
@@ -1361,7 +1733,7 @@ index 87392d0..ffa5b3d 100644
                              transformCheckSet.emplace(curWorldMatrix, prevWorldMatrix);
                          }
                      }
-@@ -572,6 +1226,24 @@ namespace RT64 {
+@@ -572,6 +1224,24 @@ namespace RT64 {
                      lookAtCheckSet.emplace(curLookAtIndex, prevLookAtIndex);
                  }
              }
@@ -1386,7 +1758,7 @@ index 87392d0..ffa5b3d 100644
          }
  
          // Compute all the differences between transforms and insert them into a vector that will be sorted according to the differences.
-@@ -588,22 +1260,79 @@ namespace RT64 {
+@@ -588,22 +1258,79 @@ namespace RT64 {
  
              TransformMatchResult matchResult = computeTransformMatch(curTransform, firstCurViewProj, prevTransform, firstPrevViewProj, prevRigidBody);
              if (matchResult.valid) {
@@ -1473,7 +1845,7 @@ index 87392d0..ffa5b3d 100644
          }
  
          if (!modifiedBuffers.empty()) {
-@@ -720,6 +1449,11 @@ namespace RT64 {
+@@ -720,6 +1447,11 @@ namespace RT64 {
          const uint32_t curGroupIndex = curWorkload.drawData.worldTransformGroups[curTransformIndex];
          const TransformGroup &curGroup = curWorkload.drawData.transformGroups[curGroupIndex];
          curTransformMap.rigidBody.updateLinear(prevTransform, curTransform, curGroup.positionInterpolation);
@@ -1485,7 +1857,7 @@ index 87392d0..ffa5b3d 100644
          curTransformMap.rigidBody.updateAngular(prevTransform, curTransform, curGroup.rotationInterpolation, curGroup.scaleInterpolation, curGroup.skewInterpolation);
          curTransformMap.rigidBody.updatePerspective(prevTransform, curTransform, curGroup.perspectiveInterpolation);
          curTransformMap.rigidBody.updateDecomposition(curTransform, curGroup.decompose);
-@@ -1039,4 +1773,4 @@ namespace RT64 {
+@@ -1039,4 +1771,4 @@ namespace RT64 {
          }
      }
      */
@@ -2232,23 +2604,23 @@ index e08b02c..2b23009 100644
 \ No newline at end of file
 +};
 diff --git a/src/hle/rt64_rdp.cpp b/src/hle/rt64_rdp.cpp
-index a10c11a..316ce46 100644
+index a10c11a..6d0031d 100644
 --- a/src/hle/rt64_rdp.cpp
 +++ b/src/hle/rt64_rdp.cpp
-@@ -5,6 +5,12 @@
+@@ -4,7 +4,12 @@
+ 
  #include "rt64_rdp.h"
  
++#include <algorithm>
  #include <cassert>
 +#include <cmath>
 +#include <cstring>
-+#if defined(_M_X64) || defined(__x86_64__)
-+#include <emmintrin.h>
-+#endif
++#include "common/rt64_rr64_simd.h"
 +// RR64_COMPAT_FAR_PRIM_DEPTH_INCLUDE
  
  #include "../include/rt64_extended_gbi.h"
  
-@@ -367,6 +373,45 @@ namespace RT64 {
+@@ -367,6 +372,45 @@ namespace RT64 {
      
      template<bool RGBA32 = false, bool TLUT = false>
      __forceinline void loadWord(uint8_t *TMEM, uint32_t tmemAddress, uint32_t tmemXorMask, const uint8_t *RDRAM, uint32_t textureAddress) {
@@ -2294,25 +2666,33 @@ index a10c11a..316ce46 100644
          // Only sample the first two bytes in TLUT mode.
          uint32_t offsetMask;
          if constexpr (TLUT) {
-@@ -461,6 +506,51 @@ namespace RT64 {
+@@ -456,11 +500,71 @@ namespace RT64 {
+             }
+         }
+ 
++        // RR64-SIMD: the two-word fast paths below previously existed only as
++        // SSE2 sequences on x86. They now use one byte shuffle per pair
++        // (SSSE3 pshufb under the AVX floor, TBL/REV on arm64), proven equal to
++        // both the SSE2 sequence and the scalar loadWord by the SIMD harness.
++        // RR64_SIMD=scalar restores the one-word scalar path for A/B checks.
++#if defined(RR64_SIMD_HAS_TMEM_SWIZZLE)
++        const bool vectorWords = RR64Simd::level() != RR64Simd::Level::Scalar;
++#endif
+         while (rowCount > 0) {
+             textureAddress = textureAddressRow;
              tmemAddress = tmemAddressRow;
              wordCount = wordsPerRow;
              while (wordCount > 0) {
-+#if defined(_M_X64) || defined(__x86_64__)
++#if defined(RR64_SIMD_HAS_TMEM_SWIZZLE)
 +                if constexpr (!RGBA32 && TLUT) {
 +                    // Two palette entries expand to two eight-byte TMEM
 +                    // words. Read exactly four source bytes, then replicate
 +                    // each converted halfword four times as the scalar path.
-+                    if (wordCount >= 2 && (textureAddress & 3u) == 0u &&
++                    if (vectorWords && wordCount >= 2 && (textureAddress & 3u) == 0u &&
 +                        tmemAddress <= RDP_TMEM_BYTES - 16u) {
 +                        uint32_t source;
 +                        std::memcpy(&source, RDRAM + textureAddress, sizeof(source));
-+                        __m128i bytes = _mm_cvtsi32_si128(static_cast<int32_t>(source));
-+                        bytes = _mm_or_si128(_mm_slli_epi16(bytes, 8), _mm_srli_epi16(bytes, 8));
-+                        bytes = _mm_shufflelo_epi16(bytes, _MM_SHUFFLE(2, 3, 0, 1));
-+                        bytes = _mm_unpacklo_epi16(bytes, bytes);
-+                        bytes = _mm_unpacklo_epi32(bytes, bytes);
-+                        _mm_storeu_si128(reinterpret_cast<__m128i *>(TMEM + tmemAddress), bytes);
++                        RR64Simd::tmemPaletteWordPair(source, TMEM + tmemAddress);
 +                        loadWordStep();
 +                        loadWordStep();
 +                        wordCount -= 2;
@@ -2320,33 +2700,45 @@ index a10c11a..316ce46 100644
 +                    }
 +                }
 +                if constexpr (!RGBA32 && !TLUT) {
-+                    // Two adjacent words share a vector conversion only when
-+                    // the first step cannot wrap TMEM or change the DXT bank.
-+                    // Keep the ordinary step logic, including a transition
-+                    // after the second word. Odd tails and unusual layouts
-+                    // continue through the original one-word implementation.
-+                    const bool contiguous = !BLOCK || (dxtCounter + dxtIncrement < DXTSwap);
-+                    if (wordCount >= 2 && (textureAddress & 3u) == 0u &&
-+                        tmemAddress <= RDP_TMEM_BYTES - 16u && contiguous) {
-+                        __m128i bytes = _mm_loadu_si128(reinterpret_cast<const __m128i *>(RDRAM + textureAddress));
-+                        bytes = _mm_or_si128(_mm_slli_epi16(bytes, 8), _mm_srli_epi16(bytes, 8));
-+                        bytes = _mm_shufflelo_epi16(bytes, _MM_SHUFFLE(2, 3, 0, 1));
-+                        bytes = _mm_shufflehi_epi16(bytes, _MM_SHUFFLE(2, 3, 0, 1));
-+                        if (tmemXorMask) {
-+                            bytes = _mm_shuffle_epi32(bytes, _MM_SHUFFLE(2, 3, 0, 1));
++                    // RR64-SIMD (tuning pass 2): copy the longest run of words
++                    // whose first run - 1 steps cannot wrap TMEM or change the
++                    // DXT bank in one call (32 bytes per AVX2 step), then apply
++                    // those steps arithmetically. The step after the last word
++                    // still goes through loadWordStep, so a TMEM wrap or bank
++                    // transition there is handled exactly as before. Within the
++                    // run the XOR mask is constant (it only changes on a row
++                    // step or a bank swap), so every word gets the same mapping
++                    // the one-word path applies. Runs shorter than two words,
++                    // unaligned sources and odd layouts use the original path.
++                    if (vectorWords && wordCount >= 2 && (textureAddress & 3u) == 0u) {
++                        uint32_t run = std::min(wordCount, (RDP_TMEM_BYTES - tmemAddress) / tmemAdvance);
++                        if constexpr (BLOCK) {
++                            if (dxtIncrement > 0) {
++                                // Steps k >= 1 with dxtCounter + k * dxtIncrement < DXTSwap.
++                                const uint32_t stepsWithoutSwap = (DXTSwap - 1u - dxtCounter) / dxtIncrement;
++                                run = std::min(run, stepsWithoutSwap + 1u);
++                            }
 +                        }
-+                        _mm_storeu_si128(reinterpret_cast<__m128i *>(TMEM + tmemAddress), bytes);
-+                        loadWordStep();
-+                        loadWordStep();
-+                        wordCount -= 2;
-+                        continue;
++
++                        if (run >= 2) {
++                            RR64Simd::tmemTexelWords(RDRAM + textureAddress, TMEM + tmemAddress, run, tmemXorMask != 0);
++                            textureAddress += textureAdvance * (run - 1u);
++                            tmemAddress = (tmemAddress + tmemAdvance * (run - 1u)) & tmemMask;
++                            if constexpr (BLOCK) {
++                                dxtCounter += dxtIncrement * (run - 1u);
++                            }
++
++                            loadWordStep();
++                            wordCount -= run;
++                            continue;
++                        }
 +                    }
 +                }
 +#endif
                  loadWord<RGBA32, TLUT>(TMEM, tmemAddress, tmemXorMask, RDRAM, textureAddress);
                  loadWordStep();
                  wordCount--;
-@@ -962,7 +1052,13 @@ namespace RT64 {
+@@ -962,7 +1066,13 @@ namespace RT64 {
          const float Fixed15ToFloat = 1.0f / 32767.0f;
          const float Fixed16ToFloat = 1.0f / 65535.0f;
          hlslpp::float2 &primDepth = primDepthStack[primDepthStackSize - 1];
@@ -2408,10 +2800,10 @@ index 3708220..381d3bd 100644
          std::set<uint64_t> dumpedSet;
  
 diff --git a/src/hle/rt64_rsp.cpp b/src/hle/rt64_rsp.cpp
-index ee2030b..704b87c 100644
+index ee2030b..27c3a5d 100644
 --- a/src/hle/rt64_rsp.cpp
 +++ b/src/hle/rt64_rsp.cpp
-@@ -3,8 +3,11 @@
+@@ -3,12 +3,17 @@
  //
  
  #include "rt64_rsp.h"
@@ -2419,11 +2811,17 @@ index ee2030b..704b87c 100644
  
 +#include <atomic>
  #include <cassert>
++#include <cstddef>
 +#include <cstdio>
  
  #include "../include/rt64_extended_gbi.h"
  #include "common/rt64_common.h"
-@@ -18,6 +21,27 @@
+ #include "common/rt64_math.h"
++#include "common/rt64_rr64_simd.h"
+ #include "gbi/rt64_f3d.h"
+ #include "shared/rt64_rsp_fog.h"
+ 
+@@ -18,6 +23,27 @@
  //#define LOG_SPECIAL_MATRIX_OPERATIONS
  
  namespace RT64 {
@@ -2451,7 +2849,20 @@ index ee2030b..704b87c 100644
      // RSP
  
      constexpr float DepthRange = 1024.0f;
-@@ -464,7 +488,7 @@ namespace RT64 {
+@@ -364,6 +390,12 @@ namespace RT64 {
+         modelViewProjChanged = changed;
+     }
+ 
++    // RR64-SIMD: the packet kernels read Vertex records as raw 16-byte rows.
++    static_assert(sizeof(RSP::Vertex) == 16, "RR64Simd packet kernels expect 16-byte RSP vertices.");
++    static_assert(offsetof(RSP::Vertex, y) == 0 && offsetof(RSP::Vertex, x) == 2 && offsetof(RSP::Vertex, z) == 6, "RR64Simd position layout.");
++    static_assert(offsetof(RSP::Vertex, t) == 8 && offsetof(RSP::Vertex, s) == 10, "RR64Simd texcoord layout.");
++    static_assert(sizeof(hlslpp::float4) == 16 && sizeof(hlslpp::float3) == 16 && sizeof(hlslpp::float4x4) == 64, "RR64Simd record layout.");
++
+     void RSP::setVertex(uint32_t address, uint32_t vtxCount, uint32_t dstIndex) {
+         if ((dstIndex >= RSP_MAX_VERTICES) || ((dstIndex + vtxCount) > RSP_MAX_VERTICES)) {
+             assert(false && "Vertex indices are not valid. DL is possibly corrupted.");
+@@ -464,7 +496,7 @@ namespace RT64 {
              curViewProjIndex = transformsIndex;
  
              uint32_t physicalAddress = projectionMatrixPhysicalAddressStack[projectionMatrixStackSize - 1];
@@ -2460,7 +2871,7 @@ index ee2030b..704b87c 100644
              drawData.viewTransforms.emplace_back(hlslpp::mul(extended.invViewMatrix, viewMatrixStack[projectionMatrixStackSize - 1]));
              drawData.projTransforms.emplace_back(hlslpp::mul(extended.invProjMatrix, projMatrixStack[projectionMatrixStackSize - 1]));
              drawData.viewProjTransforms.emplace_back(hlslpp::mul(extended.invViewProjMatrix, viewProjMatrixStack[projectionMatrixStackSize - 1]));
-@@ -503,6 +527,7 @@ namespace RT64 {
+@@ -503,6 +535,7 @@ namespace RT64 {
  
      template<bool addEmptyVelocity, uint32_t vertexSize>
      void RSP::setVertexCommon(uint32_t rdramAddress, uint32_t dstIndex, uint32_t dstMax) {
@@ -2468,7 +2879,7 @@ index ee2030b..704b87c 100644
          const int workloadCursor = state->ext.workloadQueue->writeCursor;
          Workload &workload = state->ext.workloadQueue->workloads[workloadCursor];
  
-@@ -543,7 +568,7 @@ namespace RT64 {
+@@ -543,7 +576,7 @@ namespace RT64 {
  
          if (addWorldTransform) {
              uint32_t physicalAddress = modelMatrixPhysicalAddressStack[modelMatrixStackSize - 1];
@@ -2477,7 +2888,7 @@ index ee2030b..704b87c 100644
              worldTransformGroups.emplace_back(extended.curModelMatrixIdGroupIndex);
              worldTransformSegmentedAddresses.emplace_back(modelMatrixSegmentedAddressStack[modelMatrixStackSize - 1]);
              worldTransformPhysicalAddresses.emplace_back(physicalAddress);
-@@ -622,7 +647,12 @@ namespace RT64 {
+@@ -622,7 +655,12 @@ namespace RT64 {
              curLightCount = 0;
          }
  
@@ -2491,7 +2902,7 @@ index ee2030b..704b87c 100644
          if (usesFog) {
              if (fogChanged) {
                  auto &rspFogVector = workload.drawData.rspFog;
-@@ -676,42 +706,86 @@ namespace RT64 {
+@@ -676,61 +714,88 @@ namespace RT64 {
          auto &posScreen = workload.drawData.posScreen;
          const auto &mvp = modelViewProjMatrix;
          const uint32_t globalIndex = workload.drawData.vertexCount();
@@ -2524,10 +2935,12 @@ index ee2030b..704b87c 100644
 +            velFloats.resize(total * 3, 0.0f);
 +            tcVelFloats.resize(total * 2, 0.0f);
 +        }
-+        // Stream storage is disjoint and fixed for this packet. Hoist its addresses
-+        // before byte-color stores, which otherwise inhibit pointer reuse.
-+        auto *posFloatsOutput = posFloats.data();
-+        auto *normColBytesOutput = normColBytes.data();
++        // RR64-SIMD: positions and colors for the whole packet in one kernel
++        // (4 records per step on SSE4.1/NEON, 8 on AVX2). Values are identical
++        // to the former per-vertex loop: int16 -> float is exact and the color
++        // bytes are only reordered, with alpha cleared when fog is suppressed.
++        RR64Simd::convertVertexAttributes(reinterpret_cast<const uint8_t *>(&vertices[dstIndex]), count, suppressFog,
++            posFloats.data() + size_t(globalIndex) * 3, normColBytes.data() + size_t(globalIndex) * 4);
          for (uint32_t i = dstIndex; i < dstMax; i++) {
 -            auto &v = vertices[i];
 -            posFloats.emplace_back(v.x);
@@ -2544,17 +2957,7 @@ index ee2030b..704b87c 100644
 -            lightCounts.emplace_back(curLightCount);
 -            lookAtIndices.emplace_back(curLookAtIndex);
 -            indices[i] = uint32_t(globalIndex) + (i - dstIndex);
-+            const auto &v = vertices[i];
-+            const uint32_t j = globalIndex + i - dstIndex;
-+            posFloatsOutput[j * 3] = v.x;
-+            posFloatsOutput[j * 3 + 1] = v.y;
-+            posFloatsOutput[j * 3 + 2] = v.z;
-+            normColBytesOutput[j * 4] = v.color.r;
-+            normColBytesOutput[j * 4 + 1] = v.color.g;
-+            normColBytesOutput[j * 4 + 2] = v.color.b;
-+            // Suppressed fog still uses zero shade alpha, as on the old path.
-+            normColBytesOutput[j * 4 + 3] = suppressFog ? 0 : v.color.a;
-+            indices[i] = j;
++            indices[i] = globalIndex + i - dstIndex;
              used[i] = false;
 -
 -            if constexpr (addEmptyVelocity) {
@@ -2569,6 +2972,14 @@ index ee2030b..704b87c 100644
          readExtendedVertexSegment<3, vertexSize>(rdramAddress, dstIndex, dstMax, globalIndex, G_EX_VERTEX_POSITION, posFloats);
          readExtendedVertexSegment<3, vertexSize>(rdramAddress, dstIndex, dstMax, globalIndex, G_EX_VERTEX_VELOCITY, velFloats);
  
+-        uint32_t floatIndex = globalIndex * 3;
+-        for (uint32_t i = dstIndex; i < dstMax; i++) {
+-            const hlslpp::float4 tfPos = hlslpp::mul(hlslpp::float4(posFloats[floatIndex + 0], posFloats[floatIndex + 1], posFloats[floatIndex + 2], 1.0f), mvp);
+-            const interop::RSPViewport &viewport = viewportStack[viewportStackSize - 1];
+-            posTransformed.emplace_back(tfPos);
+-            posScreen.emplace_back((tfPos.xyz / hlslpp::float3(tfPos.w, -tfPos.w, tfPos.w)) * viewport.scale + viewport.translate);
+-            floatIndex += 3;
+-        }
 +        // Allocate packet output once. Appending each vertex separately
 +        // repeatedly checks capacity and updates three vector lengths.
 +        // Extended input overrides have already completed before this point.
@@ -2579,33 +2990,22 @@ index ee2030b..704b87c 100644
 +        auto *screenOutput = posScreen.data() + globalIndex;
 +        auto *texcoordOutput = tcFloats.data() + globalIndex * 2;
 +        const interop::RSPViewport &viewport = viewportStack[viewportStackSize - 1];
-         uint32_t floatIndex = globalIndex * 3;
--        for (uint32_t i = dstIndex; i < dstMax; i++) {
-+        uint32_t i = dstIndex;
-+        // Independent vertices expose transform/division latency to the CPU.
-+        // Keep each vertex's arithmetic and camera basis exactly unchanged.
-+        for (; i + 1 < dstMax; i += 2) {
-+            const hlslpp::float4 a = hlslpp::mul(hlslpp::float4(posFloats[floatIndex], posFloats[floatIndex + 1], posFloats[floatIndex + 2], 1.0f), mvp);
-+            const hlslpp::float4 b = hlslpp::mul(hlslpp::float4(posFloats[floatIndex + 3], posFloats[floatIndex + 4], posFloats[floatIndex + 5], 1.0f), mvp);
-+            transformedOutput[0] = a;
-+            transformedOutput[1] = b;
-+            screenOutput[0] = (a.xyz / hlslpp::float3(a.w, -a.w, a.w)) * viewport.scale + viewport.translate;
-+            screenOutput[1] = (b.xyz / hlslpp::float3(b.w, -b.w, b.w)) * viewport.scale + viewport.translate;
-+            transformedOutput += 2;
-+            screenOutput += 2;
-+            floatIndex += 6;
-+        }
-+        for (; i < dstMax; i++) {
-             const hlslpp::float4 tfPos = hlslpp::mul(hlslpp::float4(posFloats[floatIndex + 0], posFloats[floatIndex + 1], posFloats[floatIndex + 2], 1.0f), mvp);
--            const interop::RSPViewport &viewport = viewportStack[viewportStackSize - 1];
--            posTransformed.emplace_back(tfPos);
--            posScreen.emplace_back((tfPos.xyz / hlslpp::float3(tfPos.w, -tfPos.w, tfPos.w)) * viewport.scale + viewport.translate);
-+            *transformedOutput++ = tfPos;
-+            *screenOutput++ = (tfPos.xyz / hlslpp::float3(tfPos.w, -tfPos.w, tfPos.w)) * viewport.scale + viewport.translate;
-             floatIndex += 3;
-         }
++        // RR64-SIMD: clip and screen positions for the packet. The kernels run
++        // hlslpp's own per-lane operation sequence (mul, madd, the divide by
++        // float3(w, -w, w), scale, translate) so both 16-byte records are
++        // bit-identical to the former hlslpp loop, which remains the scalar path
++        // (RR64_SIMD=scalar). AVX handles two vertices per register.
++        // interop::float3 is a 12-byte struct; the old expression converted it
++        // to hlslpp::float3 implicitly, and that conversion defines the padding
++        // lane. Convert the same way and pass the 16-byte hlslpp storage.
++        const hlslpp::float3 viewportScale = viewport.scale;
++        const hlslpp::float3 viewportTranslate = viewport.translate;
++        RR64Simd::transformVertices(posFloats.data() + size_t(globalIndex) * 3, count,
++            reinterpret_cast<const float *>(&mvp), reinterpret_cast<const float *>(&viewportScale),
++            reinterpret_cast<const float *>(&viewportTranslate), reinterpret_cast<float *>(transformedOutput),
++            reinterpret_cast<float *>(screenOutput));
  
-@@ -719,8 +793,8 @@ namespace RT64 {
+         if (usesTextureGen) {
              const float TextureSc = static_cast<float>(textureState.sc);
              const float TextureTc = static_cast<float>(textureState.tc);
              for (uint32_t i = dstIndex; i < dstMax; i++) {
@@ -2616,18 +3016,22 @@ index ee2030b..704b87c 100644
              }
          }
          else {
-@@ -728,8 +802,8 @@ namespace RT64 {
-             const int32_t TextureTc = (int32_t)(textureState.tc);
-             const double Divisor = 65536.0f * 32.0f;
-             for (uint32_t i = dstIndex; i < dstMax; i++) {
+-            const int32_t TextureSc = (int32_t)(textureState.sc);
+-            const int32_t TextureTc = (int32_t)(textureState.tc);
+-            const double Divisor = 65536.0f * 32.0f;
+-            for (uint32_t i = dstIndex; i < dstMax; i++) {
 -                tcFloats.emplace_back((float)((double)((vertices[i].s) * TextureSc) / Divisor));
 -                tcFloats.emplace_back((float)((double)((vertices[i].t) * TextureTc) / Divisor));
-+                *texcoordOutput++ = (float)((double)((vertices[i].s) * TextureSc) / Divisor);
-+                *texcoordOutput++ = (float)((double)((vertices[i].t) * TextureTc) / Divisor);
-             }
+-            }
++            // RR64-SIMD: (float)((double)(s * sc) / 2^21) evaluated as an int32
++            // multiply, one int -> float rounding and an exact power-of-two scale;
++            // identical for every int16 s/t and uint16 scale (harness: exhaustive).
++            RR64Simd::computeTexcoords(reinterpret_cast<const uint8_t *>(&vertices[dstIndex]), count,
++                int32_t(textureState.sc), int32_t(textureState.tc), texcoordOutput);
          }
      }
-@@ -988,8 +1062,24 @@ namespace RT64 {
+ 
+@@ -988,8 +1053,24 @@ namespace RT64 {
      }
  
      void RSP::setFog(int16_t mul, int16_t offset) {
@@ -2654,7 +3058,7 @@ index ee2030b..704b87c 100644
          fogChanged = true;
      }
      
-@@ -1050,6 +1140,7 @@ namespace RT64 {
+@@ -1050,6 +1131,7 @@ namespace RT64 {
      }
  
      void RSP::drawIndexedTri(uint32_t a, uint32_t b, uint32_t c, bool rawGlobalIndices) {
@@ -2662,7 +3066,7 @@ index ee2030b..704b87c 100644
          // Copy mode is not supported when drawing regular tris and crashes the hardware.
          const uint32_t cycleType = state->rdp->otherMode.cycleType();
          assert(cycleType != G_CYC_COPY);
-@@ -1166,6 +1257,124 @@ namespace RT64 {
+@@ -1166,6 +1248,124 @@ namespace RT64 {
          drawIndexedTri(a, b, c, false);
      }
  
@@ -2787,7 +3191,7 @@ index ee2030b..704b87c 100644
      void RSP::setViewportAlign(uint16_t ori, int16_t offx, int16_t offy) {
          extended.global.viewportOrigin = ori;
          extended.global.viewportOffsetX = offx;
-@@ -1216,9 +1425,12 @@ namespace RT64 {
+@@ -1216,9 +1416,12 @@ namespace RT64 {
              const int workloadCursor = state->ext.workloadQueue->writeCursor;
              Workload &workload = state->ext.workloadQueue->workloads[workloadCursor];
  
@@ -2803,7 +3207,7 @@ index ee2030b..704b87c 100644
                  if (proj && (matrix_id < workload.drawData.viewProjTransformGroups.size())) {
                      uint32_t groupIndex = workload.drawData.viewProjTransformGroups[matrix_id];
                      setGroupProperties(&workload.drawData.transformGroups[groupIndex], false);
-@@ -1310,3 +1522,4 @@ namespace RT64 {
+@@ -1310,3 +1513,4 @@ namespace RT64 {
          }
      }
  };
@@ -4425,6 +4829,691 @@ index bde2f03..e2d23ac 100644
  
          void threadAdvanceBarrier();
          void threadAdvanceWorkloadId(uint64_t newWorkloadId);
+diff --git a/src/imgui/imgui_impl_sdl2_custom.cpp b/src/imgui/imgui_impl_sdl2_custom.cpp
+deleted file mode 100644
+index 3edf457..0000000
+--- a/src/imgui/imgui_impl_sdl2_custom.cpp
++++ /dev/null
+@@ -1,630 +0,0 @@
+-// dear imgui: Platform Backend for SDL2
+-// This needs to be used along with a Renderer (e.g. DirectX11, OpenGL3, Vulkan..)
+-// (Info: SDL2 is a cross-platform general purpose library for handling windows, inputs, graphics context creation, etc.)
+-// (Prefer SDL 2.0.5+ for full feature support.)
+-
+-// Implemented features:
+-//  [X] Platform: Clipboard support.
+-//  [X] Platform: Mouse support. Can discriminate Mouse/TouchScreen.
+-//  [X] Platform: Keyboard support. Since 1.87 we are using the io.AddKeyEvent() function. Pass ImGuiKey values to all key functions e.g. ImGui::IsKeyPressed(ImGuiKey_Space). [Legacy SDL_SCANCODE_* values will also be supported unless IMGUI_DISABLE_OBSOLETE_KEYIO is set]
+-//  [X] Platform: Gamepad support. Enabled with 'io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad'.
+-//  [X] Platform: Mouse cursor shape and visibility. Disable with 'io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange'.
+-//  [X] Platform: Basic IME support. App needs to call 'SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");' before SDL_CreateWindow()!.
+-
+-// You can use unmodified imgui_impl_* files in your project. See examples/ folder for examples of using this.
+-// Prefer including the entire imgui/ repository into your project (either as a copy or as a submodule), and only build the backends you need.
+-// Learn about Dear ImGui:
+-// - FAQ                  https://dearimgui.com/faq
+-// - Getting Started      https://dearimgui.com/getting-started
+-// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
+-// - Introduction, links and more at the top of imgui.cpp
+-
+-// CHANGELOG
+-// (minor and older changes stripped away, please see git history for details)
+-//  2024-02-14: Inputs: Handle gamepad disconnection. Added ImGui_ImplSDL2_SetGamepadMode().
+-//  2023-10-05: Inputs: Added support for extra ImGuiKey values: F13 to F24 function keys, app back/forward keys.
+-//  2023-04-06: Inputs: Avoid calling SDL_StartTextInput()/SDL_StopTextInput() as they don't only pertain to IME. It's unclear exactly what their relation is to IME. (#6306)
+-//  2023-04-04: Inputs: Added support for io.AddMouseSourceEvent() to discriminate ImGuiMouseSource_Mouse/ImGuiMouseSource_TouchScreen. (#2702)
+-//  2023-02-23: Accept SDL_GetPerformanceCounter() not returning a monotonically increasing value. (#6189, #6114, #3644)
+-//  2023-02-07: Implement IME handler (io.SetPlatformImeDataFn will call SDL_SetTextInputRect()/SDL_StartTextInput()).
+-//  2023-02-07: *BREAKING CHANGE* Renamed this backend file from imgui_impl_sdl.cpp/.h to imgui_impl_sdl2.cpp/.h in prevision for the future release of SDL3.
+-//  2023-02-02: Avoid calling SDL_SetCursor() when cursor has not changed, as the function is surprisingly costly on Mac with latest SDL (may be fixed in next SDL version).
+-//  2023-02-02: Added support for SDL 2.0.18+ preciseX/preciseY mouse wheel data for smooth scrolling + Scaling X value on Emscripten (bug?). (#4019, #6096)
+-//  2023-02-02: Removed SDL_MOUSEWHEEL value clamping, as values seem correct in latest Emscripten. (#4019)
+-//  2023-02-01: Flipping SDL_MOUSEWHEEL 'wheel.x' value to match other backends and offer consistent horizontal scrolling direction. (#4019, #6096, #1463)
+-//  2022-10-11: Using 'nullptr' instead of 'NULL' as per our switch to C++11.
+-//  2022-09-26: Inputs: Disable SDL 2.0.22 new "auto capture" (SDL_HINT_MOUSE_AUTO_CAPTURE) which prevents drag and drop across windows for multi-viewport support + don't capture when drag and dropping. (#5710)
+-//  2022-09-26: Inputs: Renamed ImGuiKey_ModXXX introduced in 1.87 to ImGuiMod_XXX (old names still supported).
+-//  2022-03-22: Inputs: Fix mouse position issues when dragging outside of boundaries. SDL_CaptureMouse() erroneously still gives out LEAVE events when hovering OS decorations.
+-//  2022-03-22: Inputs: Added support for extra mouse buttons (SDL_BUTTON_X1/SDL_BUTTON_X2).
+-//  2022-02-04: Added SDL_Renderer* parameter to ImGui_ImplSDL2_InitForSDLRenderer(), so we can use SDL_GetRendererOutputSize() instead of SDL_GL_GetDrawableSize() when bound to a SDL_Renderer.
+-//  2022-01-26: Inputs: replaced short-lived io.AddKeyModsEvent() (added two weeks ago) with io.AddKeyEvent() using ImGuiKey_ModXXX flags. Sorry for the confusion.
+-//  2021-01-20: Inputs: calling new io.AddKeyAnalogEvent() for gamepad support, instead of writing directly to io.NavInputs[].
+-//  2022-01-17: Inputs: calling new io.AddMousePosEvent(), io.AddMouseButtonEvent(), io.AddMouseWheelEvent() API (1.87+).
+-//  2022-01-17: Inputs: always update key mods next and before key event (not in NewFrame) to fix input queue with very low framerates.
+-//  2022-01-12: Update mouse inputs using SDL_MOUSEMOTION/SDL_WINDOWEVENT_LEAVE + fallback to provide it when focused but not hovered/captured. More standard and will allow us to pass it to future input queue API.
+-//  2022-01-12: Maintain our own copy of MouseButtonsDown mask instead of using ImGui::IsAnyMouseDown() which will be obsoleted.
+-//  2022-01-10: Inputs: calling new io.AddKeyEvent(), io.AddKeyModsEvent() + io.SetKeyEventNativeData() API (1.87+). Support for full ImGuiKey range.
+-//  2021-08-17: Calling io.AddFocusEvent() on SDL_WINDOWEVENT_FOCUS_GAINED/SDL_WINDOWEVENT_FOCUS_LOST.
+-//  2021-07-29: Inputs: MousePos is correctly reported when the host platform window is hovered but not focused (using SDL_GetMouseFocus() + SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, requires SDL 2.0.5+)
+-//  2021-06-29: *BREAKING CHANGE* Removed 'SDL_Window* window' parameter to ImGui_ImplSDL2_NewFrame() which was unnecessary.
+-//  2021-06-29: Reorganized backend to pull data from a single structure to facilitate usage with multiple-contexts (all g_XXXX access changed to bd->XXXX).
+-//  2021-03-22: Rework global mouse pos availability check listing supported platforms explicitly, effectively fixing mouse access on Raspberry Pi. (#2837, #3950)
+-//  2020-05-25: Misc: Report a zero display-size when window is minimized, to be consistent with other backends.
+-//  2020-02-20: Inputs: Fixed mapping for ImGuiKey_KeyPadEnter (using SDL_SCANCODE_KP_ENTER instead of SDL_SCANCODE_RETURN2).
+-//  2019-12-17: Inputs: On Wayland, use SDL_GetMouseState (because there is no global mouse state).
+-//  2019-12-05: Inputs: Added support for ImGuiMouseCursor_NotAllowed mouse cursor.
+-//  2019-07-21: Inputs: Added mapping for ImGuiKey_KeyPadEnter.
+-//  2019-04-23: Inputs: Added support for SDL_GameController (if ImGuiConfigFlags_NavEnableGamepad is set by user application).
+-//  2019-03-12: Misc: Preserve DisplayFramebufferScale when main window is minimized.
+-//  2018-12-21: Inputs: Workaround for Android/iOS which don't seem to handle focus related calls.
+-//  2018-11-30: Misc: Setting up io.BackendPlatformName so it can be displayed in the About Window.
+-//  2018-11-14: Changed the signature of ImGui_ImplSDL2_ProcessEvent() to take a 'const SDL_Event*'.
+-//  2018-08-01: Inputs: Workaround for Emscripten which doesn't seem to handle focus related calls.
+-//  2018-06-29: Inputs: Added support for the ImGuiMouseCursor_Hand cursor.
+-//  2018-06-08: Misc: Extracted imgui_impl_sdl.cpp/.h away from the old combined SDL2+OpenGL/Vulkan examples.
+-//  2018-06-08: Misc: ImGui_ImplSDL2_InitForOpenGL() now takes a SDL_GLContext parameter.
+-//  2018-05-09: Misc: Fixed clipboard paste memory leak (we didn't call SDL_FreeMemory on the data returned by SDL_GetClipboardText).
+-//  2018-03-20: Misc: Setup io.BackendFlags ImGuiBackendFlags_HasMouseCursors flag + honor ImGuiConfigFlags_NoMouseCursorChange flag.
+-//  2018-02-16: Inputs: Added support for mouse cursors, honoring ImGui::GetMouseCursor() value.
+-//  2018-02-06: Misc: Removed call to ImGui::Shutdown() which is not available from 1.60 WIP, user needs to call CreateContext/DestroyContext themselves.
+-//  2018-02-06: Inputs: Added mapping for ImGuiKey_Space.
+-//  2018-02-05: Misc: Using SDL_GetPerformanceCounter() instead of SDL_GetTicks() to be able to handle very high framerate (1000+ FPS).
+-//  2018-02-05: Inputs: Keyboard mapping is using scancodes everywhere instead of a confusing mixture of keycodes and scancodes.
+-//  2018-01-20: Inputs: Added Horizontal Mouse Wheel support.
+-//  2018-01-19: Inputs: When available (SDL 2.0.4+) using SDL_CaptureMouse() to retrieve coordinates outside of client area when dragging. Otherwise (SDL 2.0.3 and before) testing for SDL_WINDOW_INPUT_FOCUS instead of SDL_WINDOW_MOUSE_FOCUS.
+-//  2018-01-18: Inputs: Added mapping for ImGuiKey_Insert.
+-//  2017-08-25: Inputs: MousePos set to -FLT_MAX,-FLT_MAX when mouse is unavailable/missing (instead of -1,-1).
+-//  2016-10-15: Misc: Added a void* user_data parameter to Clipboard function handlers.
+-
+-// RT64
+-// This custom version of the backend has controller support completely removed to avoid errors with DualShock/DualSense controllers.
+-
+-#include "imgui.h"
+-#ifndef IMGUI_DISABLE
+-#include "imgui_impl_sdl2_custom.h"
+-
+-// Clang warnings with -Weverything
+-#if defined(__clang__)
+-#pragma clang diagnostic push
+-#pragma clang diagnostic ignored "-Wimplicit-int-float-conversion"  // warning: implicit conversion from 'xxx' to 'float' may lose precision
+-#endif
+-
+-// SDL
+-#include <SDL.h>
+-#include <SDL_syswm.h>
+-#if defined(__APPLE__)
+-#include <TargetConditionals.h>
+-#endif
+-
+-#if SDL_VERSION_ATLEAST(2,0,4) && !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS) && !defined(__amigaos4__)
+-#define SDL_HAS_CAPTURE_AND_GLOBAL_MOUSE    1
+-#else
+-#define SDL_HAS_CAPTURE_AND_GLOBAL_MOUSE    0
+-#endif
+-#define SDL_HAS_VULKAN                      SDL_VERSION_ATLEAST(2,0,6)
+-
+-// SDL Data
+-struct ImGui_ImplSDL2_Data
+-{
+-    SDL_Window*             Window;
+-    SDL_Renderer*           Renderer;
+-    Uint64                  Time;
+-    char*                   ClipboardTextData;
+-
+-    // Mouse handling
+-    Uint32                  MouseWindowID;
+-    int                     MouseButtonsDown;
+-    SDL_Cursor*             MouseCursors[ImGuiMouseCursor_COUNT];
+-    SDL_Cursor*             MouseLastCursor;
+-    int                     MouseLastLeaveFrame;
+-    bool                    MouseCanUseGlobalState;
+-
+-    ImGui_ImplSDL2_Data()   { memset((void*)this, 0, sizeof(*this)); }
+-};
+-
+-// Backend data stored in io.BackendPlatformUserData to allow support for multiple Dear ImGui contexts
+-// It is STRONGLY preferred that you use docking branch with multi-viewports (== single Dear ImGui context + multiple windows) instead of multiple Dear ImGui contexts.
+-// FIXME: multi-context support is not well tested and probably dysfunctional in this backend.
+-// FIXME: some shared resources (mouse cursor shape, gamepad) are mishandled when using multi-context.
+-static ImGui_ImplSDL2_Data* ImGui_ImplSDL2_GetBackendData()
+-{
+-    return ImGui::GetCurrentContext() ? (ImGui_ImplSDL2_Data*)ImGui::GetIO().BackendPlatformUserData : nullptr;
+-}
+-
+-// Functions
+-static const char* ImGui_ImplSDL2_GetClipboardText(void*)
+-{
+-    ImGui_ImplSDL2_Data* bd = ImGui_ImplSDL2_GetBackendData();
+-    if (bd->ClipboardTextData)
+-        SDL_free(bd->ClipboardTextData);
+-    bd->ClipboardTextData = SDL_GetClipboardText();
+-    return bd->ClipboardTextData;
+-}
+-
+-static void ImGui_ImplSDL2_SetClipboardText(void*, const char* text)
+-{
+-    SDL_SetClipboardText(text);
+-}
+-
+-// Note: native IME will only display if user calls SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1") _before_ SDL_CreateWindow().
+-static void ImGui_ImplSDL2_SetPlatformImeData(ImGuiViewport*, ImGuiPlatformImeData* data)
+-{
+-    if (data->WantVisible)
+-    {
+-        SDL_Rect r;
+-        r.x = (int)data->InputPos.x;
+-        r.y = (int)data->InputPos.y;
+-        r.w = 1;
+-        r.h = (int)data->InputLineHeight;
+-        SDL_SetTextInputRect(&r);
+-    }
+-}
+-
+-static ImGuiKey ImGui_ImplSDL2_KeycodeToImGuiKey(int keycode)
+-{
+-    switch (keycode)
+-    {
+-        case SDLK_TAB: return ImGuiKey_Tab;
+-        case SDLK_LEFT: return ImGuiKey_LeftArrow;
+-        case SDLK_RIGHT: return ImGuiKey_RightArrow;
+-        case SDLK_UP: return ImGuiKey_UpArrow;
+-        case SDLK_DOWN: return ImGuiKey_DownArrow;
+-        case SDLK_PAGEUP: return ImGuiKey_PageUp;
+-        case SDLK_PAGEDOWN: return ImGuiKey_PageDown;
+-        case SDLK_HOME: return ImGuiKey_Home;
+-        case SDLK_END: return ImGuiKey_End;
+-        case SDLK_INSERT: return ImGuiKey_Insert;
+-        case SDLK_DELETE: return ImGuiKey_Delete;
+-        case SDLK_BACKSPACE: return ImGuiKey_Backspace;
+-        case SDLK_SPACE: return ImGuiKey_Space;
+-        case SDLK_RETURN: return ImGuiKey_Enter;
+-        case SDLK_ESCAPE: return ImGuiKey_Escape;
+-        case SDLK_QUOTE: return ImGuiKey_Apostrophe;
+-        case SDLK_COMMA: return ImGuiKey_Comma;
+-        case SDLK_MINUS: return ImGuiKey_Minus;
+-        case SDLK_PERIOD: return ImGuiKey_Period;
+-        case SDLK_SLASH: return ImGuiKey_Slash;
+-        case SDLK_SEMICOLON: return ImGuiKey_Semicolon;
+-        case SDLK_EQUALS: return ImGuiKey_Equal;
+-        case SDLK_LEFTBRACKET: return ImGuiKey_LeftBracket;
+-        case SDLK_BACKSLASH: return ImGuiKey_Backslash;
+-        case SDLK_RIGHTBRACKET: return ImGuiKey_RightBracket;
+-        case SDLK_BACKQUOTE: return ImGuiKey_GraveAccent;
+-        case SDLK_CAPSLOCK: return ImGuiKey_CapsLock;
+-        case SDLK_SCROLLLOCK: return ImGuiKey_ScrollLock;
+-        case SDLK_NUMLOCKCLEAR: return ImGuiKey_NumLock;
+-        case SDLK_PRINTSCREEN: return ImGuiKey_PrintScreen;
+-        case SDLK_PAUSE: return ImGuiKey_Pause;
+-        case SDLK_KP_0: return ImGuiKey_Keypad0;
+-        case SDLK_KP_1: return ImGuiKey_Keypad1;
+-        case SDLK_KP_2: return ImGuiKey_Keypad2;
+-        case SDLK_KP_3: return ImGuiKey_Keypad3;
+-        case SDLK_KP_4: return ImGuiKey_Keypad4;
+-        case SDLK_KP_5: return ImGuiKey_Keypad5;
+-        case SDLK_KP_6: return ImGuiKey_Keypad6;
+-        case SDLK_KP_7: return ImGuiKey_Keypad7;
+-        case SDLK_KP_8: return ImGuiKey_Keypad8;
+-        case SDLK_KP_9: return ImGuiKey_Keypad9;
+-        case SDLK_KP_PERIOD: return ImGuiKey_KeypadDecimal;
+-        case SDLK_KP_DIVIDE: return ImGuiKey_KeypadDivide;
+-        case SDLK_KP_MULTIPLY: return ImGuiKey_KeypadMultiply;
+-        case SDLK_KP_MINUS: return ImGuiKey_KeypadSubtract;
+-        case SDLK_KP_PLUS: return ImGuiKey_KeypadAdd;
+-        case SDLK_KP_ENTER: return ImGuiKey_KeypadEnter;
+-        case SDLK_KP_EQUALS: return ImGuiKey_KeypadEqual;
+-        case SDLK_LCTRL: return ImGuiKey_LeftCtrl;
+-        case SDLK_LSHIFT: return ImGuiKey_LeftShift;
+-        case SDLK_LALT: return ImGuiKey_LeftAlt;
+-        case SDLK_LGUI: return ImGuiKey_LeftSuper;
+-        case SDLK_RCTRL: return ImGuiKey_RightCtrl;
+-        case SDLK_RSHIFT: return ImGuiKey_RightShift;
+-        case SDLK_RALT: return ImGuiKey_RightAlt;
+-        case SDLK_RGUI: return ImGuiKey_RightSuper;
+-        case SDLK_APPLICATION: return ImGuiKey_Menu;
+-        case SDLK_0: return ImGuiKey_0;
+-        case SDLK_1: return ImGuiKey_1;
+-        case SDLK_2: return ImGuiKey_2;
+-        case SDLK_3: return ImGuiKey_3;
+-        case SDLK_4: return ImGuiKey_4;
+-        case SDLK_5: return ImGuiKey_5;
+-        case SDLK_6: return ImGuiKey_6;
+-        case SDLK_7: return ImGuiKey_7;
+-        case SDLK_8: return ImGuiKey_8;
+-        case SDLK_9: return ImGuiKey_9;
+-        case SDLK_a: return ImGuiKey_A;
+-        case SDLK_b: return ImGuiKey_B;
+-        case SDLK_c: return ImGuiKey_C;
+-        case SDLK_d: return ImGuiKey_D;
+-        case SDLK_e: return ImGuiKey_E;
+-        case SDLK_f: return ImGuiKey_F;
+-        case SDLK_g: return ImGuiKey_G;
+-        case SDLK_h: return ImGuiKey_H;
+-        case SDLK_i: return ImGuiKey_I;
+-        case SDLK_j: return ImGuiKey_J;
+-        case SDLK_k: return ImGuiKey_K;
+-        case SDLK_l: return ImGuiKey_L;
+-        case SDLK_m: return ImGuiKey_M;
+-        case SDLK_n: return ImGuiKey_N;
+-        case SDLK_o: return ImGuiKey_O;
+-        case SDLK_p: return ImGuiKey_P;
+-        case SDLK_q: return ImGuiKey_Q;
+-        case SDLK_r: return ImGuiKey_R;
+-        case SDLK_s: return ImGuiKey_S;
+-        case SDLK_t: return ImGuiKey_T;
+-        case SDLK_u: return ImGuiKey_U;
+-        case SDLK_v: return ImGuiKey_V;
+-        case SDLK_w: return ImGuiKey_W;
+-        case SDLK_x: return ImGuiKey_X;
+-        case SDLK_y: return ImGuiKey_Y;
+-        case SDLK_z: return ImGuiKey_Z;
+-        case SDLK_F1: return ImGuiKey_F1;
+-        case SDLK_F2: return ImGuiKey_F2;
+-        case SDLK_F3: return ImGuiKey_F3;
+-        case SDLK_F4: return ImGuiKey_F4;
+-        case SDLK_F5: return ImGuiKey_F5;
+-        case SDLK_F6: return ImGuiKey_F6;
+-        case SDLK_F7: return ImGuiKey_F7;
+-        case SDLK_F8: return ImGuiKey_F8;
+-        case SDLK_F9: return ImGuiKey_F9;
+-        case SDLK_F10: return ImGuiKey_F10;
+-        case SDLK_F11: return ImGuiKey_F11;
+-        case SDLK_F12: return ImGuiKey_F12;
+-        case SDLK_F13: return ImGuiKey_F13;
+-        case SDLK_F14: return ImGuiKey_F14;
+-        case SDLK_F15: return ImGuiKey_F15;
+-        case SDLK_F16: return ImGuiKey_F16;
+-        case SDLK_F17: return ImGuiKey_F17;
+-        case SDLK_F18: return ImGuiKey_F18;
+-        case SDLK_F19: return ImGuiKey_F19;
+-        case SDLK_F20: return ImGuiKey_F20;
+-        case SDLK_F21: return ImGuiKey_F21;
+-        case SDLK_F22: return ImGuiKey_F22;
+-        case SDLK_F23: return ImGuiKey_F23;
+-        case SDLK_F24: return ImGuiKey_F24;
+-        case SDLK_AC_BACK: return ImGuiKey_AppBack;
+-        case SDLK_AC_FORWARD: return ImGuiKey_AppForward;
+-    }
+-    return ImGuiKey_None;
+-}
+-
+-static void ImGui_ImplSDL2_UpdateKeyModifiers(SDL_Keymod sdl_key_mods)
+-{
+-    ImGuiIO& io = ImGui::GetIO();
+-    io.AddKeyEvent(ImGuiMod_Ctrl, (sdl_key_mods & KMOD_CTRL) != 0);
+-    io.AddKeyEvent(ImGuiMod_Shift, (sdl_key_mods & KMOD_SHIFT) != 0);
+-    io.AddKeyEvent(ImGuiMod_Alt, (sdl_key_mods & KMOD_ALT) != 0);
+-    io.AddKeyEvent(ImGuiMod_Super, (sdl_key_mods & KMOD_GUI) != 0);
+-}
+-
+-// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
+-// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
+-// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
+-// Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
+-// If you have multiple SDL events and some of them are not meant to be used by dear imgui, you may need to filter events based on their windowID field.
+-bool ImGui_ImplSDL2_ProcessEvent(const SDL_Event* event)
+-{
+-    ImGuiIO& io = ImGui::GetIO();
+-    ImGui_ImplSDL2_Data* bd = ImGui_ImplSDL2_GetBackendData();
+-
+-    switch (event->type)
+-    {
+-        case SDL_MOUSEMOTION:
+-        {
+-            ImVec2 mouse_pos((float)event->motion.x, (float)event->motion.y);
+-            io.AddMouseSourceEvent(event->motion.which == SDL_TOUCH_MOUSEID ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse);
+-            io.AddMousePosEvent(mouse_pos.x, mouse_pos.y);
+-            return true;
+-        }
+-        case SDL_MOUSEWHEEL:
+-        {
+-            //IMGUI_DEBUG_LOG("wheel %.2f %.2f, precise %.2f %.2f\n", (float)event->wheel.x, (float)event->wheel.y, event->wheel.preciseX, event->wheel.preciseY);
+-#if SDL_VERSION_ATLEAST(2,0,18) // If this fails to compile on Emscripten: update to latest Emscripten!
+-            float wheel_x = -event->wheel.preciseX;
+-            float wheel_y = event->wheel.preciseY;
+-#else
+-            float wheel_x = -(float)event->wheel.x;
+-            float wheel_y = (float)event->wheel.y;
+-#endif
+-#ifdef __EMSCRIPTEN__
+-            wheel_x /= 100.0f;
+-#endif
+-            io.AddMouseSourceEvent(event->wheel.which == SDL_TOUCH_MOUSEID ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse);
+-            io.AddMouseWheelEvent(wheel_x, wheel_y);
+-            return true;
+-        }
+-        case SDL_MOUSEBUTTONDOWN:
+-        case SDL_MOUSEBUTTONUP:
+-        {
+-            int mouse_button = -1;
+-            if (event->button.button == SDL_BUTTON_LEFT) { mouse_button = 0; }
+-            if (event->button.button == SDL_BUTTON_RIGHT) { mouse_button = 1; }
+-            if (event->button.button == SDL_BUTTON_MIDDLE) { mouse_button = 2; }
+-            if (event->button.button == SDL_BUTTON_X1) { mouse_button = 3; }
+-            if (event->button.button == SDL_BUTTON_X2) { mouse_button = 4; }
+-            if (mouse_button == -1)
+-                break;
+-            io.AddMouseSourceEvent(event->button.which == SDL_TOUCH_MOUSEID ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse);
+-            io.AddMouseButtonEvent(mouse_button, (event->type == SDL_MOUSEBUTTONDOWN));
+-            bd->MouseButtonsDown = (event->type == SDL_MOUSEBUTTONDOWN) ? (bd->MouseButtonsDown | (1 << mouse_button)) : (bd->MouseButtonsDown & ~(1 << mouse_button));
+-            return true;
+-        }
+-        case SDL_TEXTINPUT:
+-        {
+-            io.AddInputCharactersUTF8(event->text.text);
+-            return true;
+-        }
+-        case SDL_KEYDOWN:
+-        case SDL_KEYUP:
+-        {
+-            ImGui_ImplSDL2_UpdateKeyModifiers((SDL_Keymod)event->key.keysym.mod);
+-            ImGuiKey key = ImGui_ImplSDL2_KeycodeToImGuiKey(event->key.keysym.sym);
+-            io.AddKeyEvent(key, (event->type == SDL_KEYDOWN));
+-            io.SetKeyEventNativeData(key, event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.scancode); // To support legacy indexing (<1.87 user code). Legacy backend uses SDLK_*** as indices to IsKeyXXX() functions.
+-            return true;
+-        }
+-        case SDL_WINDOWEVENT:
+-        {
+-            // - When capturing mouse, SDL will send a bunch of conflicting LEAVE/ENTER event on every mouse move, but the final ENTER tends to be right.
+-            // - However we won't get a correct LEAVE event for a captured window.
+-            // - In some cases, when detaching a window from main viewport SDL may send SDL_WINDOWEVENT_ENTER one frame too late,
+-            //   causing SDL_WINDOWEVENT_LEAVE on previous frame to interrupt drag operation by clear mouse position. This is why
+-            //   we delay process the SDL_WINDOWEVENT_LEAVE events by one frame. See issue #5012 for details.
+-            Uint8 window_event = event->window.event;
+-            if (window_event == SDL_WINDOWEVENT_ENTER)
+-            {
+-                bd->MouseWindowID = event->window.windowID;
+-                bd->MouseLastLeaveFrame = 0;
+-            }
+-            if (window_event == SDL_WINDOWEVENT_LEAVE)
+-                bd->MouseLastLeaveFrame = ImGui::GetFrameCount() + 1;
+-            if (window_event == SDL_WINDOWEVENT_FOCUS_GAINED)
+-                io.AddFocusEvent(true);
+-            else if (event->window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+-                io.AddFocusEvent(false);
+-            return true;
+-        }
+-    }
+-    return false;
+-}
+-
+-static bool ImGui_ImplSDL2_Init(SDL_Window* window, SDL_Renderer* renderer)
+-{
+-    ImGuiIO& io = ImGui::GetIO();
+-    IM_ASSERT(io.BackendPlatformUserData == nullptr && "Already initialized a platform backend!");
+-
+-    // Check and store if we are on a SDL backend that supports global mouse position
+-    // ("wayland" and "rpi" don't support it, but we chose to use a white-list instead of a black-list)
+-    bool mouse_can_use_global_state = false;
+-#if SDL_HAS_CAPTURE_AND_GLOBAL_MOUSE
+-    const char* sdl_backend = SDL_GetCurrentVideoDriver();
+-    const char* global_mouse_whitelist[] = { "windows", "cocoa", "x11", "DIVE", "VMAN" };
+-    for (int n = 0; n < IM_ARRAYSIZE(global_mouse_whitelist); n++)
+-        if (strncmp(sdl_backend, global_mouse_whitelist[n], strlen(global_mouse_whitelist[n])) == 0)
+-            mouse_can_use_global_state = true;
+-#endif
+-
+-    // Setup backend capabilities flags
+-    ImGui_ImplSDL2_Data* bd = IM_NEW(ImGui_ImplSDL2_Data)();
+-    io.BackendPlatformUserData = (void*)bd;
+-    io.BackendPlatformName = "imgui_impl_sdl2";
+-    io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;       // We can honor GetMouseCursor() values (optional)
+-    io.BackendFlags |= ImGuiBackendFlags_HasSetMousePos;        // We can honor io.WantSetMousePos requests (optional, rarely used)
+-
+-    bd->Window = window;
+-    bd->Renderer = renderer;
+-    bd->MouseCanUseGlobalState = mouse_can_use_global_state;
+-
+-    io.SetClipboardTextFn = ImGui_ImplSDL2_SetClipboardText;
+-    io.GetClipboardTextFn = ImGui_ImplSDL2_GetClipboardText;
+-    io.ClipboardUserData = nullptr;
+-    io.SetPlatformImeDataFn = ImGui_ImplSDL2_SetPlatformImeData;
+-
+-    // Load mouse cursors
+-    bd->MouseCursors[ImGuiMouseCursor_Arrow] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+-    bd->MouseCursors[ImGuiMouseCursor_TextInput] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_IBEAM);
+-    bd->MouseCursors[ImGuiMouseCursor_ResizeAll] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEALL);
+-    bd->MouseCursors[ImGuiMouseCursor_ResizeNS] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENS);
+-    bd->MouseCursors[ImGuiMouseCursor_ResizeEW] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEWE);
+-    bd->MouseCursors[ImGuiMouseCursor_ResizeNESW] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENESW);
+-    bd->MouseCursors[ImGuiMouseCursor_ResizeNWSE] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
+-    bd->MouseCursors[ImGuiMouseCursor_Hand] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+-    bd->MouseCursors[ImGuiMouseCursor_NotAllowed] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NO);
+-
+-    // Set platform dependent data in viewport
+-    // Our mouse update function expect PlatformHandle to be filled for the main viewport
+-    ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+-    main_viewport->PlatformHandleRaw = nullptr;
+-    SDL_SysWMinfo info;
+-    SDL_VERSION(&info.version);
+-    if (SDL_GetWindowWMInfo(window, &info))
+-    {
+-#if defined(SDL_VIDEO_DRIVER_WINDOWS)
+-        main_viewport->PlatformHandleRaw = (void*)info.info.win.window;
+-#elif defined(__APPLE__) && defined(SDL_VIDEO_DRIVER_COCOA)
+-        main_viewport->PlatformHandleRaw = (void*)info.info.cocoa.window;
+-#endif
+-    }
+-
+-    // From 2.0.5: Set SDL hint to receive mouse click events on window focus, otherwise SDL doesn't emit the event.
+-    // Without this, when clicking to gain focus, our widgets wouldn't activate even though they showed as hovered.
+-    // (This is unfortunately a global SDL setting, so enabling it might have a side-effect on your application.
+-    // It is unlikely to make a difference, but if your app absolutely needs to ignore the initial on-focus click:
+-    // you can ignore SDL_MOUSEBUTTONDOWN events coming right after a SDL_WINDOWEVENT_FOCUS_GAINED)
+-#ifdef SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH
+-    SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+-#endif
+-
+-    // From 2.0.18: Enable native IME.
+-    // IMPORTANT: This is used at the time of SDL_CreateWindow() so this will only affects secondary windows, if any.
+-    // For the main window to be affected, your application needs to call this manually before calling SDL_CreateWindow().
+-#ifdef SDL_HINT_IME_SHOW_UI
+-    SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
+-#endif
+-
+-    // From 2.0.22: Disable auto-capture, this is preventing drag and drop across multiple windows (see #5710)
+-#ifdef SDL_HINT_MOUSE_AUTO_CAPTURE
+-    SDL_SetHint(SDL_HINT_MOUSE_AUTO_CAPTURE, "0");
+-#endif
+-
+-    return true;
+-}
+-
+-bool ImGui_ImplSDL2_InitForOpenGL(SDL_Window* window, void* sdl_gl_context)
+-{
+-    IM_UNUSED(sdl_gl_context); // Viewport branch will need this.
+-    return ImGui_ImplSDL2_Init(window, nullptr);
+-}
+-
+-bool ImGui_ImplSDL2_InitForVulkan(SDL_Window* window)
+-{
+-#if !SDL_HAS_VULKAN
+-    IM_ASSERT(0 && "Unsupported");
+-#endif
+-    return ImGui_ImplSDL2_Init(window, nullptr);
+-}
+-
+-bool ImGui_ImplSDL2_InitForD3D(SDL_Window* window)
+-{
+-#if !defined(_WIN32)
+-    IM_ASSERT(0 && "Unsupported");
+-#endif
+-    return ImGui_ImplSDL2_Init(window, nullptr);
+-}
+-
+-bool ImGui_ImplSDL2_InitForMetal(SDL_Window* window)
+-{
+-    return ImGui_ImplSDL2_Init(window, nullptr);
+-}
+-
+-bool ImGui_ImplSDL2_InitForSDLRenderer(SDL_Window* window, SDL_Renderer* renderer)
+-{
+-    return ImGui_ImplSDL2_Init(window, renderer);
+-}
+-
+-bool ImGui_ImplSDL2_InitForOther(SDL_Window* window)
+-{
+-    return ImGui_ImplSDL2_Init(window, nullptr);
+-}
+-
+-void ImGui_ImplSDL2_Shutdown()
+-{
+-    ImGui_ImplSDL2_Data* bd = ImGui_ImplSDL2_GetBackendData();
+-    IM_ASSERT(bd != nullptr && "No platform backend to shutdown, or already shutdown?");
+-    ImGuiIO& io = ImGui::GetIO();
+-
+-    if (bd->ClipboardTextData)
+-        SDL_free(bd->ClipboardTextData);
+-    for (ImGuiMouseCursor cursor_n = 0; cursor_n < ImGuiMouseCursor_COUNT; cursor_n++)
+-        SDL_FreeCursor(bd->MouseCursors[cursor_n]);
+-
+-    io.BackendPlatformName = nullptr;
+-    io.BackendPlatformUserData = nullptr;
+-    io.BackendFlags &= ~(ImGuiBackendFlags_HasMouseCursors | ImGuiBackendFlags_HasSetMousePos);
+-    IM_DELETE(bd);
+-}
+-
+-static void ImGui_ImplSDL2_UpdateMouseData()
+-{
+-    ImGui_ImplSDL2_Data* bd = ImGui_ImplSDL2_GetBackendData();
+-    ImGuiIO& io = ImGui::GetIO();
+-
+-    // We forward mouse input when hovered or captured (via SDL_MOUSEMOTION) or when focused (below)
+-#if SDL_HAS_CAPTURE_AND_GLOBAL_MOUSE
+-    // SDL_CaptureMouse() let the OS know e.g. that our imgui drag outside the SDL window boundaries shouldn't e.g. trigger other operations outside
+-    SDL_CaptureMouse((bd->MouseButtonsDown != 0) ? SDL_TRUE : SDL_FALSE);
+-    SDL_Window* focused_window = SDL_GetKeyboardFocus();
+-    const bool is_app_focused = (bd->Window == focused_window);
+-#else
+-    const bool is_app_focused = (SDL_GetWindowFlags(bd->Window) & SDL_WINDOW_INPUT_FOCUS) != 0; // SDL 2.0.3 and non-windowed systems: single-viewport only
+-#endif
+-    if (is_app_focused)
+-    {
+-        // (Optional) Set OS mouse position from Dear ImGui if requested (rarely used, only when ImGuiConfigFlags_NavEnableSetMousePos is enabled by user)
+-        if (io.WantSetMousePos)
+-            SDL_WarpMouseInWindow(bd->Window, (int)io.MousePos.x, (int)io.MousePos.y);
+-
+-        // (Optional) Fallback to provide mouse position when focused (SDL_MOUSEMOTION already provides this when hovered or captured)
+-        if (bd->MouseCanUseGlobalState && bd->MouseButtonsDown == 0)
+-        {
+-            int window_x, window_y, mouse_x_global, mouse_y_global;
+-            SDL_GetGlobalMouseState(&mouse_x_global, &mouse_y_global);
+-            SDL_GetWindowPosition(bd->Window, &window_x, &window_y);
+-            io.AddMousePosEvent((float)(mouse_x_global - window_x), (float)(mouse_y_global - window_y));
+-        }
+-    }
+-}
+-
+-static void ImGui_ImplSDL2_UpdateMouseCursor()
+-{
+-    ImGuiIO& io = ImGui::GetIO();
+-    if (io.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange)
+-        return;
+-    ImGui_ImplSDL2_Data* bd = ImGui_ImplSDL2_GetBackendData();
+-
+-    ImGuiMouseCursor imgui_cursor = ImGui::GetMouseCursor();
+-    if (io.MouseDrawCursor || imgui_cursor == ImGuiMouseCursor_None)
+-    {
+-        // Hide OS mouse cursor if imgui is drawing it or if it wants no cursor
+-        SDL_ShowCursor(SDL_FALSE);
+-    }
+-    else
+-    {
+-        // Show OS mouse cursor
+-        SDL_Cursor* expected_cursor = bd->MouseCursors[imgui_cursor] ? bd->MouseCursors[imgui_cursor] : bd->MouseCursors[ImGuiMouseCursor_Arrow];
+-        if (bd->MouseLastCursor != expected_cursor)
+-        {
+-            SDL_SetCursor(expected_cursor); // SDL function doesn't have an early out (see #6113)
+-            bd->MouseLastCursor = expected_cursor;
+-        }
+-        SDL_ShowCursor(SDL_TRUE);
+-    }
+-}
+-
+-void ImGui_ImplSDL2_NewFrame()
+-{
+-    ImGui_ImplSDL2_Data* bd = ImGui_ImplSDL2_GetBackendData();
+-    IM_ASSERT(bd != nullptr && "Did you call ImGui_ImplSDL2_Init()?");
+-    ImGuiIO& io = ImGui::GetIO();
+-
+-    // Setup display size (every frame to accommodate for window resizing)
+-    int w, h;
+-    int display_w, display_h;
+-    SDL_GetWindowSize(bd->Window, &w, &h);
+-    if (SDL_GetWindowFlags(bd->Window) & SDL_WINDOW_MINIMIZED)
+-        w = h = 0;
+-    if (bd->Renderer != nullptr)
+-        SDL_GetRendererOutputSize(bd->Renderer, &display_w, &display_h);
+-    else
+-        SDL_GL_GetDrawableSize(bd->Window, &display_w, &display_h);
+-    io.DisplaySize = ImVec2((float)w, (float)h);
+-    if (w > 0 && h > 0)
+-        io.DisplayFramebufferScale = ImVec2((float)display_w / w, (float)display_h / h);
+-
+-    // Setup time step (we don't use SDL_GetTicks() because it is using millisecond resolution)
+-    // (Accept SDL_GetPerformanceCounter() not returning a monotonically increasing value. Happens in VMs and Emscripten, see #6189, #6114, #3644)
+-    static Uint64 frequency = SDL_GetPerformanceFrequency();
+-    Uint64 current_time = SDL_GetPerformanceCounter();
+-    if (current_time <= bd->Time)
+-        current_time = bd->Time + 1;
+-    io.DeltaTime = bd->Time > 0 ? (float)((double)(current_time - bd->Time) / frequency) : (float)(1.0f / 60.0f);
+-    bd->Time = current_time;
+-
+-    if (bd->MouseLastLeaveFrame && bd->MouseLastLeaveFrame >= ImGui::GetFrameCount() && bd->MouseButtonsDown == 0)
+-    {
+-        bd->MouseWindowID = 0;
+-        bd->MouseLastLeaveFrame = 0;
+-        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+-    }
+-
+-    ImGui_ImplSDL2_UpdateMouseData();
+-    ImGui_ImplSDL2_UpdateMouseCursor();
+-}
+-
+-//-----------------------------------------------------------------------------
+-
+-#if defined(__clang__)
+-#pragma clang diagnostic pop
+-#endif
+-
+-#endif // #ifndef IMGUI_DISABLE
+diff --git a/src/imgui/imgui_impl_sdl2_custom.h b/src/imgui/imgui_impl_sdl2_custom.h
+deleted file mode 100644
+index be45c50..0000000
+--- a/src/imgui/imgui_impl_sdl2_custom.h
++++ /dev/null
+@@ -1,43 +0,0 @@
+-// dear imgui: Platform Backend for SDL2
+-// This needs to be used along with a Renderer (e.g. DirectX11, OpenGL3, Vulkan..)
+-// (Info: SDL2 is a cross-platform general purpose library for handling windows, inputs, graphics context creation, etc.)
+-
+-// Implemented features:
+-//  [X] Platform: Clipboard support.
+-//  [X] Platform: Mouse support. Can discriminate Mouse/TouchScreen.
+-//  [X] Platform: Keyboard support. Since 1.87 we are using the io.AddKeyEvent() function. Pass ImGuiKey values to all key functions e.g. ImGui::IsKeyPressed(ImGuiKey_Space). [Legacy SDL_SCANCODE_* values will also be supported unless IMGUI_DISABLE_OBSOLETE_KEYIO is set]
+-//  [X] Platform: Gamepad support. Enabled with 'io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad'.
+-//  [X] Platform: Mouse cursor shape and visibility. Disable with 'io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange'.
+-//  [X] Platform: Basic IME support. App needs to call 'SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");' before SDL_CreateWindow()!.
+-
+-// You can use unmodified imgui_impl_* files in your project. See examples/ folder for examples of using this.
+-// Prefer including the entire imgui/ repository into your project (either as a copy or as a submodule), and only build the backends you need.
+-// Learn about Dear ImGui:
+-// - FAQ                  https://dearimgui.com/faq
+-// - Getting Started      https://dearimgui.com/getting-started
+-// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
+-// - Introduction, links and more at the top of imgui.cpp
+-
+-// RT64
+-// This custom version of the backend has controller support completely removed to avoid errors with DualShock/DualSense controllers.
+-
+-#pragma once
+-#include "imgui.h"      // IMGUI_IMPL_API
+-#ifndef IMGUI_DISABLE
+-
+-struct SDL_Window;
+-struct SDL_Renderer;
+-struct _SDL_GameController;
+-typedef union SDL_Event SDL_Event;
+-
+-IMGUI_IMPL_API bool     ImGui_ImplSDL2_InitForOpenGL(SDL_Window* window, void* sdl_gl_context);
+-IMGUI_IMPL_API bool     ImGui_ImplSDL2_InitForVulkan(SDL_Window* window);
+-IMGUI_IMPL_API bool     ImGui_ImplSDL2_InitForD3D(SDL_Window* window);
+-IMGUI_IMPL_API bool     ImGui_ImplSDL2_InitForMetal(SDL_Window* window);
+-IMGUI_IMPL_API bool     ImGui_ImplSDL2_InitForSDLRenderer(SDL_Window* window, SDL_Renderer* renderer);
+-IMGUI_IMPL_API bool     ImGui_ImplSDL2_InitForOther(SDL_Window* window);
+-IMGUI_IMPL_API void     ImGui_ImplSDL2_Shutdown();
+-IMGUI_IMPL_API void     ImGui_ImplSDL2_NewFrame();
+-IMGUI_IMPL_API bool     ImGui_ImplSDL2_ProcessEvent(const SDL_Event* event);
+-
+-#endif // #ifndef IMGUI_DISABLE
 diff --git a/src/render/rt64_buffer_uploader.cpp b/src/render/rt64_buffer_uploader.cpp
 index de997a0..a8fe239 100644
 --- a/src/render/rt64_buffer_uploader.cpp
@@ -5522,6 +6611,20 @@ index e7895c3..7db2fad 100644
 -#endif
 \ No newline at end of file
 +#endif
+diff --git a/src/tools/texture_hasher/CMakeLists.txt b/src/tools/texture_hasher/CMakeLists.txt
+index 0591159..9a4c8ab 100644
+--- a/src/tools/texture_hasher/CMakeLists.txt
++++ b/src/tools/texture_hasher/CMakeLists.txt
+@@ -4,4 +4,8 @@ set(CMAKE_CXX_STANDARD 17)
+ 
+ include_directories("../../contrib")
+ 
+-add_executable(texture_hasher "texture_hasher.cpp")
++# RR64-SIMD: TMEMHasher (common/rt64_tmem_hasher.h) calls the RR64Simd palette
++# kernels, so this standalone tool compiles their source too; it does not link
++# the rt64 library.
++add_executable(texture_hasher "texture_hasher.cpp" "../../common/rt64_rr64_simd.cpp")
++target_include_directories(texture_hasher PRIVATE "../.." "../../contrib/hlslpp/include")
 diff --git a/src/tools/texture_packer/texture_packer.cpp b/src/tools/texture_packer/texture_packer.cpp
 index 1f5ccaf..abcb963 100644
 --- a/src/tools/texture_packer/texture_packer.cpp

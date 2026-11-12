@@ -1156,7 +1156,7 @@ extern "C" void rr64_autotest_input(unsigned char *rdram, unsigned int mode) {
 
     static rr64::autotest::ControlFile control_file;
     if(control_file.enabled()){
-        static std::uint16_t previous=0;
+        static rr64::autotest::ControllerInput controller_input;
         static std::uint64_t last_action_serial=0;
         const auto control=control_file.sample();
         if(control.serial && control.serial!=last_action_serial){
@@ -1165,13 +1165,7 @@ extern "C" void rr64_autotest_input(unsigned char *rdram, unsigned int mode) {
             if((control.actions&1) && race_mode_active.load(std::memory_order_relaxed))
                 rr64_request_rider_eject(0);
         }
-        const auto changed=static_cast<std::uint16_t>(previous^control.buttons);
-        rr64::engine::write_u16(rdram,rr64::engine::globals::controller_buttons,control.buttons);
-        rr64::engine::write_u16(rdram,rr64::engine::globals::controller_changed_buttons,changed);
-        rr64::engine::write_u16(rdram,rr64::engine::globals::controller_pressed_buttons,changed&control.buttons);
-        rr64::engine::write_s8(rdram,rr64::engine::globals::controller_stick_x,control.x);
-        rr64::engine::write_s8(rdram,rr64::engine::globals::controller_stick_y,control.y);
-        previous=control.buttons;
+        controller_input.apply(rdram,control);
         return;
     }
 

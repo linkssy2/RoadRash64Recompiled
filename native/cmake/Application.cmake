@@ -141,14 +141,14 @@ target_include_directories(RoadRash64Recompiled PRIVATE
     "${RECOMP_FRONTEND_ROOT}/recompinput/include"
     "${RECOMP_FRONTEND_ROOT}/recompui/include"
     "${RECOMP_FRONTEND_ROOT}/recompui/src"
-    "${RR64_SDL2_INCLUDE_DIRS}"
+    "${RR64_SDL_INCLUDE_DIRS}"
 )
 
-target_link_directories(RoadRash64Recompiled PRIVATE ${RR64_SDL2_LIB_DIRS})
-
+# RR64-SIMD: the instruction floor (formerly -march=nehalem) comes from
+# cmake/Simd.cmake, shared with every library so inline headers agree.
+rr64_add_cpu_floor_check(RoadRash64Recompiled)
 if(MSVC)
     target_compile_options(RoadRash64Recompiled PRIVATE
-        /clang:-march=nehalem
         /clang:-fno-strict-aliasing
         /clang:-fms-extensions
     )
@@ -160,7 +160,7 @@ if(MSVC)
         "$<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS>"
         "$<$<NOT:$<CONFIG:Debug>>:/ENTRY:mainCRTStartup>")
 else()
-    target_compile_options(RoadRash64Recompiled PRIVATE -march=nehalem -fno-strict-aliasing -fms-extensions)
+    target_compile_options(RoadRash64Recompiled PRIVATE -fno-strict-aliasing -fms-extensions)
 endif()
 
 target_link_libraries(RoadRash64Recompiled PRIVATE
@@ -172,7 +172,7 @@ target_link_libraries(RoadRash64Recompiled PRIVATE
     ultramodern
     rt64
     nfd
-    ${RR64_SDL2_TARGET}
+    ${RR64_SDL_TARGET}
     opus
 )
 if(WIN32)
@@ -180,9 +180,11 @@ if(WIN32)
 endif()
 
 if(WIN32)
+    # RR64-SDL3: SDL3.dll needs no copy here; it is built straight into
+    # <build>/bin beside the exe (see Sdl.cmake). Only DXC's DLLs come from
+    # contrib.
     add_custom_command(TARGET RoadRash64Recompiled POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${sdl2_SOURCE_DIR}/lib/x64/SDL2.dll"
             "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxil.dll"
             "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxcompiler.dll"
             "$<TARGET_FILE_DIR:RoadRash64Recompiled>"
@@ -218,6 +220,7 @@ if(WIN32)
     enable_language(RC)
     target_sources(RoadRash64Recompiled PRIVATE assets/RoadRashIcon.rc)
     add_executable(RoadRash64DirectStart WIN32 src/rr64_direct_start.cpp assets/RoadRashIcon.rc)
+    rr64_add_cpu_floor_check(RoadRash64DirectStart)
     target_compile_features(RoadRash64DirectStart PRIVATE cxx_std_20)
     target_link_libraries(RoadRash64DirectStart PRIVATE User32.lib)
 endif()
