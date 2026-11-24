@@ -48,6 +48,14 @@ elseif(RR64_TARGET_ARCH MATCHES "^(arm64|aarch64)$")
 else()
     message(FATAL_ERROR "Unsupported target architecture '${RR64_TARGET_ARCH}'. Road Rash 64 Recompiled builds for x86-64 and arm64.")
 endif()
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    # RR64-MAC: CMake leaves CMAKE_SYSTEM_PROCESSOR at the build host's CPU even
+    # when CMAKE_OSX_ARCHITECTURES picks the other Mac architecture, and
+    # dependencies choose sources from it (Opus: SSE/AVX or NEON files; zstd:
+    # its x86-64 assembly). Report the target instead, the same value a native
+    # build on that kind of Mac sees.
+    set(CMAKE_SYSTEM_PROCESSOR "${RR64_TARGET_ARCH}")
+endif()
 
 set(RR64_ISA_FLAGS "")
 set(RR64_ISA_DESCRIPTION "")

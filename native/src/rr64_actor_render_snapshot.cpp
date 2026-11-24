@@ -313,9 +313,9 @@ bool mounted_pair(unsigned char *rdram, std::uint32_t bike_node,
 
 void SnapshotStore::reset(unsigned char *rdram) noexcept {
     rdram_ = rdram;
-    allocations_ = {};
-    pose_epochs_ = {};
-    pose_history_ = {};
+    allocations_.fill({});
+    pose_epochs_.fill(0);
+    pose_history_.fill({}); // RR64-MAC: in place; "= {}" built a 722 KB temporary on the stack
     invalidate();
 }
 
@@ -335,13 +335,13 @@ void SnapshotStore::begin_pose_epoch(unsigned char *rdram) noexcept {
     }
     std::uint32_t view = 0;
     if (!supported_scene(rdram) || !read_u32(rdram, globals::active_viewport, view) || view >= 4u) {
-        pose_history_ = {};
-        pose_epochs_ = {};
+        pose_history_.fill({}); // RR64-MAC: in place; "= {}" built a 722 KB temporary on the stack
+        pose_epochs_.fill(0);
         return;
     }
     if (++pose_epochs_[view] == 0u) {
-        pose_history_ = {};
-        pose_epochs_ = {};
+        pose_history_.fill({}); // RR64-MAC: in place; "= {}" built a 722 KB temporary on the stack
+        pose_epochs_.fill(0);
         pose_epochs_[view] = 1u;
     }
 }

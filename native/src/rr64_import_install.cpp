@@ -14,6 +14,16 @@ namespace rr64::mk64_import {
 namespace {
 namespace fs = std::filesystem;
 using Json = nlohmann::json;
+
+// RR64-MAC: parse byte buffers as char data. nlohmann json 3.9 reads
+// unsigned-char input through std::char_traits<unsigned char>, which libc++
+// 19 and newer (Xcode 16.3+, and the bundled libc++) no longer provide. The
+// parser sees exactly the same bytes.
+template <typename Buffer>
+Json parse_json(const Buffer& bytes) {
+    const char* begin = reinterpret_cast<const char*>(bytes.data());
+    return Json::parse(begin, begin + bytes.size());
+}
 void require(bool valid, const char* message) {
     if (!valid) throw std::runtime_error(message);
 }
@@ -72,7 +82,7 @@ void ordinary_ancestors(const fs::path& root, const fs::path& relative) {
 std::string validate_pack(const fs::path& pack, std::stop_token stop) {
     check_cancel(stop);
     const auto metadata = read(pack / "catalogue.json", 2u * 1024 * 1024);
-    const auto manifest = Json::parse(metadata.begin(), metadata.end());
+    const auto manifest = parse_json(metadata);
     require(manifest.at("format") == "rr64-race-pack-catalogue" && manifest.at("version") == 1 &&
             manifest.at("group_id") == "mk64" && manifest.at("group_name") == "MK64",
             "The converter produced an unsupported catalogue.");

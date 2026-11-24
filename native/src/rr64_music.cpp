@@ -1,4 +1,5 @@
 #include "rr64_music.hpp"
+#include "rr64_atomic_shared_ptr.hpp"
 #include "rr64_native.hpp"
 #include "rr64_music_media.hpp"
 #ifdef RR64_EXPERIMENTAL_COURSE
@@ -33,7 +34,7 @@ std::vector<std::filesystem::path> files;
 std::atomic_uint selection{0};
 std::atomic<float> volume{0.65f};
 std::atomic_bool playing{false};
-std::atomic<std::shared_ptr<const Track>> current;
+rr64::AtomicSharedPtr<const Track> current;
 std::shared_ptr<const Track> retained;
 std::future<std::shared_ptr<const Track>> loading;
 unsigned requested = 0, loading_id = 0, installed = 0;

@@ -1,4 +1,5 @@
 #include "rr64_online_terrain.hpp"
+#include "rr64_atomic_shared_ptr.hpp"
 #include "rr64_engine_layout.hpp"
 #include "rr64_prediction_rules.hpp"
 #include "rr64_race_end_trace.hpp"
@@ -42,7 +43,7 @@ struct Bank {
 };
 // Live and replay descriptors retain their own immutable ROM view. Payload and
 // cache words live in low guest RAM and belong to each private replay image.
-std::atomic<std::shared_ptr<const Bank>> bank;
+rr64::AtomicSharedPtr<const Bank> bank;
 thread_local std::shared_ptr<const Bank> replay_bank;
 thread_local std::uint64_t replay_bank_epoch = 0;
 

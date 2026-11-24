@@ -6,7 +6,9 @@ byte-identical to `SDL-release-3.4.16.zip`), built from source by
 as the stock builds shipped `SDL2.dll` (built straight into `<build>/bin`;
 `-DRR64_SDL3_SHARED=OFF` links it into the EXE instead). On Linux it is a
 static library linked into the executable, so the AppImage carries no SDL
-library and no SDL development package is needed. SDL2 is gone: the game, RT64
+library and no SDL development package is needed. On macOS it is a shared
+`libSDL3.0.dylib` in the app bundle's `Contents/Frameworks`, the bundle's
+form of a DLL beside the EXE (see [MACOS.md](MACOS.md)). SDL2 is gone: the game, RT64
 and RecompFrontend call the SDL3 API directly, through the dependency patches
 and overrides.
 

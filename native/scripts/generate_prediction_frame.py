@@ -126,12 +126,15 @@ for text in [*(functions[n] for n in sorted(seen)),prefix,order]:
             if text.count(old)!=1:raise RuntimeError('Visibility distance load changed')
             text=text.replace(old,new)
 
-    # GCC rejects gotos across initialized scalar declarations in generated C++.
-    # Hoist only declarations, retaining assignments at their native instruction.
-    # Keep the accepted Clang/Windows preprocessing path unchanged.
+    # C++ forbids a goto that jumps past an initialized declaration. GCC and
+    # Clang (macOS, Linux) reject the generated jump tables; only MSVC and
+    # clang-cl (Microsoft compatibility mode, the Windows build) accept them.
+    # RR64-MAC: hoist only the declarations everywhere except MSVC/clang-cl,
+    # retaining assignments at their native instruction. The Windows
+    # preprocessing path is unchanged.
     jump_temporaries = re.findall(r'    gpr (jr_addend_[0-9A-F]+) = ([^;]+);', text)
     if jump_temporaries:
-        declarations = "\n#if defined(__GNUC__) && !defined(__clang__)\n"
+        declarations = "\n#if !defined(_MSC_VER)\n"
         declarations += ''.join('    gpr ' + name + ';\n' for name, _ in jump_temporaries)
         declarations += '#endif\n'
         opening = text.index('{') + 1
@@ -139,7 +142,7 @@ for text in [*(functions[n] for n in sorted(seen)),prefix,order]:
         for name, expression in jump_temporaries:
             original = '    gpr ' + name + ' = ' + expression + ';'
             text = text.replace(original,
-                '#if defined(__GNUC__) && !defined(__clang__)\n    ' + name + ' = ' + expression + ';\n'
+                '#if !defined(_MSC_VER)\n    ' + name + ' = ' + expression + ';\n'
                 '#else\n' + original + '\n#endif')
 
     text=text.replace('RECOMP_FUNC void','void').replace('LOOKUP_FUNC(','private_lookup(')

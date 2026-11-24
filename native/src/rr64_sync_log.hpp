@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <thread>
 #include "rr64_prediction_diagnostics.hpp"
+#include "rr64_process_exit.hpp"
 
 namespace rr64::sync_log {
 inline bool campaign() {
@@ -118,7 +119,7 @@ inline void initialize() {
         try {
             writer = new Writer(std::filesystem::path(path));
             std::atexit(shutdown);
-            std::at_quick_exit(shutdown);
+            rr64::process::at_quick_exit(shutdown);
         } catch (...) {
             std::fprintf(stderr, "[RR64-SYNC] Unable to start capture worker.\n");
         }

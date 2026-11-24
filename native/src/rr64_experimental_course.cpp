@@ -40,6 +40,16 @@
 namespace rr64::experimental_course {
 namespace {
 using Json = nlohmann::json;
+
+// RR64-MAC: parse byte buffers as char data. nlohmann json 3.9 reads
+// unsigned-char input through std::char_traits<unsigned char>, which libc++
+// 19 and newer (Xcode 16.3+, and the bundled libc++) no longer provide. The
+// parser sees exactly the same bytes.
+template <typename Buffer>
+Json parse_json(const Buffer& bytes) {
+    const char* begin = reinterpret_cast<const char*>(bytes.data());
+    return Json::parse(begin, begin + bytes.size());
+}
 using Bytes = std::vector<std::uint8_t>;
 constexpr std::size_t original_size = 0x2000000, original_table = 0x18d380;
 constexpr unsigned original_textures = 926, cells_count = 4900, maximum_textures = 1280;
@@ -702,7 +712,7 @@ void reset_assets() {
 void load_pack(const std::filesystem::path &configured) {
     const auto root = std::filesystem::weakly_canonical(configured);
     const auto metadata = read(root / "catalogue.json", 2 * 1024 * 1024);
-    const auto manifest = Json::parse(metadata.begin(), metadata.end());
+    const auto manifest = parse_json(metadata);
     require(manifest.at("format") == "rr64-race-pack-catalogue" && manifest.at("version") == 1 &&
                 manifest.at("group_id") == "mk64" && manifest.at("group_name") == "MK64",
             "unsupported catalogue");
@@ -764,14 +774,14 @@ void load_pack(const std::filesystem::path &configured) {
         require(course.preview.size() == 128 * 78 * 2, "truncated preview");
         const auto route_name = c.at("route").get<std::string>();
         const auto &route_json = files.at(route_name);
-        const auto route_metadata = Json::parse(route_json.begin(), route_json.end());
+        const auto route_metadata = parse_json(route_json);
         require(route_metadata.at("binary") == "route.bin", "unsupported route binary path");
         course.records = files.at(
             (std::filesystem::path(route_name).parent_path() / "route.bin").generic_string());
         decode_route(course, route_metadata);
         if (c.contains("boosts")) {
             const auto &bytes = files.at(c.at("boosts").get<std::string>());
-            const auto boost = Json::parse(bytes.begin(), bytes.end());
+            const auto boost = parse_json(bytes);
             require(boost.at("format") == "rr64-course-boosts" && boost.at("version") == 1 &&
                         boost.at("course") == course.id && boost.at("pads").size() <= 32,
                     "invalid boost metadata");
@@ -810,7 +820,7 @@ void load_pack(const std::filesystem::path &configured) {
         if (c.contains("item_boxes")) {
             require(manifest.contains("item_box_asset"), "item definitions require render asset");
             const auto &item_json = files.at(c.at("item_boxes").get<std::string>());
-            decode_items(course, Json::parse(item_json.begin(), item_json.end()),
+            decode_items(course, parse_json(item_json),
                          prepared.source_to_world_scale);
         }
         // Keep IDs only while validating this course's optional sound metadata;
@@ -819,14 +829,14 @@ void load_pack(const std::filesystem::path &configured) {
         for (const auto &key : {"walls", "surfaces"})
             if (c.contains(key)) {
                 const auto &bytes = files.at(c.at(key).get<std::string>());
-                decode_walls(course, Json::parse(bytes.begin(), bytes.end()),
+                decode_walls(course, parse_json(bytes),
                              std::string_view(key) == "surfaces",
                              c.contains("audio_wood_surfaces") ? &audio_surface_ids : nullptr);
             }
         if (c.contains("hazards")) {
             require(manifest.contains("hazard_asset"), "hazard definitions require render asset");
             const auto &bytes = files.at(c.at("hazards").get<std::string>());
-            decode_hazards(course, Json::parse(bytes.begin(), bytes.end()));
+            decode_hazards(course, parse_json(bytes));
         }
         if (c.contains("audio_wood_surfaces")) {
             const auto &wood = c.at("audio_wood_surfaces");
