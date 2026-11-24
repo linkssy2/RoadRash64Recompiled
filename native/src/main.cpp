@@ -105,8 +105,12 @@
 #include <psapi.h>
 #include <timeapi.h>
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 #include "common/rt64_rr64_simd.h"
+#include "rr64_process_exit.hpp"
 
 #include "rr64_msvc_crt_compat.hpp"
 #include "rr64_native.hpp"
@@ -477,6 +481,22 @@ std::filesystem::path executable_directory() {
     buffer.resize(length);
     return std::filesystem::path(buffer).parent_path();
 }
+#elif defined(__APPLE__)
+// RR64-MAC: macOS has no /proc. _NSGetExecutablePath reports the path inside
+// the bundle (RoadRash64Recompiled.app/Contents/MacOS); resolve symlinks like
+// Linux does.
+std::filesystem::path executable_directory() {
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buffer(size, '\0');
+    if (size == 0 || _NSGetExecutablePath(buffer.data(), &size) != 0) {
+        return std::filesystem::current_path();
+    }
+    buffer.resize(std::strlen(buffer.c_str()));
+    std::error_code ec;
+    const std::filesystem::path self = std::filesystem::canonical(buffer, ec);
+    return ec ? std::filesystem::path(buffer).parent_path() : self.parent_path();
+}
 #else
 std::filesystem::path executable_directory() {
     std::error_code ec;
@@ -487,6 +507,20 @@ std::filesystem::path executable_directory() {
     return self.parent_path();
 }
 #endif
+
+// RR64-MAC: folder for player-supplied content (custom music, imported race
+// packs). Windows and Linux keep it beside the executable, as the release
+// layout documents. A macOS app bundle is signed and usually lives in
+// /Applications, so there it belongs with the saves and settings in
+// Application Support (or beside the bundle when portable.txt is present;
+// get_app_folder_path decides).
+std::filesystem::path user_content_directory() {
+#ifdef __APPLE__
+    return recompui::file::get_app_folder_path();
+#else
+    return executable_directory();
+#endif
+}
 
 #ifdef _WIN32
 LONG WINAPI rr64_unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
@@ -656,7 +690,18 @@ void initialize_runtime_diagnostics() {
     }
     SetUnhandledExceptionFilter(rr64_unhandled_exception_filter);
     std::set_terminate(rr64_terminate_handler);
-    std::at_quick_exit(rr64_quick_exit_handler);
+    rr64::process::at_quick_exit(rr64_quick_exit_handler);
+#elif defined(__APPLE__)
+    // RR64-MAC: a Finder-launched app starts in "/", which is not writable.
+    // Use the per-user log folder that Console.app already indexes.
+    if (const char* home = std::getenv("HOME"); home && home[0]) {
+        g_runtime_log_path = std::filesystem::path(home) / "Library" / "Logs" / "RoadRash64Recompiled-runtime.log";
+    }
+    else {
+        std::error_code temp_error;
+        g_runtime_log_path = std::filesystem::temp_directory_path(temp_error) / "RoadRash64Recompiled-runtime.log";
+    }
+    g_runtime_log = detailed_diagnostics_enabled() ? std::fopen(g_runtime_log_path.string().c_str(), "w") : nullptr;
 #else
     g_runtime_log_path = std::filesystem::current_path() / "RoadRash64Recompiled-runtime.log";
     // Normal releases do not create a session log; capture is explicitly opt-in.
@@ -728,7 +773,11 @@ ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::
     recompui::startup_checkpoint("window-begin");
     rr64_log("[RR64-STAGE] create_window entered.\n");
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-#if defined(PLUME_SDL_VULKAN_ENABLED)
+#if defined(__APPLE__)
+    // RR64-MAC: RT64 renders through its native Metal backend on macOS (no
+    // MoltenVK).
+    flags |= SDL_WINDOW_METAL;
+#elif defined(PLUME_SDL_VULKAN_ENABLED)
     flags |= SDL_WINDOW_VULKAN;
 #endif
 
@@ -758,7 +807,21 @@ ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::
     }
     rr64_log("[RR64-STAGE] HWND acquired: %p thread=%lu\n", static_cast<void*>(hwnd), static_cast<unsigned long>(GetCurrentThreadId()));
     return ultramodern::renderer::WindowHandle{ hwnd, GetCurrentThreadId() };
-#else
+#elif defined(__APPLE__)
+    void* cocoa_window = SDL_GetPointerProperty(
+        SDL_GetWindowProperties(window), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+    if (cocoa_window == nullptr) {
+        fatal_sdl("SDL window has no NSWindow");
+    }
+    // RR64-MAC: RT64's Metal device presents into the CAMetalLayer of an SDL
+    // Metal view (the same pairing RT64's own application window uses).
+    SDL_MetalView metal_view = SDL_Metal_CreateView(window);
+    if (metal_view == nullptr) {
+        fatal_sdl("SDL_Metal_CreateView failed");
+    }
+    rr64_log("[RR64-STAGE] Cocoa window %p, Metal view %p acquired.\n", cocoa_window, metal_view);
+    return ultramodern::renderer::WindowHandle{ cocoa_window, SDL_Metal_GetLayer(metal_view) };
+#else
     rr64_log("[RR64-STAGE] SDL window handle acquired: %p\n", static_cast<void*>(window));
     return window;
 #endif
@@ -2158,7 +2221,7 @@ void init_recompui_config() {
             g_master_volume_gain.store(rr64::audio::volume_gain(std::get<double>(value)), std::memory_order_relaxed);
         });
     rr64::rival_engine::configure_volume(sound_config);
-    auto music_directory = executable_directory() / "music";
+    auto music_directory = user_content_directory() / "music";
 #ifndef _WIN32
     // AppImage's mounted executable directory is read-only. Keep user tracks
     // beside the downloaded image, not inside its temporary mount.
@@ -2183,11 +2246,17 @@ void init_recompui_config() {
     );
     rr64::voice_chat::configure(sound_config);
     rr64::race_pack_mod::configure_directory(music_directory.parent_path() / "race-packs" / "mk64");
+#ifdef __APPLE__
+    // RR64-MAC: bundled tools live in Contents/Resources, beside the assets.
+    auto course_importer = recompui::file::get_program_path() / "tools" / "mk64-importer" /
+        "rr64-mk64-importer";
+#else
     auto course_importer = executable_directory() / "tools" / "mk64-importer" /
 #ifdef _WIN32
         "rr64-mk64-importer.exe";
 #else
         "rr64-mk64-importer";
+#endif
 #endif
     rr64::mk64_import::configure(course_importer,
         recomp::get_config_path() / supported_games[0].stored_filename());
@@ -3003,13 +3072,13 @@ int main(int argc, char** argv) {
                     g_runtime_log_path.string();
                 MessageBoxA(nullptr, message.c_str(), "Road Rash 64 Recompiled - RT64 Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
 #endif
-                std::quick_exit(EXIT_FAILURE);
+                rr64::process::quick_exit(EXIT_FAILURE);
             }
             catch (...) {
                 rr64_log("\n[RR64-CRASH] Unknown C++ exception during renderer creation.\n");
                 rr64_log("[RR64-RT64] Requested API: %s\n", forced_graphics_api_name());
                 rr64_log("[RR64-RT64] Retry with the alternate API runner (D3D12 or Vulkan).\n");
-                std::quick_exit(EXIT_FAILURE);
+                rr64::process::quick_exit(EXIT_FAILURE);
             }
         },
     };
@@ -3110,13 +3179,13 @@ int main(int argc, char** argv) {
         rr64_log("\n[RR64-CRASH] C++ exception escaped recomp::start: %s\n", ex.what());
         rr64::mk64_import::shutdown();
         rr64::netplay::shutdown();
-        std::quick_exit(EXIT_FAILURE);
+        rr64::process::quick_exit(EXIT_FAILURE);
     }
     catch (...) {
         rr64_log("\n[RR64-CRASH] Unknown C++ exception escaped recomp::start.\n");
         rr64::mk64_import::shutdown();
         rr64::netplay::shutdown();
-        std::quick_exit(EXIT_FAILURE);
+        rr64::process::quick_exit(EXIT_FAILURE);
     }
     rr64::mk64_import::shutdown();
     voice_service_thread.request_stop();
@@ -3174,7 +3243,7 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     return EXIT_SUCCESS;
 #else
-    std::quick_exit(EXIT_SUCCESS);
+    rr64::process::quick_exit(EXIT_SUCCESS);
 #endif
 }
 

@@ -2,7 +2,7 @@ For the validated experimental Linux recipe and limitations, see [Linux experime
 
 # Building yourself
 
-The game executable is built ahead of time. Players of the binary release only select a ROM; these instructions are for compiling from source, on Windows or Linux.
+The game executable is built ahead of time. Players of the binary release only select a ROM; these instructions are for compiling from source, on Windows or Linux. On a Mac, see [macOS](#macos) below: one script builds the Apple Silicon app.
 
 SDL is **SDL3 3.4.16**, built from source. On Windows it builds as **`SDL3.dll`**, placed beside `RoadRash64Recompiled.exe` in the build's `bin` folder (pass `-DRR64_SDL3_SHARED=OFF` to link it into the EXE instead); on Linux it is **linked statically**, so no SDL `.so` ships with the game. The game, RT64 (window, debug inspector, Vulkan surface) and RecompFrontend (menus, input, controller handling) use the SDL3 API directly; SDL2 is gone. SDL3 is pinned in `dependencies.lock.json` and fetched by `scripts/setup_dependencies.py`; no SDL package needs to be installed. To build from an extracted source archive instead, pass `-DRR64_SDL3_SOURCE_DIR=<path to SDL-release-3.4.16>`. See [docs/SDL3.md](docs/SDL3.md) for what changed.
 
@@ -124,6 +124,16 @@ This produces `native/build/RoadRash64Recompiled-x86_64.AppImage`. It downloads 
 ```
 
 The script deliberately does its own post-processing pass after `linuxdeploy` runs, rather than trusting `linuxdeploy`'s bundled library copies directly — see the comment at the top of `scripts/build_appimage.py` for why (an older bundled `patchelf` corrupts libraries built with newer toolchains' compressed relative relocations, in a way that only surfaces as a segfault at launch, not at build time). If a future `linuxdeploy` release fixes that upstream, the workaround can likely be simplified.
+
+## macOS
+
+On a Mac (macOS 15 Sequoia with **Xcode 16.3 or newer** and its Metal toolchain), one script fetches the dependencies, generates the code from your ROM, and builds the app for Apple Silicon (an Intel Mac can do the build too, by cross-compiling):
+
+```bash
+./build_mac.sh "/path/to/Road Rash 64 (USA).z64"
+```
+
+The result is `native/build-mac/RoadRash64Recompiled.app`, which runs on Apple Silicon Macs from macOS 13 Ventura, with NEON code and RT64's Metal renderer on its Metal 3 path. SDL3 ships inside it as `libSDL3.0.dylib` in `Contents/Frameworks`. Intel Macs are not a target for now. Options, requirements and details are in [docs/MACOS.md](docs/MACOS.md).
 
 ## Validation and limitations
 

@@ -32,6 +32,26 @@ foreach(REQUIRED_PATH
     endif()
 endforeach()
 
+# RR64-MAC: a working DXC for the Mac doing the build, for RT64's and
+# RecompFrontend's shader rules (cmake/macos/DxcMac.cmake).
+if(APPLE)
+    include("${CMAKE_CURRENT_LIST_DIR}/macos/DxcMac.cmake")
+endif()
+
+# RR64-MAC: RT64's build-time tools (file_to_c, spirv_cross_msl) built for the
+# build host, so a build for the other Mac architecture never runs its own
+# target-architecture binaries (cmake/macos/HostTools.cmake). On by default on
+# macOS; nothing else needs it, though it works there too.
+if(APPLE)
+    set(RR64_HOST_TOOLS_DEFAULT ON)
+else()
+    set(RR64_HOST_TOOLS_DEFAULT OFF)
+endif()
+option(RR64_HOST_TOOLS "Build RT64's file_to_c and spirv_cross_msl for the build host" ${RR64_HOST_TOOLS_DEFAULT})
+if(RR64_HOST_TOOLS)
+    include("${CMAKE_CURRENT_LIST_DIR}/macos/HostTools.cmake")
+endif()
+
 # RR64-SDL3: SDL3 3.4.16 (SDL3.dll on Windows, static on Linux), built before
 # RT64 and RecompFrontend so all three compile against the same SDL3 headers
 # and link one SDL3 library.
@@ -39,7 +59,13 @@ include("${CMAKE_CURRENT_LIST_DIR}/Sdl.cmake")
 
 # Match the shared N64Recomp frontend stack used by current ports.
 set(RT64_STATIC TRUE)
-set(RT64_SDL_WINDOW_VULKAN TRUE)
+# RR64-MAC: macOS renders through RT64's Metal backend; the SDL window is a
+# Metal window.
+if(APPLE)
+    set(RT64_SDL_WINDOW_VULKAN FALSE)
+else()
+    set(RT64_SDL_WINDOW_VULKAN TRUE)
+endif()
 set(BUILD_SHARED_LIBS OFF)
 add_compile_definitions(HLSL_CPU NOMINMAX _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
 
@@ -68,6 +94,10 @@ target_include_directories(RecompiledFuncs PRIVATE
     "${N64MODERN_RUNTIME_ROOT}/ultramodern/include"
     "${N64MODERN_RUNTIME_ROOT}/librecomp/include"
     "${N64MODERN_RUNTIME_ROOT}/N64Recomp/include"
+    # RR64-MAC: the generated audio microcode (rr64_audio_rsp.cpp) uses
+    # librecomp's RSP vector unit, which maps its SSE4.1 code onto NEON through
+    # sse2neon on arm64.
+    "${N64MODERN_RUNTIME_ROOT}/thirdparty/sse2neon"
 )
 # RR64-SIMD: the instruction floor (formerly -march=nehalem here) and
 # -ffp-contract=off now come from cmake/Simd.cmake for every target.
@@ -108,11 +138,45 @@ if(NOT WIN32)
     set(RR64_FFMPEG_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/lib/ffmpeg")
     set(RR64_FFMPEG_PREFIX "${CMAKE_BINARY_DIR}/ffmpeg-install")
     set(RR64_FFMPEG_INCLUDE_DIR "${RR64_FFMPEG_PREFIX}/include")
+    set(RR64_FFMPEG_PLATFORM_ARGS "")
+    if(APPLE)
+        # RR64-MAC: macOS uses the same minimal decode-only FFmpeg as Linux
+        # (WMA has no AudioToolbox decoder). The dylibs get @rpath install names
+        # and are copied into the app bundle's Frameworks folder after linking.
+        set(RR64_FFMPEG_SUFFIX ".dylib")
+        set(RR64_FFMPEG_ARCH_FLAGS "-arch ${RR64_TARGET_ARCH} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+        if(CMAKE_OSX_SYSROOT)
+            # CMake adds the SDK only to its own compile lines; FFmpeg's
+            # configure calls the compiler directly.
+            string(APPEND RR64_FFMPEG_ARCH_FLAGS " -isysroot ${CMAKE_OSX_SYSROOT}")
+        endif()
+        list(APPEND RR64_FFMPEG_PLATFORM_ARGS
+            "--cc=${CMAKE_C_COMPILER}"
+            "--install-name-dir=@rpath"
+            "--extra-cflags=${RR64_FFMPEG_ARCH_FLAGS}"
+            "--extra-ldflags=${RR64_FFMPEG_ARCH_FLAGS}")
+        string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" RR64_FFMPEG_HOST_ARCH)
+        if(RR64_FFMPEG_HOST_ARCH MATCHES "^(arm64|aarch64)$")
+            set(RR64_FFMPEG_HOST_ARCH "arm64")
+        endif()
+        if(NOT RR64_FFMPEG_HOST_ARCH STREQUAL RR64_TARGET_ARCH)
+            # Building the Intel slice on Apple Silicon, or the reverse:
+            # configure must not try to run the test programs it compiles.
+            if(RR64_TARGET_ARCH STREQUAL "arm64")
+                set(RR64_FFMPEG_TARGET_ARCH "aarch64")
+            else()
+                set(RR64_FFMPEG_TARGET_ARCH "x86_64")
+            endif()
+            list(APPEND RR64_FFMPEG_PLATFORM_ARGS "--enable-cross-compile" "--target-os=darwin" "--arch=${RR64_FFMPEG_TARGET_ARCH}")
+        endif()
+    else()
+        set(RR64_FFMPEG_SUFFIX ".so")
+    endif()
     set(RR64_FFMPEG_LIBS
-        "${RR64_FFMPEG_PREFIX}/lib/libavformat.so"
-        "${RR64_FFMPEG_PREFIX}/lib/libavcodec.so"
-        "${RR64_FFMPEG_PREFIX}/lib/libswresample.so"
-        "${RR64_FFMPEG_PREFIX}/lib/libavutil.so"
+        "${RR64_FFMPEG_PREFIX}/lib/libavformat${RR64_FFMPEG_SUFFIX}"
+        "${RR64_FFMPEG_PREFIX}/lib/libavcodec${RR64_FFMPEG_SUFFIX}"
+        "${RR64_FFMPEG_PREFIX}/lib/libswresample${RR64_FFMPEG_SUFFIX}"
+        "${RR64_FFMPEG_PREFIX}/lib/libavutil${RR64_FFMPEG_SUFFIX}"
     )
     ExternalProject_Add(rr64_ffmpeg
         SOURCE_DIR "${RR64_FFMPEG_SOURCE}"
@@ -151,6 +215,7 @@ if(NOT WIN32)
             --disable-static
             --enable-shared
             --extra-cflags=-fPIC
+            ${RR64_FFMPEG_PLATFORM_ARGS}
             --prefix=${RR64_FFMPEG_PREFIX}
         BUILD_COMMAND make -j${RR64_FFMPEG_NPROC}
         INSTALL_COMMAND make install
@@ -201,7 +266,43 @@ else()
         "-fspv-target-env=vulkan1.1spirv1.4"
         "-fspv-extension=SPV_KHR_ray_tracing"
         "-fspv-extension=SPV_EXT_descriptor_indexing")
-    set(DXC "LD_LIBRARY_PATH=${RT64_ROOT}/src/contrib/dxc/lib/x64" "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxc-linux")
+    if(APPLE)
+        # RR64-MAC: build-host DXC from cmake/macos/DxcMac.cmake (the Intel
+        # binary repaired: its zlib reference pointed into a pkgx install).
+        set(DXC ${RR64_DXC_MACOS})
+    else()
+        set(DXC "LD_LIBRARY_PATH=${RT64_ROOT}/src/contrib/dxc/lib/x64" "${RT64_ROOT}/src/contrib/dxc/bin/x64/dxc-linux")
+    endif()
+endif()
+
+# RR64-MAC: FreeType for RmlUi. macOS has no system FreeType and Homebrew's is
+# built for one architecture only, so on macOS the pinned FreeType 2.13.3
+# (native/lib/freetype, fetched by setup_dependencies.py) is compiled here as a
+# static library for this build's architecture, with none of its optional
+# dependencies (zlib, bzip2, PNG, HarfBuzz, Brotli). RmlUi only checks that a
+# Freetype::Freetype target exists, so the package search is switched off.
+if(APPLE)
+    set(RR64_BUNDLED_FREETYPE_DEFAULT ON)
+else()
+    set(RR64_BUNDLED_FREETYPE_DEFAULT OFF)
+endif()
+option(RR64_BUNDLED_FREETYPE "Build the pinned FreeType from native/lib/freetype for RmlUi" ${RR64_BUNDLED_FREETYPE_DEFAULT})
+if(RR64_BUNDLED_FREETYPE)
+    set(RR64_FREETYPE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/lib/freetype")
+    if(NOT EXISTS "${RR64_FREETYPE_ROOT}/CMakeLists.txt")
+        message(FATAL_ERROR "FreeType source missing: ${RR64_FREETYPE_ROOT}\n"
+            "Run scripts/setup_dependencies.py (it fetches FreeType on macOS).")
+    endif()
+    # FreeType's CMake predates policy CMP0077, so its options only read cache entries.
+    foreach(RR64_FT_DEP ZLIB BZIP2 PNG HARFBUZZ BROTLI)
+        set(FT_DISABLE_${RR64_FT_DEP} ON CACHE BOOL "Disabled for the bundled FreeType" FORCE)
+    endforeach()
+    set(SKIP_INSTALL_ALL ON)
+    add_subdirectory("${RR64_FREETYPE_ROOT}" "${CMAKE_BINARY_DIR}/freetype" EXCLUDE_FROM_ALL)
+    unset(SKIP_INSTALL_ALL)
+    add_library(Freetype::Freetype ALIAS freetype)
+    set(CMAKE_DISABLE_FIND_PACKAGE_Freetype TRUE)
+    message(STATUS "RR64 FreeType: bundled 2.13.3 (static) from ${RR64_FREETYPE_ROOT}")
 endif()
 
 set(RECOMP_FRONTEND_N64MODERNRUNTIME_PATH "${N64MODERN_RUNTIME_ROOT}")

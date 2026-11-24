@@ -9,6 +9,10 @@
 #            shipped SDL2.dll, so a player can drop in a newer SDL3.dll
 #            without a rebuild.
 #            -DRR64_SDL3_SHARED=OFF links it into the EXE instead.
+#   macOS    shared: libSDL3.0.dylib in the app bundle's Contents/Frameworks,
+#            the bundle's equivalent of SDL3.dll beside the EXE (loaded through
+#            @rpath; cmake/macos/FixupBundle.cmake copies and signs it).
+#            -DRR64_SDL3_SHARED=OFF links it into the executable instead.
 #   Linux    static: no libSDL*.so in the AppImage (SDL3 still dlopens the
 #            system's X11/Wayland/PipeWire/PulseAudio/ALSA libraries)
 # The DLL needs no copy step: ProjectOptions.cmake points every runtime output
@@ -57,6 +61,8 @@ endif()
 
 if(WIN32)
     option(RR64_SDL3_SHARED "Build SDL3 as SDL3.dll beside the EXE (OFF links it statically)" ON)
+elseif(APPLE)
+    option(RR64_SDL3_SHARED "Build SDL3 as libSDL3.0.dylib in the app bundle (OFF links it statically)" ON)
 else()
     # The AppImage is laid out for a static SDL3.
     set(RR64_SDL3_SHARED OFF)
@@ -84,11 +90,22 @@ set(SDL_GPU OFF)
 set(SDL_RENDER OFF)
 set(SDL_CAMERA OFF)
 set(SDL_TRAY OFF)
+if(APPLE)
+    # RR64-MAC: macOS reads controllers through IOKit. Without this, SDL3 picks
+    # up Homebrew's libusb when it is installed (one architecture, and a
+    # hard-coded Homebrew path loaded at run time), so the app would behave
+    # differently depending on the Mac that built it.
+    set(SDL_HIDAPI_LIBUSB OFF)
+endif()
 add_subdirectory("${RR64_SDL3_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/SDL3" EXCLUDE_FROM_ALL)
 
 if(RR64_SDL3_SHARED)
     set(RR64_SDL_TARGET SDL3::SDL3-shared)
-    set(RR64_SDL_LINKAGE "shared, SDL3.dll")
+    if(APPLE)
+        set(RR64_SDL_LINKAGE "shared, libSDL3.0.dylib")
+    else()
+        set(RR64_SDL_LINKAGE "shared, SDL3.dll")
+    endif()
 else()
     set(RR64_SDL_TARGET SDL3::SDL3-static)
     set(RR64_SDL_LINKAGE "static")

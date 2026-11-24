@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Road Rash 64 Recompiled</string>
+    <key>CFBundleDisplayName</key>
+    <string>Road Rash 64 Recompiled</string>
+    <key>CFBundleIdentifier</key>
+    <string>@RR64_BUNDLE_IDENTIFIER@</string>
+    <key>CFBundleVersion</key>
+    <string>@RR64_VERSION@</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@RR64_VERSION@</string>
+    <key>CFBundleExecutable</key>
+    <string>RoadRash64Recompiled</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.racing-games</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>@CMAKE_OSX_DEPLOYMENT_TARGET@</string>
+    <key>LSArchitecturePriority</key>
+    <array>
+        <string>@RR64_TARGET_ARCH_PLIST@</string>
+    </array>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>GCSupportsControllerUserInteraction</key>
+    <true/>
+    <key>GCSupportsGameMode</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Proximity voice chat in online races uses the microphone when you enable it in Settings.</string>
+</dict>
+</plist>

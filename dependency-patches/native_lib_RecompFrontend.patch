@@ -1,5 +1,5 @@
 diff --git a/recompinput/CMakeLists.txt b/recompinput/CMakeLists.txt
-index 899372b..2a16ced 100644
+index 899372b..6ae07c4 100644
 --- a/recompinput/CMakeLists.txt
 +++ b/recompinput/CMakeLists.txt
 @@ -40,10 +40,13 @@ target_include_directories(recompinput PRIVATE
@@ -2151,7 +2151,7 @@ index c89956e..983a33a 100644
              check_buttons(profile_index_kb);
  
 diff --git a/recompui/CMakeLists.txt b/recompui/CMakeLists.txt
-index 4dce8e0..9aeddb8 100644
+index 4dce8e0..af17843 100644
 --- a/recompui/CMakeLists.txt
 +++ b/recompui/CMakeLists.txt
 @@ -58,8 +58,8 @@ add_compile_definitions(
@@ -3301,7 +3301,7 @@ index 0561657..7de6f7b 100644
  
      std::string_view get_type_name() override { return "ConfigOptionEnum"; }
 diff --git a/recompui/src/config/ui_config_page_controls.cpp b/recompui/src/config/ui_config_page_controls.cpp
-index f379a6f..00dafc4 100644
+index f379a6f..31d907b 100644
 --- a/recompui/src/config/ui_config_page_controls.cpp
 +++ b/recompui/src/config/ui_config_page_controls.cpp
 @@ -8,6 +8,7 @@
@@ -4302,7 +4302,7 @@ index a7954c7..4f4cb40 100644
      }
  }
 diff --git a/recompui/src/renderer/ui_renderer.cpp b/recompui/src/renderer/ui_renderer.cpp
-index 5ca5349..0ccecfa 100644
+index 5ca5349..b521ed5 100644
 --- a/recompui/src/renderer/ui_renderer.cpp
 +++ b/recompui/src/renderer/ui_renderer.cpp
 @@ -5,6 +5,8 @@
@@ -4323,7 +4323,35 @@ index 5ca5349..0ccecfa 100644
          samplerDesc.minFilter = plume::RenderFilter::NEAREST;
          samplerDesc.magFilter = plume::RenderFilter::NEAREST;
          samplerDesc.addressU = plume::RenderTextureAddressMode::CLAMP;
-@@ -692,7 +694,17 @@ void recompui::RmlRenderInterface_RT64::reset() {
+@@ -426,6 +428,19 @@ public:
+ 
+         auto it = image_from_bytes_map.find(source);
+         if (it == image_from_bytes_map.end()) {
++            // RR64-MAC: images are registered by bare name ("RoadRashLauncher-v4.png"),
++            // but RmlUi joins an <img> src onto its document's folder, and on macOS
++            // that is the absolute path of the bundle's assets folder. Fall back to
++            // the file name part of the path.
++            const size_t name_start = source.find_last_of("/\\");
++            if (name_start != Rml::String::npos) {
++                it = image_from_bytes_map.find(source.substr(name_start + 1));
++            }
++        }
++        if (it == image_from_bytes_map.end()) {
++            // RR64: name the image; otherwise a missing one just renders as nothing.
++            fprintf(stderr, "[RR64-RF-UI] LoadTexture: no image registered as '%s' (%zu registered); using a transparent texture.\n",
++                source.c_str(), image_from_bytes_map.size());
+             // Return a transparent texture if the image can't be found.
+             texture_handle = 1;
+             texture_dimensions.x = 1;
+@@ -462,6 +477,7 @@ public:
+         copy_command_queue_->waitForCommandFence(copy_command_fence_.get());
+ 
+         if (texture == nullptr) {
++            fprintf(stderr, "[RR64-RF-UI] LoadTexture: could not decode '%s' (%zu bytes).\n", source.c_str(), img.bytes.size());
+             return false;
+         }
+ 
+@@ -692,7 +708,17 @@ void recompui::RmlRenderInterface_RT64::reset() {
  }
  
  void recompui::RmlRenderInterface_RT64::init(plume::RenderInterface* interface, plume::RenderDevice* device) {

@@ -191,19 +191,31 @@ if(WIN32)
     )
 endif()
 
+# RR64-MAC: frontend assets sit beside the executable on Windows and Linux. In
+# the macOS bundle RecompFrontend resolves them from Contents/Resources/assets.
+if(APPLE)
+    set(RR64_ASSET_DIR "$<TARGET_BUNDLE_CONTENT_DIR:RoadRash64Recompiled>/Resources/assets")
+else()
+    set(RR64_ASSET_DIR "$<TARGET_FILE_DIR:RoadRash64Recompiled>/assets")
+endif()
 add_custom_command(TARGET RoadRash64Recompiled POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:RoadRash64Recompiled>/assets"
+        "${RR64_ASSET_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-        "$<TARGET_FILE_DIR:RoadRash64Recompiled>/assets"
+        "${RR64_ASSET_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${RECOMP_FRONTEND_ROOT}/recompui/lib/RmlUi/Samples/assets/LatoLatin-Regular.ttf"
-        "$<TARGET_FILE_DIR:RoadRash64Recompiled>/assets/LatoLatin-Regular.ttf"
+        "${RR64_ASSET_DIR}/LatoLatin-Regular.ttf"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${RECOMP_FRONTEND_ROOT}/recompui/lib/RmlUi/Samples/assets/LICENSE.txt"
-        "$<TARGET_FILE_DIR:RoadRash64Recompiled>/assets/RmlUi-Sample-Fonts-LICENSE.txt"
+        "${RR64_ASSET_DIR}/RmlUi-Sample-Fonts-LICENSE.txt"
 )
+if(APPLE)
+    # Declared after the asset copy so the bundle is complete before it is
+    # fixed up and signed.
+    include(cmake/macos/MacBundle.cmake)
+endif()
 
 set_property(TARGET RoadRash64Recompiled PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${ROOT_DIR}")
 

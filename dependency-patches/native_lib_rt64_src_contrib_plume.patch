@@ -132,6 +132,159 @@ index 4827452..abd3a2f 100644
          UINT swapChainFlags = 0;
  
          D3D12SwapChain(D3D12CommandQueue *commandQueue, const RenderSwapChainDesc &desc);
+diff --git a/plume_metal.cpp b/plume_metal.cpp
+index 373c87e..bd3ee23 100644
+--- a/plume_metal.cpp
++++ b/plume_metal.cpp
+@@ -15,10 +15,85 @@
+ #include <CoreFoundation/CoreFoundation.h>
+ 
+ #include <algorithm>
++#include <atomic>
++#include <cstdlib>
+ #include <mutex>
++#include <string>
++#include <unistd.h>
+ 
+ #include "plume_metal.h"
+ 
++namespace plume {
++    // RR64-MAC: pipeline failure diagnostics.
++    //
++    // When the GPU driver's compiler cannot build a pipeline, Metal returns no
++    // pipeline state and the renderer is left with nothing to draw: the app
++    // shows a black window and stops responding. Instead, name the shaders
++    // involved (stderr and ~/Library/Logs/<app>-gpu.log), then tell the player
++    // and quit. PLUME_METAL_CONTINUE_ON_PIPELINE_FAILURE=1 keeps running so
++    // every failing pipeline gets logged.
++
++    // Set by RT64's CREATE_SHADER_INPUTS just before a built-in Metal shader is
++    // created on the same thread; MetalShader takes it as its debug name.
++    static thread_local const char *metalShaderNameHint = nullptr;
++
++    void MetalShaderNameHint(const char *name) {
++        metalShaderNameHint = name;
++    }
++
++    static std::string metalShaderLabel(const MetalShader *shader) {
++        if (shader == nullptr) {
++            return "(none)";
++        }
++        if ((shader->debugName != nullptr) && (shader->debugName->length() > 0)) {
++            return shader->debugName->utf8String();
++        }
++        std::string label = (shader->functionName != nullptr) ? shader->functionName->utf8String() : "?";
++        return label + " (" + std::to_string(shader->blobSize) + "-byte library)";
++    }
++
++    static void reportMetalPipelineFailure(const char *kind, const std::string &shaders, NS::Error *error) {
++        const char *reason = ((error != nullptr) && (error->localizedDescription() != nullptr)) ? error->localizedDescription()->utf8String() : "unknown error";
++        const std::string line = std::string(kind) + " pipeline [" + shaders + "] failed: " + reason;
++        fprintf(stderr, "plume: %s\n", line.c_str());
++
++        static std::mutex logMutex;
++        std::string logPath;
++        if (const char *home = getenv("HOME")) {
++            logPath = std::string(home) + "/Library/Logs/" + getprogname() + "-gpu.log";
++            std::lock_guard<std::mutex> lock(logMutex);
++            if (FILE *log = fopen(logPath.c_str(), "a")) {
++                fprintf(log, "%s\n", line.c_str());
++                fclose(log);
++            }
++        }
++
++        if (getenv("PLUME_METAL_CONTINUE_ON_PIPELINE_FAILURE") != nullptr) {
++            return;
++        }
++
++        // One alert; other compile threads keep logging while it is open.
++        static std::atomic<bool> alerted{ false };
++        if (alerted.exchange(true)) {
++            return;
++        }
++
++#if !PLUME_IOS
++        const std::string message =
++            "This Mac's graphics driver could not compile the game's Metal shaders, so the game cannot draw and will quit.\n\n"
++            "First failure: " + line + "\n\n"
++            "Every failure is listed in " + (logPath.empty() ? std::string("the terminal output") : logPath) + ".";
++        CFStringRef cfMessage = CFStringCreateWithCString(kCFAllocatorDefault, message.c_str(), kCFStringEncodingUTF8);
++        CFUserNotificationDisplayAlert(0, kCFUserNotificationStopAlertLevel, nullptr, nullptr, nullptr,
++            CFSTR("Graphics driver error"), cfMessage, CFSTR("Quit"), nullptr, nullptr, nullptr);
++        if (cfMessage != nullptr) {
++            CFRelease(cfMessage);
++        }
++#endif
++        _exit(1); // other threads are mid-flight; skip static destructors
++    }
++};
++
+ extern "C" {
+     void *objc_autoreleasePoolPush(void);
+     void objc_autoreleasePoolPop(void *pool);
+@@ -1340,6 +1415,12 @@ namespace plume {
+         MetalAutoreleasePool releasePool;
+         functionName = (entryPointName != nullptr) ? NS::String::string(entryPointName, NS::UTF8StringEncoding) : MTLSTR("");
+         functionName->retain();
++        blobSize = size;
++        if (metalShaderNameHint != nullptr) {
++            debugName = NS::String::string(metalShaderNameHint, NS::UTF8StringEncoding);
++            debugName->retain();
++            metalShaderNameHint = nullptr;
++        }
+ 
+         NS::Error *error = nullptr;
+         const dispatch_data_t dispatchData = dispatch_data_create(data, size, dispatch_get_main_queue(), ^{});
+@@ -1463,6 +1544,7 @@ namespace plume {
+ 
+         if (error != nullptr) {
+             fprintf(stderr, "MTLDevice newComputePipelineStateWithDescriptor: failed with error %s.\n", error->localizedDescription()->utf8String());
++            reportMetalPipelineFailure("Compute", metalShaderLabel(computeShader), error);
+             return;
+         }
+ 
+@@ -1619,6 +1701,11 @@ namespace plume {
+ 
+         if (error != nullptr) {
+             fprintf(stderr, "MTLDevice newRenderPipelineState: failed with error %s.\n", error->localizedDescription()->utf8String());
++            std::string shaders = "vertex " + metalShaderLabel(static_cast<const MetalShader *>(desc.vertexShader));
++            if (desc.pixelShader != nullptr) {
++                shaders += ", fragment " + metalShaderLabel(static_cast<const MetalShader *>(desc.pixelShader));
++            }
++            reportMetalPipelineFailure("Render", shaders, error);
+             return;
+         }
+ 
+@@ -3842,7 +3929,16 @@ namespace plume {
+         const bool supportsResidencySets = osVersion.majorVersion >= 15 && mtl->supportsFamily(MTL::GPUFamilyApple6);
+ #endif
+ 
+-        useArgumentBuffersTier2 = mtl->argumentBuffersSupport() == MTL::ArgumentBuffersTier2;
++        // RR64-MAC: the Tier 2 path writes MTLResourceIDs (gpuResourceID) straight
++        // into the argument buffers, and gpuResourceID only exists from macOS 13 /
++        // iOS 16. Every Apple Silicon GPU reports Tier 2, also on macOS 11 and 12,
++        // where calling it would crash; there the argument encoder is used instead.
++#if PLUME_IOS
++        const bool resourceIdsAvailable = osVersion.majorVersion >= 16;
++#else
++        const bool resourceIdsAvailable = osVersion.majorVersion >= 13;
++#endif
++        useArgumentBuffersTier2 = resourceIdsAvailable && (mtl->argumentBuffersSupport() == MTL::ArgumentBuffersTier2);
+         useDirectBufferAddresses = useArgumentBuffersTier2 && mtl->supportsFamily(MTL::GPUFamilyMetal3);
+ 
+         nullBuffer = createBuffer(RenderBufferDesc::DefaultBuffer(16, RenderBufferFlag::VERTEX));
+diff --git a/plume_metal.h b/plume_metal.h
+index 59ae129..e255013 100644
+--- a/plume_metal.h
++++ b/plume_metal.h
+@@ -635,6 +635,7 @@ namespace plume {
+         RenderShaderFormat format = RenderShaderFormat::UNKNOWN;
+         MTL::Library *library = nullptr;
+         NS::String *debugName = nullptr;
++        uint64_t blobSize = 0; // RR64-MAC: identifies unnamed shaders in pipeline errors
+ 
+         MetalShader(const MetalDevice *device, const void *data, uint64_t size, const char *entryPointName, RenderShaderFormat format);
+         ~MetalShader() override;
 diff --git a/plume_render_interface_types.h b/plume_render_interface_types.h
 index 9dcfedf..05ca9b2 100644
 --- a/plume_render_interface_types.h

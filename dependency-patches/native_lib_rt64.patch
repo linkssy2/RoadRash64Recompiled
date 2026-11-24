@@ -1,8 +1,129 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 79dfc38..8d8ba9c 100644
+index 79dfc38..652ec1e 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -284,16 +284,14 @@ function(build_ray_shader TARGETOBJ SHADERNAME)
+@@ -5,7 +5,11 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+ 
+ if (APPLE)
+     enable_language(OBJC OBJCXX)
+-    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15")
++    # RR64-MAC: keep the parent build's macOS floor (code and metallibs then
++    # match the app); 10.15 only when RT64 is built on its own.
++    if (NOT CMAKE_OSX_DEPLOYMENT_TARGET)
++        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15")
++    endif()
+ endif()
+ 
+ option(RT64_STATIC "Build RT64 as a static library" OFF)
+@@ -45,6 +49,11 @@ if (WIN32)
+     # Dependencies that must be next to the DLL.
+     configure_file("${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/x64/dxcompiler.dll" "dxcompiler.dll" COPYONLY)
+     configure_file("${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/x64/dxil.dll" "dxil.dll" COPYONLY)
++elseif (APPLE AND RR64_DXC_MACOS)
++    # RR64-MAC: the parent build supplies a DXC for the build host (the Intel
++    # binary in contrib/dxc needs its zlib reference repaired first; see
++    # RoadRash64Recompiled native/cmake/macos/DxcMac.cmake).
++    set (DXC ${RR64_DXC_MACOS})
+ elseif (APPLE)
+     if (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+         # find zlib and include in dyld path
+@@ -69,7 +78,22 @@ set(ZSTD_LEGACY_SUPPORT OFF)
+ set(ZSTD_BUILD_STATIC ON)
+ set(ZSTD_BUILD_SHARED OFF)
+ 
+-add_subdirectory(src/tools/file_to_c)
++# RR64-MAC: file_to_c and spirv_cross_msl run during the build. A parent build
++# can supply copies built for the build host in RT64_HOST_TOOLS_DIR, so a
++# build for the other Mac architecture (arm64 on Intel, x86_64 on Apple
++# Silicon) never has to run its own target-architecture binaries.
++# rt64_host_tool() returns that path, or the in-tree target otherwise.
++function(rt64_host_tool OUT_VAR TOOL)
++    if (RT64_HOST_TOOLS_DIR)
++        set(${OUT_VAR} "${RT64_HOST_TOOLS_DIR}/${TOOL}" PARENT_SCOPE)
++    else()
++        set(${OUT_VAR} ${TOOL} PARENT_SCOPE)
++    endif()
++endfunction()
++
++if (NOT RT64_HOST_TOOLS_DIR)
++    add_subdirectory(src/tools/file_to_c)
++endif()
+ add_subdirectory(src/contrib/re-spirv)
+ add_subdirectory(src/contrib/nativefiledialog-extended)
+ add_subdirectory(src/contrib/zstd/build/cmake)
+@@ -117,9 +141,10 @@ function(build_shader_spirv_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
+     add_custom_command(OUTPUT ${OUTNAME}.spv
+         COMMAND ${DXC} ${DXC_SPV_OPTS} ${ARGN} ${FILENAME} /Fo ${OUTNAME}.spv
+         DEPENDS ${FILENAME})
++    rt64_host_tool(FILE_TO_C file_to_c)
+     add_custom_command(OUTPUT ${OUTNAME}.spirv.c
+-        COMMAND file_to_c ${OUTNAME}.spv ${TARGET_NAME}BlobSPIRV ${OUTNAME}.spirv.c ${OUTNAME}.spirv.h
+-        DEPENDS ${OUTNAME}.spv file_to_c
++        COMMAND ${FILE_TO_C} ${OUTNAME}.spv ${TARGET_NAME}BlobSPIRV ${OUTNAME}.spirv.c ${OUTNAME}.spirv.h
++        DEPENDS ${OUTNAME}.spv ${FILE_TO_C}
+         BYPRODUCTS ${OUTNAME}.spirv.h)
+     target_sources(${TARGETOBJ} PRIVATE ${OUTNAME}.spirv.c)
+ endfunction()
+@@ -128,29 +153,38 @@ function(build_shader_dxil_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
+     add_custom_command(OUTPUT ${OUTNAME}.dxil
+         COMMAND ${DXC} ${DXC_DXIL_OPTS} ${ARGN} ${FILENAME} /Fo ${OUTNAME}.dxil
+         DEPENDS ${FILENAME})
++    rt64_host_tool(FILE_TO_C file_to_c)
+     add_custom_command(OUTPUT ${OUTNAME}.dxil.c
+-        COMMAND file_to_c ${OUTNAME}.dxil ${TARGET_NAME}BlobDXIL ${OUTNAME}.dxil.c ${OUTNAME}.dxil.h
+-        DEPENDS ${OUTNAME}.dxil file_to_c
++        COMMAND ${FILE_TO_C} ${OUTNAME}.dxil ${TARGET_NAME}BlobDXIL ${OUTNAME}.dxil.c ${OUTNAME}.dxil.h
++        DEPENDS ${OUTNAME}.dxil ${FILE_TO_C}
+         BYPRODUCTS ${OUTNAME}.dxil.h)
+     target_sources(${TARGETOBJ} PRIVATE ${OUTNAME}.dxil.c)
+ endfunction()
+ 
+ function(build_shader_msl_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
++    rt64_host_tool(FILE_TO_C file_to_c)
++    rt64_host_tool(SPIRV_CROSS_MSL spirv_cross_msl)
++    # RR64-MAC: build the metallib for the app's minimum macOS (the shaders are
++    # MSL 2.1, macOS 10.14+), not for whichever SDK happens to be installed.
++    set(METAL_TARGET_OPTS "")
++    if (CMAKE_OSX_DEPLOYMENT_TARGET)
++        set(METAL_TARGET_OPTS "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
++    endif()
+     add_custom_command(OUTPUT ${OUTNAME}.spv
+             COMMAND ${DXC} ${DXC_SPV_OPTS} ${ARGN} ${FILENAME} /Fo ${OUTNAME}.spv
+             DEPENDS ${FILENAME})
+     add_custom_command(OUTPUT ${OUTNAME}.metal
+-            COMMAND spirv_cross_msl ${OUTNAME}.spv ${OUTNAME}.metal
+-            DEPENDS ${OUTNAME}.spv spirv_cross_msl)
++            COMMAND ${SPIRV_CROSS_MSL} ${OUTNAME}.spv ${OUTNAME}.metal
++            DEPENDS ${OUTNAME}.spv ${SPIRV_CROSS_MSL})
+     add_custom_command(OUTPUT ${OUTNAME}.ir
+-            COMMAND xcrun -sdk macosx metal -o ${OUTNAME}.ir -c ${OUTNAME}.metal $<$<CONFIG:Debug>:-frecord-sources>
++            COMMAND xcrun -sdk macosx metal ${METAL_TARGET_OPTS} -o ${OUTNAME}.ir -c ${OUTNAME}.metal $<$<CONFIG:Debug>:-frecord-sources>
+             DEPENDS ${OUTNAME}.metal)
+     add_custom_command(OUTPUT ${OUTNAME}.metallib
+             COMMAND xcrun -sdk macosx metallib ${OUTNAME}.ir -o ${OUTNAME}.metallib
+             DEPENDS ${OUTNAME}.ir)
+     add_custom_command(OUTPUT ${OUTNAME}.metal.c
+-            COMMAND file_to_c ${OUTNAME}.metallib ${TARGET_NAME}BlobMSL ${OUTNAME}.metal.c ${OUTNAME}.metal.h
+-            DEPENDS ${OUTNAME}.metallib file_to_c
++            COMMAND ${FILE_TO_C} ${OUTNAME}.metallib ${TARGET_NAME}BlobMSL ${OUTNAME}.metal.c ${OUTNAME}.metal.h
++            DEPENDS ${OUTNAME}.metallib ${FILE_TO_C}
+             BYPRODUCTS ${OUTNAME}.metal.h)
+     target_sources(${TARGETOBJ} PRIVATE ${OUTNAME}.metal.c)
+ endfunction()
+@@ -242,9 +276,10 @@ function(preprocess_shader TARGETOBJ SHADERNAME)
+     cmake_path(GET SHADERNAME STEM TARGET_NAME)
+     cmake_path(GET OUTNAME PARENT_PATH OUTPUT_DIR)
+     preprocess(${FILENAME} ${OUTNAME}.rw ${DXC_COMMON_OPTS})
++    rt64_host_tool(FILE_TO_C file_to_c)
+     add_custom_command(OUTPUT ${OUTNAME}.rw.c
+-        COMMAND file_to_c ${OUTNAME}.rw ${TARGET_NAME}Text ${OUTNAME}.rw.c ${OUTNAME}.rw.h
+-        DEPENDS ${OUTNAME}.rw file_to_c
++        COMMAND ${FILE_TO_C} ${OUTNAME}.rw ${TARGET_NAME}Text ${OUTNAME}.rw.c ${OUTNAME}.rw.h
++        DEPENDS ${OUTNAME}.rw ${FILE_TO_C}
+         BYPRODUCTS ${OUTNAME}.rw.h)
+     file(MAKE_DIRECTORY ${OUTPUT_DIR})
+     target_sources(${TARGETOBJ} PRIVATE ${OUTNAME}.rw.c)
+@@ -284,16 +319,14 @@ function(build_ray_shader TARGETOBJ SHADERNAME)
      build_shader(${TARGETOBJ} ${SHADERNAME} "${DXC_RT_OPTS}" ${ARGN})
  endfunction()
  
@@ -26,7 +147,7 @@ index 79dfc38..8d8ba9c 100644
  
  add_compile_definitions(
      HLSL_CPU
-@@ -313,11 +311,13 @@ set (SOURCES
+@@ -313,11 +346,13 @@ set (SOURCES
      "${PROJECT_SOURCE_DIR}/src/common/rt64_emulator_configuration.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_enhancement_configuration.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_filesystem_zip.cpp"
@@ -40,7 +161,7 @@ index 79dfc38..8d8ba9c 100644
      "${PROJECT_SOURCE_DIR}/src/common/rt64_thread.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_timer.cpp"
      "${PROJECT_SOURCE_DIR}/src/common/rt64_user_configuration.cpp"
-@@ -366,7 +366,7 @@ set (SOURCES
+@@ -366,7 +401,7 @@ set (SOURCES
      "${PROJECT_SOURCE_DIR}/src/hle/rt64_workload.cpp"
      "${PROJECT_SOURCE_DIR}/src/hle/rt64_workload_queue.cpp"
  
@@ -49,7 +170,7 @@ index 79dfc38..8d8ba9c 100644
  
      "${PROJECT_SOURCE_DIR}/src/render/rt64_buffer_uploader.cpp"
      "${PROJECT_SOURCE_DIR}/src/render/rt64_framebuffer_renderer.cpp"
-@@ -412,10 +412,11 @@ set (SOURCES
+@@ -412,10 +447,11 @@ set (SOURCES
      "${PROJECT_SOURCE_DIR}/src/contrib/implot/implot_demo.cpp"
      "${PROJECT_SOURCE_DIR}/src/contrib/implot/implot_items.cpp"
      "${PROJECT_SOURCE_DIR}/src/contrib/miniz/miniz.c"
@@ -62,7 +183,18 @@ index 79dfc38..8d8ba9c 100644
      "${PROJECT_SOURCE_DIR}/src"
      "${PROJECT_SOURCE_DIR}/src/contrib"
      "${PROJECT_SOURCE_DIR}/src/contrib/plume"
-@@ -479,7 +480,7 @@ endif()
+@@ -451,7 +487,9 @@ add_subdirectory(src/tools/texture_packer)
+ 
+ # Add any Apple-specific source files and libraries
+ if (APPLE)
+-    add_subdirectory(src/tools/spirv_cross_msl)
++    if (NOT RT64_HOST_TOOLS_DIR)
++        add_subdirectory(src/tools/spirv_cross_msl)
++    endif()
+ 
+     target_sources(rt64 PRIVATE
+         "${PROJECT_SOURCE_DIR}/src/apple/rt64_apple.mm"
+@@ -479,7 +517,7 @@ endif()
  target_link_directories(rt64 PRIVATE ${PROJECT_SOURCE_DIR}/src/contrib/dxc)
  
  if (NOT ANDROID)
@@ -731,7 +863,7 @@ index 785de27..d99e5bd 100644
                  processDeveloperShortcut(DeveloperShortcut::Inspector);
                  return true;
 diff --git a/src/hle/rt64_application_window.cpp b/src/hle/rt64_application_window.cpp
-index 08f83e5..8f0e7ec 100644
+index 08f83e5..8f0e7ec 100755
 --- a/src/hle/rt64_application_window.cpp
 +++ b/src/hle/rt64_application_window.cpp
 @@ -5,8 +5,9 @@
@@ -6332,6 +6464,24 @@ index e842dcc..c3aca80 100644
                      projMatrix = lerpMatrix(adjustedPrevProj, curProjTransform, p.curFrameWeight);
                      prevProjTransform = lerpMatrix(adjustedPrevProj, curProjTransform, p.prevFrameWeight);
                  }
+diff --git a/src/render/rt64_shader_library.cpp b/src/render/rt64_shader_library.cpp
+index d1c5273..b516eea 100644
+--- a/src/render/rt64_shader_library.cpp
++++ b/src/render/rt64_shader_library.cpp
+@@ -160,8 +160,12 @@
+         ENTRY_NAME,\
+         SHADER_FORMAT
+ #elif defined(__APPLE__)
++// RR64-MAC: name each built-in Metal shader (plume reports it if the driver
++// cannot compile a pipeline that uses it).
++namespace plume { void MetalShaderNameHint(const char *name); }
+ #   define CREATE_SHADER_INPUTS(DXIL_BLOB, SPIRV_BLOB, MSL_BLOB, ENTRY_NAME, SHADER_FORMAT)\
+-        (SHADER_FORMAT == RenderShaderFormat::METAL) ? MSL_BLOB : (SHADER_FORMAT == RenderShaderFormat::SPIRV) ? SPIRV_BLOB : nullptr,\
++        (((SHADER_FORMAT == RenderShaderFormat::METAL) ? plume::MetalShaderNameHint(#MSL_BLOB) : (void)0),\
++         ((SHADER_FORMAT == RenderShaderFormat::METAL) ? MSL_BLOB : (SHADER_FORMAT == RenderShaderFormat::SPIRV) ? SPIRV_BLOB : nullptr)),\
+         (SHADER_FORMAT == RenderShaderFormat::METAL) ? sizeof(MSL_BLOB) : (SHADER_FORMAT == RenderShaderFormat::SPIRV) ? sizeof(SPIRV_BLOB) : 0,\
+         ENTRY_NAME,\
+         SHADER_FORMAT
 diff --git a/src/render/rt64_texture_cache.cpp b/src/render/rt64_texture_cache.cpp
 index 0848f3e..d55b0da 100644
 --- a/src/render/rt64_texture_cache.cpp
@@ -6611,6 +6761,38 @@ index e7895c3..7db2fad 100644
 -#endif
 \ No newline at end of file
 +#endif
+diff --git a/src/tools/spirv_cross_msl/CMakeLists.txt b/src/tools/spirv_cross_msl/CMakeLists.txt
+index 24ad5cd..8e704dd 100644
+--- a/src/tools/spirv_cross_msl/CMakeLists.txt
++++ b/src/tools/spirv_cross_msl/CMakeLists.txt
+@@ -2,15 +2,22 @@ cmake_minimum_required(VERSION 3.20)
+ project(spirv_cross_msl)
+ set(CMAKE_CXX_STANDARD 17)
+ 
+-set(CMAKE_BINARY_DIR ${CMAKE_SOURCE_DIR}/build)
+-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
++# RR64-MAC: only a standalone build of this tool redirects its outputs. Inside
++# a parent build, CMAKE_SOURCE_DIR is the parent's source folder, so this used
++# to put spirv-cross and the tool in <parent source>/build no matter which
++# build folder was in use, and two build folders (one per Mac architecture)
++# overwrote each other's copies.
++if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
++    set(CMAKE_BINARY_DIR ${CMAKE_SOURCE_DIR}/build)
++    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
++    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
++    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
++endif()
+ 
+ add_executable(spirv_cross_msl "spirv_cross_msl.cpp")
+ 
+ target_include_directories(spirv_cross_msl PRIVATE "../../contrib/spirv-cross")
+-add_subdirectory(../../contrib/spirv-cross ${CMAKE_BINARY_DIR}/spirv-cross)
++add_subdirectory(../../contrib/spirv-cross ${CMAKE_CURRENT_BINARY_DIR}/spirv-cross)
+ target_link_libraries(spirv_cross_msl spirv-cross-core spirv-cross-msl)
+ 
+ if (APPLE)
 diff --git a/src/tools/texture_hasher/CMakeLists.txt b/src/tools/texture_hasher/CMakeLists.txt
 index 0591159..9a4c8ab 100644
 --- a/src/tools/texture_hasher/CMakeLists.txt

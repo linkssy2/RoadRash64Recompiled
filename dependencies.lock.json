@@ -453,7 +453,8 @@
     "patch": null,
     "extraFiles": [],
     "platforms": [
-      "linux"
+      "linux",
+      "darwin"
     ]
   },
   {
@@ -462,5 +463,15 @@
     "commit": "fa2c02bb6e21974a89ea9824bc53c9932abe5f9c",
     "patch": null,
     "extraFiles": []
+  },
+  {
+    "path": "native/lib/freetype",
+    "url": "https://github.com/freetype/freetype.git",
+    "commit": "42608f77f20749dd6ddc9e0536788eaad70ea4b5",
+    "patch": null,
+    "extraFiles": [],
+    "platforms": [
+      "darwin"
+    ]
   }
 ]
